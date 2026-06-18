@@ -88,5 +88,6 @@ var configSetCmd = &cobra.Command{
 func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
+	configCmd.AddCommand(profileCmd)
 	rootCmd.AddCommand(configCmd)
 }

@@ -40,6 +40,12 @@ func NewWriter(w io.Writer, jsonMode, noColor bool) Formatter {
 	return &HumanFormatter{w: w, noColor: noColor}
 }
 
+// IsJSON reports whether f is a JSONFormatter.
+func IsJSON(f Formatter) bool {
+	_, ok := f.(*JSONFormatter)
+	return ok
+}
+
 // Print writes data in a human-readable format.
 func (h *HumanFormatter) Print(data any) error {
 	switch v := data.(type) {

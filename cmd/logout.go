@@ -15,7 +15,7 @@ var logoutCmd = &cobra.Command{
 		if err := mgr.Logout(); err != nil {
 			return formatter.PrintError(err)
 		}
-		return formatter.Print("Logged out of PatchFlow.")
+		return formatter.PrintSuccess("Logged out of PatchFlow.")
 	},
 }
 

@@ -63,10 +63,27 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Merge active profile values on top of base config.
+	profiles, err := LoadProfiles()
+	if err == nil && profiles.Active != "" {
+		if prof, ok := profiles.Get(profiles.Active); ok {
+			if prof.APIURL != "" {
+				cfg.APIURL = prof.APIURL
+			}
+			if prof.Org != "" {
+				cfg.Org = prof.Org
+			}
+			if prof.LogLevel != "" {
+				cfg.LogLevel = prof.LogLevel
+			}
+		}
+	}
+
 	return &cfg, nil
 }
 
 // Save writes the configuration to the default config file.
+// The token is intentionally NOT written to the config file for security.
 func Save(cfg *Config) error {
 	configDir := GetConfigDir()
 
@@ -77,7 +94,7 @@ func Save(cfg *Config) error {
 
 	v := viper.New()
 	v.Set("apiurl", cfg.APIURL)
-	v.Set("token", cfg.Token)
+	// Intentionally omit token so it is never persisted to config.yaml.
 	v.Set("org", cfg.Org)
 	v.Set("loglevel", cfg.LogLevel)
 

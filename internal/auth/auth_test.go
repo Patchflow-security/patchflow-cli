@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/patchflow/patchflow-cli/internal/config"
 )
 
-func setupTempConfig(t *testing.T) *config.Config {
+func setupTempFileStorage(t *testing.T) (*config.Config, *FileStorage) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
@@ -14,34 +16,31 @@ func setupTempConfig(t *testing.T) *config.Config {
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
-	return cfg
+	storage := NewFileStorage(filepath.Join(tmpDir, ".patchflow", "token"))
+	return cfg, storage
 }
 
 func TestLoginValidToken(t *testing.T) {
-	cfg := setupTempConfig(t)
-	mgr := NewManager(cfg)
+	cfg, storage := setupTempFileStorage(t)
+	mgr := NewManagerWithStorage(cfg, storage)
 
 	err := mgr.Login("my-secret-token")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Token != "my-secret-token" {
-		t.Fatalf("expected token to be set, got %q", cfg.Token)
-	}
 
-	// Verify persisted
-	loaded, err := config.Load("")
+	loaded, err := storage.Load()
 	if err != nil {
-		t.Fatalf("failed to reload config: %v", err)
+		t.Fatalf("failed to load token from storage: %v", err)
 	}
-	if loaded.Token != "my-secret-token" {
-		t.Fatalf("expected persisted token %q, got %q", "my-secret-token", loaded.Token)
+	if loaded != "my-secret-token" {
+		t.Fatalf("expected token %q, got %q", "my-secret-token", loaded)
 	}
 }
 
 func TestLoginEmptyToken(t *testing.T) {
-	cfg := setupTempConfig(t)
-	mgr := NewManager(cfg)
+	cfg, storage := setupTempFileStorage(t)
+	mgr := NewManagerWithStorage(cfg, storage)
 
 	err := mgr.Login("")
 	if err == nil {
@@ -58,30 +57,24 @@ func TestLoginEmptyToken(t *testing.T) {
 }
 
 func TestLogoutClearsToken(t *testing.T) {
-	cfg := setupTempConfig(t)
-	mgr := NewManager(cfg)
+	cfg, storage := setupTempFileStorage(t)
+	mgr := NewManagerWithStorage(cfg, storage)
 
 	_ = mgr.Login("my-secret-token")
 	err := mgr.Logout()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Token != "" {
-		t.Fatalf("expected token to be cleared, got %q", cfg.Token)
-	}
 
-	loaded, err := config.Load("")
-	if err != nil {
-		t.Fatalf("failed to reload config: %v", err)
-	}
-	if loaded.Token != "" {
-		t.Fatalf("expected persisted token to be cleared, got %q", loaded.Token)
+	_, err = storage.Load()
+	if err == nil {
+		t.Fatal("expected token to be deleted from storage")
 	}
 }
 
 func TestStatusAuthenticated(t *testing.T) {
-	cfg := setupTempConfig(t)
-	mgr := NewManager(cfg)
+	cfg, storage := setupTempFileStorage(t)
+	mgr := NewManagerWithStorage(cfg, storage)
 
 	_ = mgr.Login("my-secret-token")
 	status, err := mgr.Status()
@@ -94,11 +87,14 @@ func TestStatusAuthenticated(t *testing.T) {
 	if status.MaskedToken != "****oken" {
 		t.Fatalf("expected masked token %q, got %q", "****oken", status.MaskedToken)
 	}
+	if status.StorageType != "file" {
+		t.Fatalf("expected storage type %q, got %q", "file", status.StorageType)
+	}
 }
 
 func TestStatusNotAuthenticated(t *testing.T) {
-	cfg := setupTempConfig(t)
-	mgr := NewManager(cfg)
+	cfg, storage := setupTempFileStorage(t)
+	mgr := NewManagerWithStorage(cfg, storage)
 
 	status, err := mgr.Status()
 	if err != nil {
@@ -110,12 +106,12 @@ func TestStatusNotAuthenticated(t *testing.T) {
 	if status.MaskedToken != "none" {
 		t.Fatalf("expected masked token %q, got %q", "none", status.MaskedToken)
 	}
+	if status.StorageType != "none" {
+		t.Fatalf("expected storage type %q, got %q", "none", status.StorageType)
+	}
 }
 
 func TestMaskTokenLogic(t *testing.T) {
-	cfg := setupTempConfig(t)
-	mgr := NewManager(cfg)
-
 	tests := []struct {
 		token    string
 		expected string
@@ -129,34 +125,83 @@ func TestMaskTokenLogic(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		cfg.Token = tc.token
-		status, err := mgr.Status()
-		if err != nil {
-			t.Fatalf("unexpected error for token %q: %v", tc.token, err)
-		}
-		if status.MaskedToken != tc.expected {
-			t.Fatalf("token %q: expected masked %q, got %q", tc.token, tc.expected, status.MaskedToken)
+		got := maskToken(tc.token)
+		if got != tc.expected {
+			t.Fatalf("token %q: expected masked %q, got %q", tc.token, tc.expected, got)
 		}
 	}
 }
 
-func TestLoginSavesOtherFields(t *testing.T) {
-	cfg := setupTempConfig(t)
-	cfg.APIURL = "https://custom.api.com"
-	cfg.Org = "my-org"
+func TestIsAuthenticated(t *testing.T) {
+	cfg, storage := setupTempFileStorage(t)
+	mgr := NewManagerWithStorage(cfg, storage)
+
+	if mgr.IsAuthenticated() {
+		t.Fatal("expected IsAuthenticated to be false before login")
+	}
+
+	_ = mgr.Login("token123")
+	if !mgr.IsAuthenticated() {
+		t.Fatal("expected IsAuthenticated to be true after login")
+	}
+
+	_ = mgr.Logout()
+	if mgr.IsAuthenticated() {
+		t.Fatal("expected IsAuthenticated to be false after logout")
+	}
+}
+
+func TestStatusConfigMigrationFallback(t *testing.T) {
+	cfg, storage := setupTempFileStorage(t)
+	// Simulate a token still stored in config (migration scenario).
+	cfg.Token = "config-migration-token"
+	mgr := NewManagerWithStorage(cfg, storage)
+
+	status, err := mgr.Status()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !status.Authenticated {
+		t.Fatal("expected Authenticated to be true via config fallback")
+	}
+	if status.MaskedToken != "****oken" {
+		t.Fatalf("expected masked token %q, got %q", "****oken", status.MaskedToken)
+	}
+	if status.StorageType != "config" {
+		t.Fatalf("expected storage type %q, got %q", "config", status.StorageType)
+	}
+}
+
+func TestLoginClearsConfigToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	cfg.Token = "old-config-token"
 	_ = config.Save(cfg)
 
-	mgr := NewManager(cfg)
-	_ = mgr.Login("token123")
+	storage := NewFileStorage(filepath.Join(tmpDir, ".patchflow", "token"))
+	mgr := NewManagerWithStorage(cfg, storage)
 
-	loaded, err := config.Load("")
+	err = mgr.Login("new-storage-token")
 	if err != nil {
-		t.Fatalf("failed to reload config: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if loaded.APIURL != "https://custom.api.com" {
-		t.Fatalf("expected APIURL preserved, got %q", loaded.APIURL)
+
+	// Config token should be cleared.
+	if cfg.Token != "" {
+		t.Fatalf("expected config.Token to be cleared, got %q", cfg.Token)
 	}
-	if loaded.Org != "my-org" {
-		t.Fatalf("expected Org preserved, got %q", loaded.Org)
+
+	// Config file should not contain the token.
+	configFile := filepath.Join(tmpDir, ".patchflow", "config.yaml")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+	if string(data) == "" {
+		t.Fatal("expected config file to exist")
 	}
 }

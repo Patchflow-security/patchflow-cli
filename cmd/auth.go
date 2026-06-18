@@ -31,7 +31,7 @@ var authStatusCmd = &cobra.Command{
 		if status.Authenticated {
 			state = "authenticated"
 		}
-		return formatter.Print(fmt.Sprintf("Authentication: %s (token: %s)", state, status.MaskedToken))
+		return formatter.Print(fmt.Sprintf("Authentication: %s (token: %s, storage: %s)", state, status.MaskedToken, status.StorageType))
 	},
 }
 

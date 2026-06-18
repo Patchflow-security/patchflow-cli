@@ -70,5 +70,6 @@ func printScanResult(formatter output.Formatter, result *scan.Result) error {
 func init() {
 	scanCmd.AddCommand(scanLocalCmd)
 	scanCmd.AddCommand(scanChangedCmd)
+	scanCmd.AddCommand(scanExportCmd)
 	rootCmd.AddCommand(scanCmd)
 }

@@ -78,8 +78,9 @@ func TestSaveAndLoadRoundtrip(t *testing.T) {
 	if loaded.APIURL != cfg.APIURL {
 		t.Fatalf("expected APIURL %q, got %q", cfg.APIURL, loaded.APIURL)
 	}
-	if loaded.Token != cfg.Token {
-		t.Fatalf("expected Token %q, got %q", cfg.Token, loaded.Token)
+	// Token is intentionally NOT persisted to config file for security.
+	if loaded.Token != "" {
+		t.Fatalf("expected Token to be empty in config file, got %q", loaded.Token)
 	}
 	if loaded.Org != cfg.Org {
 		t.Fatalf("expected Org %q, got %q", cfg.Org, loaded.Org)
