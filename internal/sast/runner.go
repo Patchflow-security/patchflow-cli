@@ -149,6 +149,14 @@ func commandExists(name string) bool {
 	return err == nil
 }
 
+// parseIntSafe converts a string to an int, returning 0 on failure.
+// gosec outputs line numbers as strings in its JSON format.
+func parseIntSafe(s string) int {
+	var n int
+	fmt.Sscanf(s, "%d", &n)
+	return n
+}
+
 // --- gosec ---
 
 type gosecReport struct {
@@ -157,15 +165,15 @@ type gosecReport struct {
 }
 
 type gosecIssue struct {
-	Severity string `json:"severity"`
+	Severity   string `json:"severity"`
 	Confidence string `json:"confidence"`
-	RuleID   string `json:"rule_id"`
-	Details  string `json:"details"`
-	File     string `json:"file"`
-	Line     int    `json:"line"`
-	Col      int    `json:"column"`
-	What     string `json:"what"`
-	Code     string `json:"code"`
+	RuleID     string `json:"rule_id"`
+	Details    string `json:"details"`
+	File       string `json:"file"`
+	Line       string `json:"line"`
+	Col        string `json:"column"`
+	What       string `json:"what"`
+	Code       string `json:"code"`
 }
 
 type gosecRule struct {
@@ -207,9 +215,18 @@ func runGosec(ctx context.Context, root string) ([]analysis.Finding, error) {
 				desc = rule.Description
 			}
 		}
+		// Fall back to details or rule_id if title is still empty
+		if title == "" {
+			title = desc
+		}
+		if title == "" {
+			title = issue.RuleID
+		}
+
+		lineNum := parseIntSafe(issue.Line)
 
 		findings = append(findings, analysis.Finding{
-			ID:          fmt.Sprintf("sast-gosec-%s-%s-%d", issue.RuleID, filepath.Base(issue.File), issue.Line),
+			ID:          fmt.Sprintf("sast-gosec-%s-%s-%d", issue.RuleID, filepath.Base(issue.File), lineNum),
 			Type:        analysis.TypeSAST,
 			Analyzer:    "gosec",
 			Severity:    normalizeGosecSeverity(issue.Severity),
@@ -217,7 +234,7 @@ func runGosec(ctx context.Context, root string) ([]analysis.Finding, error) {
 			Title:       title,
 			Description: desc,
 			FilePath:    issue.File,
-			LineStart:   issue.Line,
+			LineStart:   lineNum,
 			RuleID:      issue.RuleID,
 			Evidence:    issue.Code,
 			DetectedAt:  time.Now(),
