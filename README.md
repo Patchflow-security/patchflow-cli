@@ -13,18 +13,36 @@ go build -o patchflow .
 ## Quick Start
 
 ```bash
-# Authenticate
-patchflow login --token <your-api-token>
+# Initialize PatchFlow in your repository
+patchflow init
 
-# Verify your environment
-patchflow doctor
+# Run a full security analysis (SCA + SAST + reachability + risk score)
+patchflow scan run
 
-# Review local changes
-patchflow review context
+# Simulate a PR risk review before opening a PR
+patchflow pr-review
 
-# Submit a review to PatchFlow
-patchflow review pr --submit
+# List dependencies
+patchflow deps list
+
+# Find vulnerable dependencies (queries OSV.dev)
+patchflow deps vulnerable
+
+# Check if a vulnerable package is actually used
+patchflow reachability --package <name> --explain
+
+# Generate a report (markdown, JSON, or SARIF)
+patchflow report --format sarif --output report.sarif
 ```
+
+## Local-First Analysis
+
+PatchFlow CLI runs **all analysis locally** — no backend connection required:
+
+- **SCA (Software Composition Analysis)**: Parses dependency manifests (go.mod, package.json, requirements.txt, pyproject.toml, Cargo.toml, Gemfile, composer.json, pom.xml, build.gradle) and queries the [OSV.dev](https://osv.dev) public vulnerability database.
+- **SAST (Static Analysis Security Testing)**: Detects and invokes local security tools when installed — `gosec`, `bandit`, `semgrep`, `gitleaks`. Tools not installed are silently skipped.
+- **Reachability Analysis**: Parses import statements (Python, Go, JavaScript/TypeScript) to determine whether vulnerable dependencies are actually used in the codebase.
+- **Risk Scoring**: Computes a 0-100 risk score from findings, change size, and sensitivity (auth files, CI workflows, dependency changes).
 
 ## Commands
 
@@ -32,18 +50,28 @@ patchflow review pr --submit
 |---------|-------------|
 | `patchflow version` | Print the version number |
 | `patchflow doctor` | Check the CLI environment |
+| `patchflow init` | Initialize PatchFlow in the current repository |
 | `patchflow login --token <token>` | Authenticate with PatchFlow |
 | `patchflow logout` | Remove stored credentials |
 | `patchflow auth status` | Show authentication status |
 | `patchflow config show` | Show current configuration |
 | `patchflow config set <key> <value>` | Set a configuration value |
-| `patchflow scan local` | Scan the local repository |
-| `patchflow scan changed` | Scan changed files only |
+| `patchflow scan local` | Scan the local repository (manifest detection) |
+| `patchflow scan changed` | Scan changed files only (manifest detection) |
+| `patchflow scan run` | Run full security analysis (SCA + SAST + reachability + risk) |
+| `patchflow scan export` | Export scan results with real vulnerability findings (JSON/SARIF) |
+| `patchflow pr-review` | Simulate a PR risk review before opening a pull request |
+| `patchflow deps list` | List all dependencies |
+| `patchflow deps tree` | Show dependency tree by ecosystem |
+| `patchflow deps vulnerable` | List vulnerable dependencies (queries OSV.dev) |
+| `patchflow deps diff` | Show dependency changes against base branch |
+| `patchflow reachability --package <name>` | Check if a package is reachable in the codebase |
+| `patchflow reachability --cve <cve-id>` | Check reachability for a specific CVE |
+| `patchflow report --format <fmt>` | Generate a report (markdown, json, sarif) |
 | `patchflow review context` | Show review context for the current repository |
 | `patchflow review pr` | Preview review data for a pull request |
 | `patchflow review pr --submit` | Submit a review to the PatchFlow backend |
 | `patchflow review diff` | Review a diff |
-| `patchflow review diff --json` | Review a diff and output JSON |
 
 ### Global Flags
 
@@ -171,9 +199,81 @@ patchflow review diff --json
 ### Scan the repository
 
 ```bash
+# Manifest detection only
 patchflow scan local
 patchflow scan changed
+
+# Full security analysis (SCA + SAST + reachability + risk score)
+patchflow scan run
+patchflow scan run --profile deep
+patchflow scan run --no-sast --no-secrets
+
+# Export scan results with real vulnerability findings
+patchflow scan export --format sarif --output findings.sarif
+patchflow scan export --format json --output findings.json
 ```
+
+### PR risk review
+
+```bash
+# Simulate a PR review before opening a PR
+patchflow pr-review
+
+# Generate a markdown report for the PR
+patchflow pr-review --format markdown --output pr-report.md
+
+# Skip SAST and secret detection
+patchflow pr-review --no-sast --no-secrets
+```
+
+### Dependency analysis
+
+```bash
+# List all dependencies
+patchflow deps list
+
+# Show dependency tree grouped by ecosystem
+patchflow deps tree
+
+# Find vulnerable dependencies (queries OSV.dev)
+patchflow deps vulnerable
+
+# Show dependency changes against base branch
+patchflow deps diff
+```
+
+### Reachability analysis
+
+```bash
+# Check if a package is actually used in the codebase
+patchflow reachability --package github.com/spf13/cobra --explain
+
+# Check reachability for a specific CVE
+patchflow reachability --cve CVE-2024-1234 --explain
+
+# JSON output
+patchflow reachability --package flask --json
+```
+
+### Generate reports
+
+```bash
+# Markdown report to stdout
+patchflow report --format markdown
+
+# SARIF report to file
+patchflow report --format sarif --output report.sarif
+
+# JSON report to file
+patchflow report --format json --output report.json
+```
+
+## Documentation
+
+- **[User Guide](docs/USER_GUIDE.md)** — Installation, authentication, configuration, all commands with examples, CI/CD integration, troubleshooting, and security model.
+- **[Developer Guide](docs/DEVELOPER_GUIDE.md)** — Architecture, package reference, adding commands, testing, coding standards, and release process.
+- **[Command Reference](docs/CLI_COMMANDS.md)** — Quick reference for every command and flag.
+- **[Development Guide](docs/DEVELOPMENT.md)** — Build, test, and project structure overview.
 
 ## Development
 
@@ -189,4 +289,4 @@ Build:
 make build
 ```
 
-See [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the full developer guide.
+See the [Developer Guide](docs/DEVELOPER_GUIDE.md) for the full developer documentation.

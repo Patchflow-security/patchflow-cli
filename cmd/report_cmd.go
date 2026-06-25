@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
 	"github.com/patchflow/patchflow-cli/internal/git"
+	"github.com/patchflow/patchflow-cli/internal/output"
 	"github.com/patchflow/patchflow-cli/internal/reachability"
 	"github.com/patchflow/patchflow-cli/internal/report"
 	"github.com/patchflow/patchflow-cli/internal/risk"
@@ -16,31 +18,38 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var scanExportCmd = &cobra.Command{
-	Use:   "export",
-	Short: "Export scan results with real vulnerability findings",
-	Long: `Run a full security analysis and export results in SARIF or JSON format.
-This performs SCA (OSV.dev), SAST (local tools), reachability analysis, and risk scoring,
-then exports the findings in the specified format.`,
-	RunE: runScanExport,
+var (
+	reportFormat string
+	reportOutput string
+)
+
+var reportCmd = &cobra.Command{
+	Use:   "report",
+	Short: "Generate a security analysis report",
+	Long: `Run a full analysis and generate a report in the specified format.
+Supported formats: markdown, json, sarif.
+
+The report includes all findings (SCA, SAST, secrets), dependency list,
+risk score breakdown, and recommendations.`,
+	RunE: runReport,
 }
 
 func init() {
-	scanExportCmd.Flags().String("format", "json", "Export format (json, sarif)")
-	scanExportCmd.Flags().String("output", "", "Output file path (stdout if omitted)")
+	reportCmd.Flags().StringVar(&reportFormat, "format", "markdown", "Report format: markdown, json, sarif")
+	reportCmd.Flags().StringVar(&reportOutput, "output", "", "Output file path (stdout if omitted)")
+
+	rootCmd.AddCommand(reportCmd)
 }
 
-func runScanExport(cmd *cobra.Command, _ []string) error {
-	format, _ := cmd.Flags().GetString("format")
-	outputPath, _ := cmd.Flags().GetString("output")
+func runReport(cmd *cobra.Command, _ []string) error {
 	formatter := FormatterFromContext(cmd.Context())
 	ctx := cmd.Context()
 
 	// Validate format
-	switch format {
-	case "json", "sarif":
+	switch reportFormat {
+	case "markdown", "md", "json", "sarif":
 	default:
-		return fmt.Errorf("unsupported format: %q (supported: json, sarif)", format)
+		return formatter.PrintError(fmt.Errorf("unsupported format: %s (supported: markdown, json, sarif)", reportFormat))
 	}
 
 	// Detect git repository
@@ -54,6 +63,9 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 	started := time.Now()
 
 	// Run SCA
+	if !output.IsJSON(formatter) {
+		_ = formatter.Print("Running SCA analysis...")
+	}
 	scaAnalyzer := sca.NewAnalyzer()
 	scaAnalyzer.MaxDepth = 3
 	scaResult, err := scaAnalyzer.Analyze(ctx, repo.Root)
@@ -66,6 +78,9 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 	analyzersRun := []string{"osv"}
 
 	// Run SAST
+	if !output.IsJSON(formatter) {
+		_ = formatter.Print("Running SAST analysis...")
+	}
 	sastRunner := sast.NewRunner()
 	sastResult, err := sastRunner.Analyze(ctx, repo.Root)
 	if err == nil {
@@ -75,6 +90,9 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 
 	// Run reachability
 	if len(scaResult.Findings) > 0 {
+		if !output.IsJSON(formatter) {
+			_ = formatter.Print("Running reachability analysis...")
+		}
 		reachAnalyzer := reachability.NewAnalyzer()
 		reachResult, err := reachAnalyzer.Analyze(ctx, repo.Root, allFindings, scaResult.Dependencies)
 		if err == nil {
@@ -121,28 +139,51 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 
 	gen := report.NewGenerator(result, &riskScore)
 
-	var data []byte
-	switch format {
+	// Normalize format
+	fmtStr := reportFormat
+	if fmtStr == "md" {
+		fmtStr = "markdown"
+	}
+
+	// Write to file or stdout
+	if reportOutput != "" {
+		if err := gen.WriteFile(fmtStr, reportOutput); err != nil {
+			return formatter.PrintError(fmt.Errorf("failed to write report: %w", err))
+		}
+		if !output.IsJSON(formatter) {
+			_ = formatter.PrintSuccess("Report written to " + reportOutput)
+		}
+		return nil
+	}
+
+	// Write to stdout
+	switch fmtStr {
+	case "markdown":
+		fmt.Println(gen.Markdown())
+	case "json":
+		data, err := gen.JSON()
+		if err != nil {
+			return formatter.PrintError(err)
+		}
+		fmt.Println(string(data))
 	case "sarif":
 		sarifReport := gen.SARIF("0.1.0")
-		data, err = json.MarshalIndent(sarifReport, "", "  ")
+		data, err := json.MarshalIndent(sarifReport, "", "  ")
 		if err != nil {
 			return formatter.PrintError(err)
 		}
-	case "json":
-		data, err = gen.JSON()
-		if err != nil {
-			return formatter.PrintError(err)
+		fmt.Println(string(data))
+	}
+
+	// Also save to .patchflow/reports/ if initialized
+	pfReportsDir := filepath.Join(repo.Root, ".patchflow", "reports")
+	if _, err := os.Stat(pfReportsDir); err == nil {
+		if savedPath, err := gen.WriteToReportsDir(repo.Root, fmtStr); err == nil {
+			if !output.IsJSON(formatter) {
+				_ = formatter.Print("Report saved: " + savedPath)
+			}
 		}
 	}
 
-	if outputPath != "" {
-		if err := os.WriteFile(outputPath, data, 0644); err != nil {
-			return fmt.Errorf("failed to write output file: %w", err)
-		}
-		return formatter.PrintSuccess("Report written to " + outputPath)
-	}
-
-	_, err = fmt.Fprintln(os.Stdout, string(data))
-	return err
+	return nil
 }
