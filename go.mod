@@ -9,6 +9,7 @@ require (
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/tools v0.35.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

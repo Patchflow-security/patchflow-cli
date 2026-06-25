@@ -38,6 +38,26 @@ type Scanner struct {
 	maxFileSize       int64
 }
 
+// SecretRuleInfo provides metadata about a secret pattern for listing purposes.
+type SecretRuleInfo struct {
+	Name       string
+	Severity   analysis.Severity
+	Confidence analysis.Confidence
+}
+
+// Rules returns metadata for all registered secret patterns.
+func (s *Scanner) Rules() []SecretRuleInfo {
+	result := make([]SecretRuleInfo, len(s.patterns))
+	for i, p := range s.patterns {
+		result[i] = SecretRuleInfo{
+			Name:       p.Name,
+			Severity:   p.Severity,
+			Confidence: p.Confidence,
+		}
+	}
+	return result
+}
+
 // NewScanner creates a new secret scanner with all built-in patterns.
 func NewScanner() *Scanner {
 	s := &Scanner{

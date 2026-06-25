@@ -45,6 +45,22 @@ var doctorCmd = &cobra.Command{
 			fmt.Println("[!]  No remote origin configured")
 		}
 
+		// Embedded scanners
+		fmt.Println("\nEmbedded SAST Scanners (always available, zero installation):")
+		for _, s := range report.EmbeddedScanners {
+			fmt.Printf("[OK] %-20s (%s) — %d rules\n", s.Name, s.Language, s.RuleCount)
+		}
+
+		// External tools
+		fmt.Println("\nExternal SAST Tools (optional supplements):")
+		for _, t := range report.ExternalTools {
+			if t.Found {
+				fmt.Printf("[OK] %-20s (%s) — installed\n", t.Name, t.Language)
+			} else {
+				fmt.Printf("[--] %-20s (%s) — not installed (optional)\n", t.Name, t.Language)
+			}
+		}
+
 		if len(report.Errors) > 0 {
 			fmt.Println("\nErrors:")
 			for _, e := range report.Errors {

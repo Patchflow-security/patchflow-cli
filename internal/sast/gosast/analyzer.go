@@ -50,6 +50,48 @@ type Rule interface {
 	Nodes() []ast.Node // AST node types this rule wants to inspect
 }
 
+// RuleInfo provides metadata about a rule for listing purposes.
+type RuleInfo struct {
+	ID       string
+	What     string
+	Severity string
+}
+
+// Rules returns metadata for all registered rules.
+func (a *Analyzer) Rules() []RuleInfo {
+	var infos []RuleInfo
+	for _, r := range a.rules {
+		info := RuleInfo{ID: r.ID()}
+		// Extract What from the rule if it has the method
+		if wr, ok := r.(interface{ What() string }); ok {
+			info.What = wr.What()
+		} else {
+			info.What = "(no description)"
+		}
+		// Extract Severity from the rule if it has the method
+		if sr, ok := r.(interface{ SeverityVal() Severity }); ok {
+			info.Severity = severityToString(sr.SeverityVal())
+		} else {
+			info.Severity = "medium"
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+func severityToString(s Severity) string {
+	switch s {
+	case SeverityHigh:
+		return "high"
+	case SeverityMedium:
+		return "medium"
+	case SeverityLow:
+		return "low"
+	default:
+		return "unknown"
+	}
+}
+
 // Finding is a raw security finding from a rule, before normalization.
 type Finding struct {
 	RuleID     string

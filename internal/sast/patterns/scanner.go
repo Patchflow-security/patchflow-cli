@@ -77,6 +77,21 @@ func NewScanner() *Scanner {
 	return s
 }
 
+// AddRules adds custom rules to the scanner. Custom rules are appended after
+// the built-in rules and take precedence for suppression purposes (custom IDs
+// should use a distinctive prefix like CUSTOM- or ORG-).
+func (s *Scanner) AddRules(rules []PatternRule) {
+	s.rules = append(s.rules, rules...)
+}
+
+// Rules returns a copy of all registered rules (built-in + custom).
+// Used by the `patchflow rules list` command.
+func (s *Scanner) Rules() []PatternRule {
+	result := make([]PatternRule, len(s.rules))
+	copy(result, s.rules)
+	return result
+}
+
 // registerRules registers all built-in security pattern rules.
 func (s *Scanner) registerRules() {
 	s.rules = []PatternRule{

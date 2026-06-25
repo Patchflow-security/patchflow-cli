@@ -15,9 +15,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/patchflow/patchflow-cli/internal/sast/customrules"
 	"github.com/patchflow/patchflow-cli/internal/sast/gosast"
 	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
 	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
@@ -56,6 +58,10 @@ type Runner struct {
 
 	// ShowSuppressed controls whether suppressed findings are included in output
 	ShowSuppressed bool
+
+	// CustomRulesPath is the path to a custom rules YAML file.
+	// If empty, the runner looks for .patchflow/rules.yaml in the project root.
+	CustomRulesPath string
 }
 
 // NewRunner creates a SAST runner with embedded scanners and external tools.
@@ -102,6 +108,114 @@ func NewRunner() *Runner {
 	return r
 }
 
+// loadCustomRules loads custom rules from a YAML file and adds them to the
+// pattern scanner. If CustomRulesPath is set, it loads from that path.
+// Otherwise, it looks for .patchflow/rules.yaml in the project root.
+func (r *Runner) loadCustomRules(root string) error {
+	var rules []patterns.PatternRule
+	var err error
+
+	if r.CustomRulesPath != "" {
+		rules, err = customrules.LoadFromFile(r.CustomRulesPath)
+	} else {
+		rules, err = customrules.LoadFromDir(root)
+	}
+	if err != nil {
+		return err
+	}
+	if len(rules) > 0 {
+		r.patternScanner.AddRules(rules)
+	}
+	return nil
+}
+
+// RuleGroup represents a group of rules from a specific scanner.
+type RuleGroup struct {
+	Scanner    string      // "gosast-embedded", "secrets-embedded", "patterns-embedded"
+	Language   string      // "go", "multi", "secrets"
+	RuleCount  int
+	Rules      []RuleEntry
+}
+
+// RuleEntry represents a single rule for display purposes.
+type RuleEntry struct {
+	ID       string
+	Title    string
+	Severity string
+}
+
+// AllRules returns all registered rules from all embedded scanners.
+// Custom rules loaded from YAML are included if LoadCustomRules was called.
+func (r *Runner) AllRules() []RuleGroup {
+	var groups []RuleGroup
+
+	// Go SAST rules
+	if !r.NoEmbeddedGo {
+		gosastRules := r.gosastAnalyzer.Rules()
+		entries := make([]RuleEntry, 0, len(gosastRules))
+		for _, ri := range gosastRules {
+			entries = append(entries, RuleEntry{
+				ID:       ri.ID,
+				Title:    ri.What,
+				Severity: string(ri.Severity),
+			})
+		}
+		groups = append(groups, RuleGroup{
+			Scanner:   "gosast-embedded",
+			Language:  "go",
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
+	// Secret scanner rules
+	if !r.NoEmbeddedSecrets {
+		secretRules := r.secretScanner.Rules()
+		entries := make([]RuleEntry, 0, len(secretRules))
+		for _, si := range secretRules {
+			entries = append(entries, RuleEntry{
+				ID:       "SECRET-" + si.Name,
+				Title:    si.Name,
+				Severity: string(si.Severity),
+			})
+		}
+		groups = append(groups, RuleGroup{
+			Scanner:   "secrets-embedded",
+			Language:  "secrets",
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
+	// Pattern scanner rules (includes custom rules if loaded)
+	if !r.NoEmbeddedPatterns {
+		patternRules := r.patternScanner.Rules()
+		entries := make([]RuleEntry, 0, len(patternRules))
+		for _, pr := range patternRules {
+			entries = append(entries, RuleEntry{
+				ID:       pr.ID,
+				Title:    pr.Title,
+				Severity: string(pr.Severity),
+			})
+		}
+		groups = append(groups, RuleGroup{
+			Scanner:   "patterns-embedded",
+			Language:  "multi",
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
+	return groups
+}
+
+// LoadCustomRules loads custom rules from the specified path or from
+// .patchflow/rules.yaml in the given root directory. This is public so
+// commands like `rules list` can load custom rules without running a full scan.
+func (r *Runner) LoadCustomRules(root string) error {
+	return r.loadCustomRules(root)
+}
+
 // AvailableTools returns the names of external tools that are installed and ready to run.
 func (r *Runner) AvailableTools() []string {
 	var available []string
@@ -131,53 +245,71 @@ type Result struct {
 func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	result := &Result{}
 
-	// --- Phase 1: Embedded scanners (always run) ---
+	// --- Phase 0: Load custom rules from YAML ---
+	if err := r.loadCustomRules(root); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("custom-rules: %v", err))
+	}
+
+	// --- Phase 1: Embedded scanners (run in parallel for performance) ---
+
+	type scannerResult struct {
+		name     string
+		findings []analysis.Finding
+		err      error
+	}
+
+	var wg sync.WaitGroup
+	resultCh := make(chan scannerResult, 3) // buffered for 3 scanners
 
 	// 1a. Embedded Go SAST (gosec rules ported to library)
 	if !r.NoEmbeddedGo {
-		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-		findings, err := r.gosastAnalyzer.Analyze(toolCtx, root)
-		cancel()
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("gosast-embedded: %v", err))
-		} else {
-			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
-				findings = filterFindingsToChanged(findings, r.ChangedFiles)
-			}
-			result.Findings = append(result.Findings, findings...)
-			result.ToolsRun = append(result.ToolsRun, "gosast-embedded")
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+			findings, err := r.gosastAnalyzer.Analyze(toolCtx, root)
+			cancel()
+			resultCh <- scannerResult{name: "gosast-embedded", findings: findings, err: err}
+		}()
 	}
 
 	// 1b. Embedded secret scanner
 	if !r.NoEmbeddedSecrets {
-		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-		findings, err := r.secretScanner.Analyze(toolCtx, root)
-		cancel()
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("secrets-embedded: %v", err))
-		} else {
-			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
-				findings = filterFindingsToChanged(findings, r.ChangedFiles)
-			}
-			result.Findings = append(result.Findings, findings...)
-			result.ToolsRun = append(result.ToolsRun, "secrets-embedded")
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+			findings, err := r.secretScanner.Analyze(toolCtx, root)
+			cancel()
+			resultCh <- scannerResult{name: "secrets-embedded", findings: findings, err: err}
+		}()
 	}
 
 	// 1c. Embedded multi-language pattern scanner
 	if !r.NoEmbeddedPatterns {
-		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-		findings, err := r.patternScanner.Analyze(toolCtx, root)
-		cancel()
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("patterns-embedded: %v", err))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+			findings, err := r.patternScanner.Analyze(toolCtx, root)
+			cancel()
+			resultCh <- scannerResult{name: "patterns-embedded", findings: findings, err: err}
+		}()
+	}
+
+	// Wait for all embedded scanners to complete, then collect results
+	wg.Wait()
+	close(resultCh)
+
+	for sr := range resultCh {
+		if sr.err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", sr.name, sr.err))
 		} else {
 			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
-				findings = filterFindingsToChanged(findings, r.ChangedFiles)
+				sr.findings = filterFindingsToChanged(sr.findings, r.ChangedFiles)
 			}
-			result.Findings = append(result.Findings, findings...)
-			result.ToolsRun = append(result.ToolsRun, "patterns-embedded")
+			result.Findings = append(result.Findings, sr.findings...)
+			result.ToolsRun = append(result.ToolsRun, sr.name)
 		}
 	}
 

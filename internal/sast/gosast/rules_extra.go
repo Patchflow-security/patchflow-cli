@@ -35,7 +35,9 @@ type noErrorCheckRule struct {
 	whitelist CallList
 }
 
-func (r *noErrorCheckRule) ID() string { return r.id }
+func (r *noErrorCheckRule) ID() string          { return r.id }
+func (r *noErrorCheckRule) What() string         { return r.what }
+func (r *noErrorCheckRule) SeverityVal() Severity { return r.sev }
 
 func (r *noErrorCheckRule) Nodes() []ast.Node {
 	return []ast.Node{(*ast.AssignStmt)(nil), (*ast.ExprStmt)(nil)}
@@ -119,7 +121,9 @@ type integerOverflowRule struct {
 	atoiVars  map[*types.Var]struct{}
 }
 
-func (r *integerOverflowRule) ID() string { return r.id }
+func (r *integerOverflowRule) ID() string          { return r.id }
+func (r *integerOverflowRule) What() string         { return r.what }
+func (r *integerOverflowRule) SeverityVal() Severity { return r.sev }
 
 func (r *integerOverflowRule) Nodes() []ast.Node {
 	return []ast.Node{(*ast.AssignStmt)(nil), (*ast.CallExpr)(nil)}
@@ -193,7 +197,9 @@ type decompressionBombRule struct {
 	readerVars  map[*types.Var]struct{}
 }
 
-func (r *decompressionBombRule) ID() string { return r.id }
+func (r *decompressionBombRule) ID() string          { return r.id }
+func (r *decompressionBombRule) What() string         { return r.what }
+func (r *decompressionBombRule) SeverityVal() Severity { return r.sev }
 
 func (r *decompressionBombRule) Nodes() []ast.Node {
 	return []ast.Node{(*ast.AssignStmt)(nil), (*ast.CallExpr)(nil)}
@@ -282,7 +288,9 @@ type directoryTraversalRule struct {
 	pattern *regexp.Regexp
 }
 
-func (r *directoryTraversalRule) ID() string { return r.id }
+func (r *directoryTraversalRule) ID() string          { return r.id }
+func (r *directoryTraversalRule) What() string         { return r.what }
+func (r *directoryTraversalRule) SeverityVal() Severity { return r.sev }
 
 func (r *directoryTraversalRule) Nodes() []ast.Node { return []ast.Node{(*ast.CallExpr)(nil)} }
 
@@ -325,7 +333,9 @@ type slowlorisRule struct {
 	conf Confidence
 }
 
-func (r *slowlorisRule) ID() string { return r.id }
+func (r *slowlorisRule) ID() string          { return r.id }
+func (r *slowlorisRule) What() string         { return r.what }
+func (r *slowlorisRule) SeverityVal() Severity { return r.sev }
 
 func (r *slowlorisRule) Nodes() []ast.Node { return []ast.Node{(*ast.CompositeLit)(nil)} }
 
@@ -386,7 +396,9 @@ type osCreatePermsRule struct {
 
 const defaultOsCreateMode = 0o666
 
-func (r *osCreatePermsRule) ID() string { return r.id }
+func (r *osCreatePermsRule) ID() string          { return r.id }
+func (r *osCreatePermsRule) What() string         { return r.what }
+func (r *osCreatePermsRule) SeverityVal() Severity { return r.sev }
 
 func (r *osCreatePermsRule) Nodes() []ast.Node { return []ast.Node{(*ast.CallExpr)(nil)} }
 
@@ -438,7 +450,9 @@ var tlsVersionMap = map[string]int64{
 	"VersionTLS13": int64(tls.VersionTLS13),
 }
 
-func (t *insecureConfigTLSRule) ID() string { return t.id }
+func (t *insecureConfigTLSRule) ID() string          { return t.id }
+func (t *insecureConfigTLSRule) What() string         { return t.what }
+func (t *insecureConfigTLSRule) SeverityVal() Severity { return t.sev }
 
 func (t *insecureConfigTLSRule) Nodes() []ast.Node {
 	return []ast.Node{(*ast.CompositeLit)(nil), (*ast.AssignStmt)(nil)}
@@ -662,7 +676,9 @@ type implicitAliasingRule struct {
 	acceptableAlias []*ast.UnaryExpr
 }
 
-func (r *implicitAliasingRule) ID() string { return r.id }
+func (r *implicitAliasingRule) ID() string          { return r.id }
+func (r *implicitAliasingRule) What() string         { return r.what }
+func (r *implicitAliasingRule) SeverityVal() Severity { return r.sev }
 
 func (r *implicitAliasingRule) Nodes() []ast.Node {
 	return []ast.Node{(*ast.RangeStmt)(nil), (*ast.UnaryExpr)(nil), (*ast.ReturnStmt)(nil)}

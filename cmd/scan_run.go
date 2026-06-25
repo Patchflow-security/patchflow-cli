@@ -17,14 +17,15 @@ import (
 )
 
 var (
-	scanProfile       string
-	scanNoSAST        bool
-	scanNoSecrets     bool
-	scanNoReach       bool
-	scanOutput        string
-	scanFormat        string
-	scanChangedOnly   bool
+	scanProfile        string
+	scanNoSAST         bool
+	scanNoSecrets      bool
+	scanNoReach        bool
+	scanOutput         string
+	scanFormat         string
+	scanChangedOnly    bool
 	scanShowSuppressed bool
+	scanRulesPath      string
 )
 
 var scanRealCmd = &cobra.Command{
@@ -50,6 +51,7 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanOutput, "output", "", "Write report to file (stdout if omitted)")
 	scanRealCmd.Flags().BoolVar(&scanChangedOnly, "changed-only", false, "Only analyze changed files")
 	scanRealCmd.Flags().BoolVar(&scanShowSuppressed, "show-suppressed", false, "Show findings suppressed by //patchflow:ignore comments")
+	scanRealCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file (default: .patchflow/rules.yaml)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -117,6 +119,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			sastRunner.NoEmbeddedSecrets = true
 		}
 		sastRunner.ShowSuppressed = scanShowSuppressed
+		sastRunner.CustomRulesPath = scanRulesPath
 
 		// Filter external tools based on flags
 		if scanNoSAST && !scanNoSecrets {

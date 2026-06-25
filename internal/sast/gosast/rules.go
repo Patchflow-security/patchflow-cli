@@ -35,6 +35,9 @@ type callListRule struct {
 	calls CallList
 }
 
+func (r *callListRule) What() string      { return r.what }
+func (r *callListRule) SeverityVal() Severity { return r.sev }
+
 func newCallListRule(id, what string, sev Severity, conf Confidence) callListRule {
 	return callListRule{
 		id:    id,
@@ -241,7 +244,9 @@ type filePermissionsRule struct {
 	calls []string
 }
 
-func (r *filePermissionsRule) ID() string { return r.id }
+func (r *filePermissionsRule) ID() string          { return r.id }
+func (r *filePermissionsRule) What() string         { return r.what }
+func (r *filePermissionsRule) SeverityVal() Severity { return r.sev }
 
 func (r *filePermissionsRule) Nodes() []ast.Node { return []ast.Node{(*ast.CallExpr)(nil)} }
 
@@ -480,7 +485,9 @@ type hardcodedCredentialsRule struct {
 
 var credentialPattern = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|apikey|api_key|private_key|access_key|client_secret)`)
 
-func (r *hardcodedCredentialsRule) ID() string { return r.id }
+func (r *hardcodedCredentialsRule) ID() string          { return r.id }
+func (r *hardcodedCredentialsRule) What() string         { return r.what }
+func (r *hardcodedCredentialsRule) SeverityVal() Severity { return r.sev }
 
 func (r *hardcodedCredentialsRule) Nodes() []ast.Node {
 	return []ast.Node{(*ast.AssignStmt)(nil), (*ast.ValueSpec)(nil)}
@@ -534,7 +541,9 @@ type blocklistedImportsRule struct {
 	blocklist map[string]string // import path -> description
 }
 
-func (r *blocklistedImportsRule) ID() string { return r.id }
+func (r *blocklistedImportsRule) ID() string          { return r.id }
+func (r *blocklistedImportsRule) What() string         { return r.what }
+func (r *blocklistedImportsRule) SeverityVal() Severity { return r.sev }
 
 func (r *blocklistedImportsRule) Nodes() []ast.Node { return []ast.Node{(*ast.ImportSpec)(nil)} }
 
@@ -628,7 +637,9 @@ type trojanSourceRule struct {
 
 var bidiUnicodeRe = regexp.MustCompile(`[\x{202A}-\x{202E}\x{2066}-\x{2069}\x{200E}\x{200F}\x{061C}]`)
 
-func (r *trojanSourceRule) ID() string { return r.id }
+func (r *trojanSourceRule) ID() string          { return r.id }
+func (r *trojanSourceRule) What() string         { return r.what }
+func (r *trojanSourceRule) SeverityVal() Severity { return r.sev }
 
 func (r *trojanSourceRule) Nodes() []ast.Node { return []ast.Node{(*ast.BasicLit)(nil)} }
 
