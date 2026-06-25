@@ -50,10 +50,16 @@ func NewScanner() *Scanner {
 			".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
 			".mp4": true, ".mp3": true, ".avi": true, ".mov": true,
 			".lock": true, ".sum": true, ".min.js": true, ".min.css": true,
+			".pyc": true, ".pyo": true, ".so": true, ".dll": true, ".dylib": true,
+			".wasm": true, ".o": true, ".a": true, ".class": true, ".jar": true,
 		},
 		ignoredDirs: map[string]bool{
 			"node_modules": true, "vendor": true, ".git": true, "dist": true,
 			"build": true, "target": true, ".next": true, ".cache": true,
+			".venv": true, "venv": true, "env": true, ".env": true,
+			".tox": true, ".pytest_cache": true, ".mypy_cache": true,
+			"site-packages": true, "__pycache__": true, ".eggs": true,
+			".eggs-info": true, ".ruff_cache": true,
 		},
 	}
 	s.registerPatterns()
@@ -134,6 +140,12 @@ func (s *Scanner) Analyze(ctx context.Context, root string) ([]analysis.Finding,
 		// Check extension
 		ext := filepath.Ext(path)
 		if s.ignoredExtensions[ext] {
+			return nil
+		}
+
+		// Skip example/template env files (they contain placeholder secrets)
+		baseName := filepath.Base(path)
+		if isExampleFile(baseName) {
 			return nil
 		}
 
@@ -299,6 +311,21 @@ func (s *Scanner) isFalsePositive(match, line string) bool {
 		return true
 	}
 
+	return false
+}
+
+// isExampleFile checks if a file is an example/template file that contains
+// placeholder secrets (not real credentials).
+func isExampleFile(name string) bool {
+	// .env.example, .env.prod.example, .env.example.local
+	if strings.HasPrefix(name, ".env.") && strings.Contains(name, "example") {
+		return true
+	}
+	// *.example, *.sample, *.template
+	if strings.HasSuffix(name, ".example") || strings.HasSuffix(name, ".sample") ||
+		strings.HasSuffix(name, ".template") || strings.HasSuffix(name, ".dist") {
+		return true
+	}
 	return false
 }
 

@@ -31,10 +31,12 @@ var scanRealCmd = &cobra.Command{
 	Short: "Run a full security analysis (SCA + SAST + reachability + risk)",
 	Long: `Run a comprehensive local security analysis on the current repository.
 This performs Software Composition Analysis (SCA) via OSV.dev, Static Analysis
-Security Testing (SAST) via available local tools (gosec, bandit, semgrep, gitleaks),
+Security Testing (SAST) via embedded scanners (Go SAST, secret scanner, multi-language
+pattern scanner) plus external tools when available (gosec, bandit, semgrep, gitleaks),
 reachability analysis, and computes a risk score.
 
-No backend connection required — all analysis runs locally.`,
+No backend connection required — all analysis runs locally.
+Embedded scanners require zero installation; external tools supplement when installed.`,
 	RunE: runScanReal,
 }
 
@@ -104,9 +106,18 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			sastRunner.ChangedFiles = repo.ChangedFiles
 		}
 
-		// Filter tools based on flags
+		// Wire embedded scanner flags based on --no-sast / --no-secrets
+		if scanNoSAST {
+			sastRunner.NoEmbeddedGo = true
+			sastRunner.NoEmbeddedPatterns = true
+		}
+		if scanNoSecrets {
+			sastRunner.NoEmbeddedSecrets = true
+		}
+
+		// Filter external tools based on flags
 		if scanNoSAST && !scanNoSecrets {
-			// Only keep gitleaks
+			// Only keep gitleaks (external secret scanner)
 			var filtered []sast.Tool
 			for _, t := range sastRunner.Tools {
 				if t.Name == "gitleaks" {

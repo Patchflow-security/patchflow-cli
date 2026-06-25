@@ -64,7 +64,9 @@ func NewScanner() *Scanner {
 			"node_modules": true, "vendor": true, ".git": true, "dist": true,
 			"build": true, "target": true, ".next": true, ".cache": true,
 			"__pycache__": true, ".venv": true, "venv": true, "env": true,
-			".tox": true, ".pytest_cache": true, ".mypy_cache": true,
+			".env": true, ".tox": true, ".pytest_cache": true, ".mypy_cache": true,
+			"site-packages": true, ".eggs": true, ".eggs-info": true,
+			".ruff_cache": true,
 		},
 		ignoredExtensions: map[string]bool{
 			".min.js": true, ".min.css": true, ".map": true,
@@ -99,7 +101,7 @@ func (s *Scanner) registerRules() {
 		{ID: "PY012", Title: "Hardcoded password", Description: "Hardcoded password detected. Use environment variables or a secret manager.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(password|passwd|pwd)\s*=\s*["'][^"']{4,}["']`)},
 
 		// Network/TLS
-		{ID: "PY013", Title: "SSL verification disabled", Description: "SSL certificate verification is disabled. This makes the connection vulnerable to MITM attacks.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)verify\s*=\s*False`)},
+		{ID: "PY013", Title: "SSL verification disabled", Description: "SSL certificate verification is disabled. This makes the connection vulnerable to MITM attacks.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(verify|ssl_verify|insecure)\s*=\s*False\b`)},
 		{ID: "PY014", Title: "Requests with verify=False", Description: "Disabling SSL verification in requests is dangerous.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)requests\.(get|post|put|delete|patch|head)\s*\(.*verify\s*=\s*False`)},
 
 		// Debug/dev mode
