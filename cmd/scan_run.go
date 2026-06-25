@@ -17,13 +17,14 @@ import (
 )
 
 var (
-	scanProfile     string
-	scanNoSAST      bool
-	scanNoSecrets   bool
-	scanNoReach     bool
-	scanOutput      string
-	scanFormat      string
-	scanChangedOnly bool
+	scanProfile       string
+	scanNoSAST        bool
+	scanNoSecrets     bool
+	scanNoReach       bool
+	scanOutput        string
+	scanFormat        string
+	scanChangedOnly   bool
+	scanShowSuppressed bool
 )
 
 var scanRealCmd = &cobra.Command{
@@ -48,6 +49,7 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanFormat, "format", "", "Output format for report file: markdown, json, sarif")
 	scanRealCmd.Flags().StringVar(&scanOutput, "output", "", "Write report to file (stdout if omitted)")
 	scanRealCmd.Flags().BoolVar(&scanChangedOnly, "changed-only", false, "Only analyze changed files")
+	scanRealCmd.Flags().BoolVar(&scanShowSuppressed, "show-suppressed", false, "Show findings suppressed by //patchflow:ignore comments")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -114,6 +116,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		if scanNoSecrets {
 			sastRunner.NoEmbeddedSecrets = true
 		}
+		sastRunner.ShowSuppressed = scanShowSuppressed
 
 		// Filter external tools based on flags
 		if scanNoSAST && !scanNoSecrets {

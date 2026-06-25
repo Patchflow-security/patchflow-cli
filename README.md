@@ -40,9 +40,31 @@ patchflow report --format sarif --output report.sarif
 PatchFlow CLI runs **all analysis locally** — no backend connection required:
 
 - **SCA (Software Composition Analysis)**: Parses dependency manifests (go.mod, package.json, requirements.txt, pyproject.toml, Cargo.toml, Gemfile, composer.json, pom.xml, build.gradle) and queries the [OSV.dev](https://osv.dev) public vulnerability database.
-- **SAST (Static Analysis Security Testing)**: Detects and invokes local security tools when installed — `gosec`, `bandit`, `semgrep`, `gitleaks`. Tools not installed are silently skipped.
+- **SAST (Static Analysis Security Testing)**: Uses three embedded scanners that require **zero installation**, plus external tools as supplements:
+  - **gosast-embedded** — Go SAST scanner with 32 AST-based rules ported from gosec (G101-G601): SQL injection, command injection, weak crypto, unsafe pointers, hardcoded credentials, bad file permissions, path traversal, TLS misconfiguration, slowloris, decompression bombs, and more.
+  - **secrets-embedded** — Secret scanner with 35 curated regex patterns (AWS, GitHub, Google, Stripe, Slack, private keys, database URLs, JWTs) plus Shannon entropy detection. Automatically skips `.venv/`, `node_modules/`, `.env.example`, and other false-positive sources.
+  - **patterns-embedded** — Multi-language pattern scanner for Python, JavaScript/TypeScript, Ruby, and PHP with 40 rules covering OWASP Top 10 (eval, exec, shell=True, pickle, yaml.load, SQL injection, weak crypto, SSL verification, debug mode, dangerouslySetInnerHTML, and more).
+  - **External tools** (optional): `gosec`, `bandit`, `semgrep`, `gitleaks` — run automatically when installed to supplement the embedded scanners.
 - **Reachability Analysis**: Parses import statements (Python, Go, JavaScript/TypeScript) to determine whether vulnerable dependencies are actually used in the codebase.
 - **Risk Scoring**: Computes a 0-100 risk score from findings, change size, and sensitivity (auth files, CI workflows, dependency changes).
+
+### Suppression Directives
+
+Suppress false positives with `//patchflow:ignore` comments:
+
+```go
+//patchflow:ignore G404 -- using math/rand for non-security purpose
+n := rand.Intn(100)
+```
+
+```python
+# patchflow:ignore PY001 -- eval is safe here, input is sanitized
+result = eval(user_input)
+```
+
+- **Rule-specific**: `//patchflow:ignore G404` suppresses only G404 on the next line or same line
+- **Blanket**: `//patchflow:ignore` suppresses all rules on the next line or same line
+- Use `--show-suppressed` flag to include suppressed findings in output
 
 ## Commands
 
@@ -72,6 +94,19 @@ PatchFlow CLI runs **all analysis locally** — no backend connection required:
 | `patchflow review pr` | Preview review data for a pull request |
 | `patchflow review pr --submit` | Submit a review to the PatchFlow backend |
 | `patchflow review diff` | Review a diff |
+
+### `scan run` Flags
+
+| Flag | Description |
+|------|-------------|
+| `--profile <quick\|standard\|deep>` | Scan depth (affects SCA transitive dependency resolution) |
+| `--no-sast` | Skip SAST analysis (gosast-embedded, patterns-embedded, gosec, bandit, semgrep) |
+| `--no-secrets` | Skip secret detection (secrets-embedded, gitleaks) |
+| `--no-reachability` | Skip reachability analysis |
+| `--changed-only` | Only analyze changed files |
+| `--show-suppressed` | Show findings suppressed by `//patchflow:ignore` comments |
+| `--format <markdown\|json\|sarif>` | Output format for report file |
+| `--output <path>` | Write report to file (stdout if omitted) |
 
 ### Global Flags
 

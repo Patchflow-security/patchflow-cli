@@ -401,13 +401,37 @@ The SCA analyzer ties manifest parsing and OSV.dev querying together:
 
 ### `internal/sast/` — Static Analysis Security Testing
 
-Runs local SAST tools when available, degrades gracefully when not:
+Runs embedded scanners first (always available, zero installation), then external tools as supplements:
 
-- **`Runner.Analyze(ctx, root)`** — runs all available tools and collects findings.
-- **`Runner.AvailableTools()`** — lists installed tools.
-- Supported tools: `gosec` (Go), `bandit` (Python), `semgrep` (multi-language), `gitleaks` (secrets).
+- **`Runner.Analyze(ctx, root)`** — runs all embedded scanners and available external tools, collects findings, and applies suppression directives.
+- **`Runner.AvailableTools()`** — lists installed external tools.
+- **`Runner.EmbeddedTools()`** — lists embedded scanners (always available).
+
+**Embedded scanners** (in `internal/sast/`):
+- **`gosast/`** — Go SAST scanner with 32 AST-based rules ported from gosec v2.27.1. Uses `golang.org/x/tools/go/packages` for type-aware AST analysis. Rules: `analyzer.go` (orchestration), `helpers.go` (CallList, GetCallInfo, TryResolve), `rules.go` (22 rules), `rules_extra.go` (10 rules).
+- **`secrets/`** — Regex-based secret scanner with 35 curated patterns plus Shannon entropy detection. Skips `.venv/`, `node_modules/`, `.env.example`, binary files. Redacts evidence in output.
+- **`patterns/`** — Multi-language regex pattern scanner for Python, JavaScript/TypeScript, Ruby, PHP. 40 rules covering OWASP Top 10. Language detection by file extension. Comment skipping per language.
+- **`suppression/`** — Comment-based suppression directive parser. Supports `//patchflow:ignore <RULE_ID>` and `# patchflow:ignore` (blanket). Caches per-file directives.
+
+**External tools** (optional, supplement embedded scanners):
+- `gosec` (Go), `bandit` (Python), `semgrep` (multi-language), `gitleaks` (secrets).
 - Each tool has an `IsAvailable()` check and a `Run()` function that parses JSON output.
-- Secrets are always masked in findings via `maskSecret()`.
+
+**Rule ID conventions**:
+- Go SAST: `G1xx` (injection/crypto), `G2xx` (SQL), `G3xx` (filesystem), `G4xx` (crypto/TLS), `G5xx` (blocklist), `G6xx` (memory)
+- Secrets: `SECRET-<NAME>` (e.g., `SECRET-AWS-Access-Key-ID`)
+- Patterns: `PY0xx` (Python), `JS0xx` (JS/TS), `RB0xx` (Ruby), `PHP0xx` (PHP), `XLANG0xx` (cross-language)
+
+**Adding a new Go SAST rule**:
+1. Implement the `Rule` interface (`ID()`, `Match()`, `Nodes()`) in `rules.go` or `rules_extra.go`
+2. Use `callListRule` for simple call-pattern rules, or custom struct for complex logic
+3. Register in `registerDefaultRules()` in `analyzer.go`
+4. Add a test in `analyzer_test.go` or `rules_extra_test.go`
+
+**Adding a new pattern rule**:
+1. Add a `PatternRule` to `registerRules()` in `patterns/scanner.go`
+2. Specify `ID`, `Title`, `Description`, `Severity`, `Confidence`, `Languages`, `Pattern` (compiled regex)
+3. Add a test in `patterns/scanner_test.go`
 
 ### `internal/reachability/` — Reachability Analysis
 

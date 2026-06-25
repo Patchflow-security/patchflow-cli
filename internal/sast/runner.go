@@ -21,6 +21,7 @@ import (
 	"github.com/patchflow/patchflow-cli/internal/sast/gosast"
 	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
 	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
+	"github.com/patchflow/patchflow-cli/internal/sast/suppression"
 )
 
 // Tool represents an external SAST tool that can be invoked via subprocess.
@@ -35,9 +36,12 @@ type Tool struct {
 // Runner manages embedded scanners and external SAST tools.
 type Runner struct {
 	// Embedded scanners (always available, no installation required)
-	gosastAnalyzer    *gosast.Analyzer
-	secretScanner     *secrets.Scanner
-	patternScanner    *patterns.Scanner
+	gosastAnalyzer *gosast.Analyzer
+	secretScanner  *secrets.Scanner
+	patternScanner *patterns.Scanner
+
+	// Suppression manager for //patchflow:ignore directives
+	suppressionMgr *suppression.Manager
 
 	// External tools (optional, supplement embedded scanners)
 	Tools        []Tool
@@ -46,9 +50,12 @@ type Runner struct {
 	Timeout      time.Duration
 
 	// Flags to control which scanners run
-	NoEmbeddedGo    bool
+	NoEmbeddedGo      bool
 	NoEmbeddedSecrets bool
 	NoEmbeddedPatterns bool
+
+	// ShowSuppressed controls whether suppressed findings are included in output
+	ShowSuppressed bool
 }
 
 // NewRunner creates a SAST runner with embedded scanners and external tools.
@@ -58,6 +65,7 @@ func NewRunner() *Runner {
 		gosastAnalyzer:   gosast.NewAnalyzer(),
 		secretScanner:    secrets.NewScanner(),
 		patternScanner:   patterns.NewScanner(),
+		suppressionMgr:   suppression.NewManager(),
 	}
 
 	r.Tools = []Tool{
@@ -112,10 +120,11 @@ func (r *Runner) EmbeddedTools() []string {
 
 // Result is the output of a SAST analysis run.
 type Result struct {
-	Findings     []analysis.Finding `json:"findings"`
-	ToolsRun     []string           `json:"tools_run"`
-	ToolsSkipped []string           `json:"tools_skipped"`
-	Errors       []string           `json:"errors,omitempty"`
+	Findings        []analysis.Finding `json:"findings"`
+	ToolsRun        []string           `json:"tools_run"`
+	ToolsSkipped    []string           `json:"tools_skipped"`
+	Errors          []string           `json:"errors,omitempty"`
+	SuppressedCount int                `json:"suppressed_count,omitempty"`
 }
 
 // Analyze runs all embedded scanners first, then external tools as supplements.
@@ -197,6 +206,23 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 
 		result.Findings = append(result.Findings, findings...)
 		result.ToolsRun = append(result.ToolsRun, tool.Name)
+	}
+
+	// --- Phase 3: Apply suppression directives (//patchflow:ignore) ---
+	if !r.ShowSuppressed {
+		var filtered []analysis.Finding
+		suppressedCount := 0
+		for _, f := range result.Findings {
+			if r.suppressionMgr.IsSuppressed(f.FilePath, f.LineStart, f.RuleID) {
+				suppressedCount++
+				continue
+			}
+			filtered = append(filtered, f)
+		}
+		if suppressedCount > 0 {
+			result.SuppressedCount = suppressedCount
+		}
+		result.Findings = filtered
 	}
 
 	return result, nil

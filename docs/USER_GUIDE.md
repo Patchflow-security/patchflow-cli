@@ -73,7 +73,11 @@ PatchFlow CLI provides six categories of capability:
 The CLI runs **all security analysis locally** — no backend connection needed:
 
 - **SCA (Software Composition Analysis)**: Parses dependency manifests (`go.mod`, `package.json`, `requirements.txt`, `pyproject.toml`, `Cargo.toml`, `Gemfile`, `composer.json`, `pom.xml`, `build.gradle`) and queries the [OSV.dev](https://osv.dev) public vulnerability database.
-- **SAST (Static Analysis Security Testing)**: Detects and invokes local security tools when installed — `gosec`, `bandit`, `semgrep`, `gitleaks`. Tools not installed are silently skipped.
+- **SAST (Static Analysis Security Testing)**: Uses three embedded scanners that require **zero installation**, plus external tools as supplements:
+  - **gosast-embedded** — Go SAST scanner with 32 AST-based rules ported from gosec (SQL injection, command injection, weak crypto, unsafe pointers, hardcoded credentials, bad file permissions, path traversal, TLS misconfiguration, slowloris, decompression bombs, implicit aliasing, and more).
+  - **secrets-embedded** — Secret scanner with 35 curated regex patterns (AWS, GitHub, Google, Stripe, Slack, private keys, database URLs, JWTs) plus Shannon entropy detection. Automatically skips `.venv/`, `node_modules/`, `.env.example`, and other false-positive sources.
+  - **patterns-embedded** — Multi-language pattern scanner for Python, JavaScript/TypeScript, Ruby, and PHP with 40 rules covering OWASP Top 10 (eval, exec, shell=True, pickle, yaml.load, SQL injection, weak crypto, SSL verification, debug mode, dangerouslySetInnerHTML, and more).
+  - **External tools** (optional): `gosec`, `bandit`, `semgrep`, `gitleaks` — run automatically when installed to supplement the embedded scanners.
 - **Reachability Analysis**: Parses import statements (Python, Go, JavaScript/TypeScript) to determine whether vulnerable dependencies are actually used in the codebase.
 - **Risk Scoring**: Computes a 0–100 risk score from findings, change size, and sensitivity (auth files, CI workflows, dependency changes).
 
@@ -743,9 +747,10 @@ Risk Score: 28/100 (LOW)
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--profile` | string | `standard` | Scan profile: `quick` (depth 1), `standard` (depth 3), `deep` (depth 5) |
-| `--no-sast` | bool | false | Skip SAST analysis |
-| `--no-secrets` | bool | false | Skip secret detection (gitleaks) |
+| `--no-sast` | bool | false | Skip SAST analysis (gosast-embedded, patterns-embedded, gosec, bandit, semgrep) |
+| `--no-secrets` | bool | false | Skip secret detection (secrets-embedded, gitleaks) |
 | `--no-reachability` | bool | false | Skip reachability analysis |
+| `--show-suppressed` | bool | false | Show findings suppressed by `//patchflow:ignore` comments |
 | `--format` | string | (terminal) | Report format: `markdown`, `json`, `sarif` |
 | `--output` | string | (stdout) | Write report to file |
 | `--changed-only` | bool | false | Only analyze changed files |
@@ -764,6 +769,37 @@ patchflow scan run --no-sast --no-secrets
 
 # Generate SARIF report
 patchflow scan run --format sarif --output findings.sarif
+```
+
+#### Suppression Directives
+
+Suppress false positives using `//patchflow:ignore` comments in your source code:
+
+**Rule-specific suppression** (suppresses only the specified rule):
+```go
+//patchflow:ignore G404 -- using math/rand for non-security purpose
+n := rand.Intn(100)
+```
+
+```python
+# patchflow:ignore PY001 -- eval is safe here, input is sanitized
+result = eval(user_input)
+```
+
+**Blanket suppression** (suppresses all rules on the next line):
+```go
+//patchflow:ignore
+data := pickle.loads(raw_data)  # safe: raw_data is internally generated
+```
+
+**Inline suppression** (on the same line as the finding):
+```javascript
+const result = eval(userInput); //patchflow:ignore JS001
+```
+
+Use `--show-suppressed` to include suppressed findings in the output for auditing:
+```bash
+patchflow scan run --show-suppressed
 ```
 
 ---

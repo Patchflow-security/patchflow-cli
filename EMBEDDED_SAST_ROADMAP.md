@@ -139,48 +139,41 @@ Track progress of the embedded SAST scanner development for `patchflow-cli`.
 ## P1: High Priority (Coverage + Usability)
 
 ### P1.1: Port remaining gosec AST rules
-- **Status**: TODO
-- **Rules to port** (17 remaining):
-  - [ ] G104: Audit errors not checked (medium — needs type info)
-  - [ ] G109: strconv.Atoi → int32/int16 overflow (low)
-  - [ ] G110: io.Copy instead of io.CopyN during decompression (low)
-  - [ ] G111: http.Dir("/") directory traversal (low)
-  - [ ] G112: ReadHeaderTimeout not configured / slowloris (medium — high priority)
-  - [ ] G117: Secrets exposed via JSON/YAML marshaling (medium)
-  - [ ] G307: os.Create file permissions (low — pattern already exists)
-  - [ ] G402: Bad TLS connection settings (high complexity — high priority)
-  - [ ] G403: Minimum RSA key length 2048 (low)
-  - [ ] G406: Deprecated MD4/RIPEMD160 (low)
-  - [ ] G601: Implicit memory aliasing in rangeStmt (medium)
-- **Skip for now**: G602 (slice bounds — SSA-based), G115 (type conversion overflow — SSA-based)
-- **Effort**: ~2-3 hours
+- **Status**: DONE
+- **Rules ported** (10 new rules, total now 32):
+  - [x] G104: Audit errors not checked (uses type info to detect `_ = err`)
+  - [x] G109: strconv.Atoi → int32/int16 overflow (stateful variable tracking)
+  - [x] G110: io.Copy instead of io.CopyN during decompression (stateful reader tracking)
+  - [x] G111: http.Dir("/") directory traversal (regex pattern match)
+  - [x] G112: ReadHeaderTimeout not configured / slowloris (composite lit inspection)
+  - [x] G307: os.Create file permissions
+  - [x] G402: Bad TLS connection settings (InsecureSkipVerify, MinVersion, cipher suites)
+  - [x] G403: Minimum RSA key length 2048
+  - [x] G406: Deprecated MD4/RIPEMD160
+  - [x] G601: Implicit memory aliasing in rangeStmt (pre-Go 1.22)
+- **Skipped**: G117 (secret serialization — too complex, 588 lines), G602/G115 (SSA-based)
+- **Tests**: 7 new tests in `rules_extra_test.go`, all passing
 
 ### P1.2: Suppression directives (`//patchflow:ignore`)
-- **Status**: TODO
-- **Syntax**:
-  ```go
-  //patchflow:ignore G404 -- using math/rand for non-security purpose
-  n := rand.Intn(100)
-  ```
-  ```python
-  # patchflow:ignore PY001 -- eval is safe here, input is sanitized
-  result = eval(user_input)
-  ```
-- **Implementation**:
-  - [ ] Parse `//patchflow:ignore` / `# patchflow:ignore` comments during scanning
-  - [ ] Support rule-specific suppression (`//patchflow:ignore G404`)
-  - [ ] Support blanket suppression (`//patchflow:ignore`)
-  - [ ] Support inline (same line) and above-line comment styles
-  - [ ] Add `--show-suppressed` flag to display suppressed findings
-  - [ ] Track suppressions in report output
-- **Effort**: ~3-4 hours
+- **Status**: DONE
+- **Package**: `internal/sast/suppression/suppression.go`
+- **Features**:
+  - [x] Parse `//patchflow:ignore` / `# patchflow:ignore` comments
+  - [x] Rule-specific suppression (`//patchflow:ignore G404`)
+  - [x] Blanket suppression (`//patchflow:ignore`)
+  - [x] Inline (same line) and above-line comment styles
+  - [x] `--show-suppressed` flag to display suppressed findings
+  - [x] Per-file caching with sync.RWMutex
+  - [x] Integrated into runner.go (Phase 3 of Analyze)
+  - [x] `SuppressedCount` field in Result struct
+- **Tests**: 10 tests in `suppression_test.go`, all passing
+- **Verified**: Tested on Safe-pip-backend, correctly suppressed PY013 finding
 
 ### P1.3: Update documentation
-- **Status**: TODO
-- [ ] README.md: Add embedded scanners to feature list, note zero-install requirement
-- [ ] docs/USER_GUIDE.md: Document `--no-sast` / `--no-secrets` with embedded scanners, suppression directives
-- [ ] docs/DEVELOPER_GUIDE.md: Document the three embedded scanner packages, how to add new rules, rule ID conventions
-- **Effort**: ~2-3 hours
+- **Status**: DONE
+- [x] README.md: Added embedded scanner descriptions, suppression directives section, scan run flags table
+- [x] docs/USER_GUIDE.md: Updated SAST section with embedded scanner details, added suppression directives section with examples
+- [x] docs/DEVELOPER_GUIDE.md: Updated SAST section with embedded scanner architecture, rule ID conventions, how to add new rules
 
 ---
 

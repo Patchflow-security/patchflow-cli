@@ -101,6 +101,11 @@ func (a *Analyzer) registerDefaultRules() {
 		newWeakCryptoHash(),
 		newWeakCryptoEncryption(),
 		newWeakRand(),
+		newDeprecatedCryptoHash(),
+		newWeakKeyStrength(),
+
+		// TLS
+		newBadTLSConfig(),
 
 		// Unsafe
 		newUsingUnsafe(),
@@ -109,14 +114,17 @@ func (a *Analyzer) registerDefaultRules() {
 		newFilePermissions(),
 		newMkdirPermissions(),
 		newWritePermissions(),
+		newOsCreatePerms(),
 		newBadTempFile(),
 		newReadFile(),
 		newPathTraversal(),
+		newDirectoryTraversal(),
 
 		// Network
 		newBindToAllInterfaces(),
 		newSSRF(),
 		newHTTPServeWithoutTimeouts(),
+		newSlowloris(),
 
 		// Hardcoded credentials
 		newHardcodedCredentials(),
@@ -135,6 +143,18 @@ func (a *Analyzer) registerDefaultRules() {
 
 		// Trojan Source
 		newTrojanSource(),
+
+		// Error handling
+		newNoErrorCheck(),
+
+		// Integer overflow
+		newIntegerOverflow(),
+
+		// Decompression bomb
+		newDecompressionBomb(),
+
+		// Implicit aliasing (pre-Go 1.22)
+		newImplicitAliasing(),
 	}
 }
 
