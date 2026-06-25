@@ -11,6 +11,7 @@ The CLI inspects your Git working state, detects dependency manifests, computes 
 ## Table of Contents
 
 - [What PatchFlow CLI Does](#what-patchflow-cli-does)
+  - [Local-First Analysis (no backend required)](#local-first-analysis-no-backend-required)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -56,15 +57,25 @@ The CLI inspects your Git working state, detects dependency manifests, computes 
 
 ## What PatchFlow CLI Does
 
-PatchFlow CLI provides four categories of capability:
+PatchFlow CLI provides six categories of capability:
 
 | Category | Commands | Purpose |
 |----------|----------|---------|
 | **Environment** | `version`, `doctor` | Verify your setup and CLI installation |
 | **Authentication** | `login`, `logout`, `auth status` | Manage credentials for the PatchFlow backend |
 | **Configuration** | `config show`, `config set`, `config profile` | Manage settings and multi-org profiles |
-| **Scanning** | `scan local`, `scan changed`, `scan export` | Detect dependency manifests and changed files |
+| **Scanning** | `scan local`, `scan changed`, `scan run`, `scan export` | Detect manifests, run full security analysis, export findings |
+| **Local Analysis** | `init`, `pr-review`, `deps`, `reachability`, `report` | SCA, SAST, reachability, risk scoring — all local, no backend required |
 | **Review** | `review context`, `review pr`, `review diff`, `review status` | Collect review context, compute risk hints, submit to backend, poll for results |
+
+### Local-First Analysis (no backend required)
+
+The CLI runs **all security analysis locally** — no backend connection needed:
+
+- **SCA (Software Composition Analysis)**: Parses dependency manifests (`go.mod`, `package.json`, `requirements.txt`, `pyproject.toml`, `Cargo.toml`, `Gemfile`, `composer.json`, `pom.xml`, `build.gradle`) and queries the [OSV.dev](https://osv.dev) public vulnerability database.
+- **SAST (Static Analysis Security Testing)**: Detects and invokes local security tools when installed — `gosec`, `bandit`, `semgrep`, `gitleaks`. Tools not installed are silently skipped.
+- **Reachability Analysis**: Parses import statements (Python, Go, JavaScript/TypeScript) to determine whether vulnerable dependencies are actually used in the codebase.
+- **Risk Scoring**: Computes a 0–100 risk score from findings, change size, and sensitivity (auth files, CI workflows, dependency changes).
 
 The CLI focuses on **metadata** — file paths, branch names, diff statistics, manifest detection, and risk hints. By default it does **not** send source code contents to the backend.
 
@@ -117,6 +128,30 @@ go install github.com/patchflow/patchflow-cli@latest
 ---
 
 ## Quick Start
+
+### Local-first analysis (no authentication required)
+
+```bash
+# 1. Initialize PatchFlow in your repository
+patchflow init
+
+# 2. Run a full security analysis (SCA + SAST + reachability + risk score)
+patchflow scan run
+
+# 3. Simulate a PR risk review before opening a PR
+patchflow pr-review
+
+# 4. List vulnerable dependencies (queries OSV.dev)
+patchflow deps vulnerable
+
+# 5. Check if a vulnerable package is actually used
+patchflow reachability --package <name> --explain
+
+# 6. Generate a report (markdown, JSON, or SARIF)
+patchflow report --format sarif --output report.sarif
+```
+
+### Backend-connected review (requires authentication)
 
 ```bash
 # 1. Verify your environment
