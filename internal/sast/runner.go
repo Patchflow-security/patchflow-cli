@@ -1,7 +1,10 @@
-// Package sast runs local static analysis security tools when available on the system.
-// It detects installed tools (gosec, bandit, semgrep, gitleaks), invokes them on the
-// repository, parses their JSON output, and normalizes results into analysis.Findings.
-// Tools that are not installed are silently skipped — the CLI degrades gracefully.
+// Package sast runs static analysis security tools on the repository.
+// It uses embedded scanners (Go SAST, secret scanner, multi-language pattern
+// scanner) that require no external installation, and supplements them with
+// external tools (gosec, bandit, semgrep, gitleaks) when available.
+//
+// The embedded scanners run first and always provide baseline coverage.
+// External tools run second and add deeper analysis when installed.
 package sast
 
 import (
@@ -15,66 +18,83 @@ import (
 	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/patchflow/patchflow-cli/internal/sast/gosast"
+	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
+	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
 )
 
-// Tool represents a SAST tool that can be invoked.
+// Tool represents an external SAST tool that can be invoked via subprocess.
 type Tool struct {
-	Name     string
-	Binary   string
-	Language string // primary language (go, python, multi, secrets)
+	Name        string
+	Binary      string
+	Language    string // primary language (go, python, multi, secrets)
 	IsAvailable func() bool
-	Run       func(ctx context.Context, root string) ([]analysis.Finding, error)
+	Run         func(ctx context.Context, root string) ([]analysis.Finding, error)
 }
 
-// Runner manages the collection of available SAST tools.
+// Runner manages embedded scanners and external SAST tools.
 type Runner struct {
-	Tools       []Tool
-	ChangedOnly bool
+	// Embedded scanners (always available, no installation required)
+	gosastAnalyzer    *gosast.Analyzer
+	secretScanner     *secrets.Scanner
+	patternScanner    *patterns.Scanner
+
+	// External tools (optional, supplement embedded scanners)
+	Tools        []Tool
+	ChangedOnly  bool
 	ChangedFiles []string
-	Timeout     time.Duration
+	Timeout      time.Duration
+
+	// Flags to control which scanners run
+	NoEmbeddedGo    bool
+	NoEmbeddedSecrets bool
+	NoEmbeddedPatterns bool
 }
 
-// NewRunner creates a SAST runner with all supported tools.
+// NewRunner creates a SAST runner with embedded scanners and external tools.
 func NewRunner() *Runner {
 	r := &Runner{
-		Timeout: 120 * time.Second,
+		Timeout:          120 * time.Second,
+		gosastAnalyzer:   gosast.NewAnalyzer(),
+		secretScanner:    secrets.NewScanner(),
+		patternScanner:   patterns.NewScanner(),
 	}
 
 	r.Tools = []Tool{
 		{
-			Name:       "gosec",
-			Binary:     "gosec",
-			Language:   "go",
+			Name:        "gosec",
+			Binary:      "gosec",
+			Language:    "go",
 			IsAvailable: func() bool { return commandExists("gosec") },
-			Run:        runGosec,
+			Run:         runGosec,
 		},
 		{
-			Name:       "bandit",
-			Binary:     "bandit",
-			Language:   "python",
+			Name:        "bandit",
+			Binary:      "bandit",
+			Language:    "python",
 			IsAvailable: func() bool { return commandExists("bandit") },
-			Run:        runBandit,
+			Run:         runBandit,
 		},
 		{
-			Name:       "semgrep",
-			Binary:     "semgrep",
-			Language:   "multi",
+			Name:        "semgrep",
+			Binary:      "semgrep",
+			Language:    "multi",
 			IsAvailable: func() bool { return commandExists("semgrep") },
-			Run:        runSemgrep,
+			Run:         runSemgrep,
 		},
 		{
-			Name:       "gitleaks",
-			Binary:     "gitleaks",
-			Language:   "secrets",
+			Name:        "gitleaks",
+			Binary:      "gitleaks",
+			Language:    "secrets",
 			IsAvailable: func() bool { return commandExists("gitleaks") },
-			Run:        runGitleaks,
+			Run:         runGitleaks,
 		},
 	}
 
 	return r
 }
 
-// AvailableTools returns the names of tools that are installed and ready to run.
+// AvailableTools returns the names of external tools that are installed and ready to run.
 func (r *Runner) AvailableTools() []string {
 	var available []string
 	for _, t := range r.Tools {
@@ -85,17 +105,74 @@ func (r *Runner) AvailableTools() []string {
 	return available
 }
 
-// Result is the output of a SAST analysis run.
-type Result struct {
-	Findings    []analysis.Finding `json:"findings"`
-	ToolsRun    []string           `json:"tools_run"`
-	ToolsSkipped []string          `json:"tools_skipped"`
-	Errors      []string           `json:"errors,omitempty"`
+// EmbeddedTools returns the names of embedded scanners that are always available.
+func (r *Runner) EmbeddedTools() []string {
+	return []string{"gosast-embedded", "secrets-embedded", "patterns-embedded"}
 }
 
-// Analyze runs all available SAST tools and collects findings.
+// Result is the output of a SAST analysis run.
+type Result struct {
+	Findings     []analysis.Finding `json:"findings"`
+	ToolsRun     []string           `json:"tools_run"`
+	ToolsSkipped []string           `json:"tools_skipped"`
+	Errors       []string           `json:"errors,omitempty"`
+}
+
+// Analyze runs all embedded scanners first, then external tools as supplements.
 func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	result := &Result{}
+
+	// --- Phase 1: Embedded scanners (always run) ---
+
+	// 1a. Embedded Go SAST (gosec rules ported to library)
+	if !r.NoEmbeddedGo {
+		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+		findings, err := r.gosastAnalyzer.Analyze(toolCtx, root)
+		cancel()
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("gosast-embedded: %v", err))
+		} else {
+			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
+				findings = filterFindingsToChanged(findings, r.ChangedFiles)
+			}
+			result.Findings = append(result.Findings, findings...)
+			result.ToolsRun = append(result.ToolsRun, "gosast-embedded")
+		}
+	}
+
+	// 1b. Embedded secret scanner
+	if !r.NoEmbeddedSecrets {
+		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+		findings, err := r.secretScanner.Analyze(toolCtx, root)
+		cancel()
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("secrets-embedded: %v", err))
+		} else {
+			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
+				findings = filterFindingsToChanged(findings, r.ChangedFiles)
+			}
+			result.Findings = append(result.Findings, findings...)
+			result.ToolsRun = append(result.ToolsRun, "secrets-embedded")
+		}
+	}
+
+	// 1c. Embedded multi-language pattern scanner
+	if !r.NoEmbeddedPatterns {
+		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+		findings, err := r.patternScanner.Analyze(toolCtx, root)
+		cancel()
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("patterns-embedded: %v", err))
+		} else {
+			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
+				findings = filterFindingsToChanged(findings, r.ChangedFiles)
+			}
+			result.Findings = append(result.Findings, findings...)
+			result.ToolsRun = append(result.ToolsRun, "patterns-embedded")
+		}
+	}
+
+	// --- Phase 2: External tools (supplement embedded scanners) ---
 
 	for _, tool := range r.Tools {
 		if !tool.IsAvailable() {
