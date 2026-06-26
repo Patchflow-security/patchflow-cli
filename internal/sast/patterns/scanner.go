@@ -508,6 +508,49 @@ func (s *Scanner) registerRules() {
 
 		// JS autoescape disabled (CWE-79)
 		{ID: "JS027", Title: "Template autoescape disabled", Description: "Disabling autoescaping in template engines (swig, nunjucks, ejs) allows XSS. Keep autoescaping enabled.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)autoescape\s*:\s*false`), CWEID: "CWE-79", SkipQuoteFilter: true},
+
+		// --- Java SQL injection: string concatenation in query literals (CWE-89) ---
+
+		// SQL query string built with + concatenation and user input variable
+		{ID: "JAVA017", Title: "Java SQL injection via string concatenation in query", Description: "SQL query string built with string concatenation (+) and user-controlled variables is vulnerable to SQL injection. Use PreparedStatement with parameter placeholders (?).", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)"[^"]*\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|INTO|VALUES|LIKE|ORDER|BY)\b[^"]*"\s*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		// executeQuery/executeUpdate with a bare variable (query built elsewhere with concatenation)
+		{ID: "JAVA018", Title: "Java SQL execution with variable query", Description: "executeQuery/executeUpdate with a variable query that may be built with string concatenation. Verify the query is parameterized.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)\b(executeQuery|executeUpdate)\s*\(\s*[a-zA-Z_]\w*\s*\)`), CWEID: "CWE-89"},
+		// prepareStatement with string concatenation (partial parameterization)
+		{ID: "JAVA019", Title: "Java SQL injection via prepareStatement with concatenation", Description: "prepareStatement with string concatenation (+) is vulnerable to SQL injection even if some placeholders are used. Use placeholders for all user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)prepareStatement\s*\([^)]*"\s*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// --- Java path traversal: new File with user-controlled variable (CWE-22) ---
+
+		// new File(dir, variable) — second arg is user-controlled filename
+		{ID: "JAVA020", Title: "Java path traversal via new File with variable", Description: "new File with a user-controlled variable as the filename/path argument allows path traversal. Validate and canonicalize paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+File\s*\([^,]+,\s*[a-zA-Z_]\w*\s*\)`), CWEID: "CWE-22"},
+		// new File with string concatenation in path argument
+		{ID: "JAVA021", Title: "Java path traversal via new File with concatenation", Description: "new File with string concatenation in the path argument allows path traversal. Validate and canonicalize paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+File\s*\([^)]*"\s*\+\s*\w+`), CWEID: "CWE-22", SkipQuoteFilter: true},
+		// new File(dir, entry.getName()) — zip-slip via ZipEntry.getName()
+		{ID: "JAVA022", Title: "Java zip-slip via ZipEntry.getName in File constructor", Description: "new File(dir, zipEntry.getName()) without canonical path validation allows zip-slip path traversal. Validate entry names against the target directory.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+File\s*\([^,]+,\s*\w+\.getName\(\)\)`), CWEID: "CWE-22"},
+
+		// --- Ruby SQL injection: where/select with string interpolation (CWE-89) ---
+
+		// where("... #{params[...]} ...") — string interpolation in where clause
+		{ID: "RB011", Title: "Ruby SQL injection via where with params interpolation", Description: "ActiveRecord where() with string interpolation of params allows SQL injection. Use parameterized queries: where(field: params[:field]).", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)\.where\s*\(\s*["'].*#\{.*params`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		// select("#{col}") — string interpolation in select clause
+		{ID: "RB012", Title: "Ruby SQL injection via select with interpolation", Description: "ActiveRecord select() with string interpolation allows SQL injection in the SELECT clause. Use parameterized queries or whitelist allowed columns.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)\bselect\s*\(\s*["'].*#\{`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		// order("... #{params[...]} ...") — string interpolation in order clause
+		{ID: "RB013", Title: "Ruby SQL injection via order with interpolation", Description: "ActiveRecord order() with string interpolation of params allows SQL injection. Use whitelist of allowed column names.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)\border\s*\(\s*["'].*#\{.*params`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// --- Ruby path traversal and code injection (CWE-22, CWE-94) ---
+
+		// File.open with interpolated filename
+		{ID: "RB014", Title: "Ruby path traversal via File.open with interpolation", Description: "File.open with interpolated filename (#{...}) allows path traversal if the interpolated value is user-controlled. Validate and sanitize filenames.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)File\.open\s*\(\s*["'].*#\{`), CWEID: "CWE-22", SkipQuoteFilter: true},
+		// send_file with a variable (path may be user-controlled)
+		{ID: "RB016", Title: "Ruby path traversal via send_file with variable", Description: "send_file with a variable that may be user-controlled allows path traversal or arbitrary file download. Validate and restrict file paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)send_file\s+\w+`), CWEID: "CWE-22"},
+		// params[...].constantize — arbitrary class instantiation
+		{ID: "RB015", Title: "Ruby code injection via params.constantize", Description: "params[:...].constantize allows arbitrary class instantiation and code execution. Avoid dynamic constant resolution with user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)params\[.*\]\.constantize`), CWEID: "CWE-94"},
+
+		// --- Python XSS: Flask render_template with user input (CWE-79) ---
+
+		// render_template_string with user input
+		{ID: "PY026", Title: "Flask render_template_string with user input", Description: "render_template_string with user-controlled input can lead to XSS. Use render_template with auto-escaping instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template_string\s*\(`), CWEID: "CWE-79"},
+		// render_template with request.* in arguments
+		{ID: "PY027", Title: "Flask render_template with user input", Description: "render_template with user-controlled input from request object may lead to XSS if auto-escaping is disabled. Ensure auto-escaping is enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template\s*\([^)]*request\.`), CWEID: "CWE-79", SkipQuoteFilter: true},
 	}
 }
 
