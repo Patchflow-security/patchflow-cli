@@ -187,11 +187,14 @@ func (r *Registry) Coverage() CoverageReport {
 // A rule is active if:
 // 1. Its maturity level is included in the profile, AND
 // 2. The profile is in the rule's profiles list.
+// Unknown rules (not in the registry) default to active in all profiles —
+// this ensures new rules that haven't been registered yet are still reported
+// rather than silently suppressed.
 func (r *Registry) IsRuleActiveInProfile(id string, profile Profile) bool {
 	meta, ok := r.Get(id)
 	if !ok {
-		// Unknown rule: only active in audit profile.
-		return profile == ProfileAudit
+		// Unknown rule: default to active so new rules aren't silently dropped.
+		return true
 	}
 	if !profile.IncludesMaturity(meta.Maturity) {
 		return false

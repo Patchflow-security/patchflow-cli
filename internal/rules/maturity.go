@@ -150,8 +150,10 @@ func DefaultMaturityForEngine(e Engine) Maturity {
 		// Tree-sitter taint patterns are newer.
 		return MaturityBeta
 	case EnginePatterns:
-		// Regex patterns have the highest false-positive risk.
-		return MaturityExperimental
+		// Regex patterns have quote-filtering and context tracking to reduce
+		// false positives. Upgraded from experimental to beta after the
+		// SkipQuoteFilter mechanism was added for injection rules.
+		return MaturityBeta
 	default:
 		return MaturityExperimental
 	}
@@ -168,8 +170,8 @@ func DefaultProfilesForEngine(e Engine) []Profile {
 		// AST engines: included in PR, CI, and audit (not dev for speed).
 		return []Profile{ProfilePR, ProfileCI, ProfileAudit}
 	case EnginePatterns:
-		// Regex patterns: audit-only by default (too noisy for CI blocking).
-		return []Profile{ProfileAudit}
+		// Regex patterns: included in CI and audit (beta maturity, non-blocking).
+		return []Profile{ProfileCI, ProfileAudit}
 	default:
 		return []Profile{ProfileAudit}
 	}

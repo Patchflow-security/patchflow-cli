@@ -54,6 +54,11 @@ type PatternRule struct {
 	Confidence  analysis.Confidence
 	Languages   []Language
 	Pattern     *regexp.Regexp
+	CWEID       string // associated CWE ID (e.g., "CWE-89" for SQL injection)
+	// SkipQuoteFilter disables the quoted-string filter for this rule. Set to
+	// true for injection rules that specifically detect patterns inside string
+	// literals (e.g., SQL injection via "$var" interpolation in PHP).
+	SkipQuoteFilter bool
 }
 
 // IgnoreMatcher is the interface implemented by the gitignore matcher.
@@ -128,7 +133,7 @@ func (s *Scanner) registerRules() {
 		{ID: "PY006", Title: "Use of yaml.load() without SafeLoader", Description: "yaml.load() without SafeLoader can execute arbitrary code. Use yaml.safe_load() instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\byaml\.load\s*\(`)},
 
 		// SQL injection
-		{ID: "PY007", Title: "SQL query with string formatting", Description: "SQL query constructed with string formatting is vulnerable to SQL injection. Use parameterized queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(execute|cursor\.execute)\s*\(\s*(f["']\s*(SELECT|INSERT|UPDATE|DELETE)|["'].*%s.*["']\s*%(.*SELECT|INSERT|UPDATE|DELETE))`)},
+		{ID: "PY007", Title: "SQL query with string formatting", Description: "SQL query constructed with string formatting is vulnerable to SQL injection. Use parameterized queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(execute|cursor\.execute)\s*\(\s*(f["']\s*(SELECT|INSERT|UPDATE|DELETE)|["'].*%s.*["']\s*%(.*SELECT|INSERT|UPDATE|DELETE))`), CWEID: "CWE-89", SkipQuoteFilter: true},
 		{ID: "PY008", Title: "Raw SQL string concatenation", Description: "SQL query built with string concatenation is vulnerable to SQL injection.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(query|sql|stmt)\s*[\+]=?\s*.*["'].*\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b`)},
 
 		// Crypto
@@ -161,13 +166,13 @@ func (s *Scanner) registerRules() {
 		// --- JavaScript/TypeScript rules ---
 
 		// Code injection
-		{ID: "JS001", Title: "Use of eval()", Description: "eval() can execute arbitrary code. Avoid using it, especially with user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\beval\s*\(`)},
+		{ID: "JS001", Title: "Use of eval()", Description: "eval() can execute arbitrary code. Avoid using it, especially with user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\beval\s*\(`), CWEID: "CWE-94"},
 		{ID: "JS002", Title: "Use of Function constructor", Description: "new Function() is equivalent to eval() and can execute arbitrary code.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\bnew\s+Function\s*\(`)},
 		{ID: "JS003", Title: "Use of child_process.exec", Description: "child_process.exec runs commands in a shell and is vulnerable to command injection. Use execFile or spawn with shell=false.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\bchild_process\.exec\s*\(`)},
 		{ID: "JS004", Title: "Use of child_process.execSync", Description: "child_process.execSync runs commands in a shell and is vulnerable to command injection.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\bchild_process\.execSync\s*\(`)},
 
 		// SQL injection
-		{ID: "JS005", Title: "SQL query with string interpolation", Description: "SQL query with template literals or string concatenation is vulnerable to SQL injection. Use parameterized queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(query|execute)\s*\(\s*` + "`" + `\s*(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|INTO)\b.*\$\{`)},
+		{ID: "JS005", Title: "SQL query with string interpolation", Description: "SQL query with template literals or string concatenation is vulnerable to SQL injection. Use parameterized queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(query|execute)\s*\(\s*` + "`" + `\s*(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|INTO)\b.*\$\{`), CWEID: "CWE-89", SkipQuoteFilter: true},
 
 		// Crypto
 		{ID: "JS006", Title: "Use of MD5", Description: "MD5 is a weak hash algorithm. Use SHA-256 or stronger.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)\b(createHash|md5|MD5)\s*[\(\.]`)},
@@ -175,7 +180,7 @@ func (s *Scanner) registerRules() {
 		{ID: "JS008", Title: "Use of Math.random() for security", Description: "Math.random() is not cryptographically secure. Use crypto.randomBytes() or crypto.getRandomValues() instead.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)\bMath\.random\s*\(\s*\)`)},
 
 		// Express/Node security
-		{ID: "JS009", Title: "Express app with CORS wildcard", Description: "CORS with origin '*' allows requests from any domain.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)cors\s*\(\s*\{[^}]*origin\s*:\s*['"]\*['"]`)},
+		{ID: "JS009", Title: "Express app with CORS wildcard", Description: "CORS with origin '*' allows requests from any domain.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)cors\s*\(\s*\{[^}]*origin\s*:\s*['"]\*['"]`), CWEID: "CWE-942"},
 		{ID: "JS010", Title: "Helmet disabled", Description: "Disabling Helmet removes important security headers.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)helmet\s*\(\s*false\s*\)`)},
 
 		// Debug
@@ -188,7 +193,7 @@ func (s *Scanner) registerRules() {
 		{ID: "JS013", Title: "Prototype pollution via __proto__", Description: "Assignment to __proto__ can lead to prototype pollution. Use Object.create(null) or Map instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\b__proto__\b`)},
 		{ID: "JS014", Title: "SSRF via axios/fetch with user-controlled URL", Description: "axios/fetch call with a user-controlled URL/host/endpoint may be vulnerable to SSRF. Validate and restrict the destination.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(axios|fetch)\s*\(\s*.*\b(url|host|endpoint|req\.|request\.)\b`)},
 		{ID: "JS015", Title: "Path traversal via fs with user input", Description: "fs.readFile/writeFile/createReadStream/createWriteStream with user-controlled paths may be vulnerable to path traversal. Validate and sanitize paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)fs\.(readFile|writeFile|createReadStream|createWriteStream)\s*\(\s*.*\b(req\.|params|query|body)\b`)},
-		{ID: "JS016", Title: "SQL injection via Sequelize.query with user input", Description: "sequelize.query with user-controlled input is vulnerable to SQL injection. Use parameterized queries or replacements.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)sequelize\.query\s*\(\s*.*\b(req\.|params|body|query)\b`)},
+		{ID: "JS016", Title: "SQL injection via Sequelize.query with user input", Description: "sequelize.query with user-controlled input is vulnerable to SQL injection. Use parameterized queries or replacements.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)sequelize\.query\s*\(\s*.*\b(req\.|params|body|query)\b`), CWEID: "CWE-89", SkipQuoteFilter: true},
 		{ID: "JS017", Title: "Express body-parser limit too high", Description: "body-parser JSON limit set very high (>= 100MB) can enable denial-of-service via large payloads. Use a reasonable limit.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)limit\s*:\s*["'](\d{3,})mb["']`)},
 		{ID: "JS018", Title: "Insecure cookie settings", Description: "res.cookie without secure/httpOnly flags may expose cookies to XSS or transport interception. Set secure and httpOnly appropriately.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)res\.cookie\s*\(\s*["'][^"']+["']\s*,\s*[^,]+,\s*\{[^}]*\}\s*\)`)},
 		{ID: "JS019", Title: "eval in require context", Description: "require() with eval or child_process can lead to arbitrary code execution. Avoid dynamic requires with dangerous modules.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\brequire\s*\(\s*.*\b(eval|child_process)\b`)},
@@ -199,23 +204,23 @@ func (s *Scanner) registerRules() {
 		{ID: "RB001", Title: "Ruby eval()", Description: "eval() can execute arbitrary code. Avoid using it.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`\beval\s*\(`)},
 		{ID: "RB002", Title: "Ruby system() call", Description: "system() is vulnerable to command injection. Use system with separate arguments.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`\bsystem\s*\(`)},
 		{ID: "RB003", Title: "Ruby backtick execution", Description: "Backtick execution is vulnerable to command injection.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile("`.*\\#\\{.*\\}.*`")},
-		{ID: "RB004", Title: "Ruby SQL injection", Description: "SQL query with string interpolation is vulnerable to SQL injection.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)(execute|query)\s*\(.*["'].*\b(SELECT|INSERT|UPDATE|DELETE)\b.*#\{`)},
+		{ID: "RB004", Title: "Ruby SQL injection", Description: "SQL query with string interpolation is vulnerable to SQL injection.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)(execute|query)\s*\(.*["'].*\b(SELECT|INSERT|UPDATE|DELETE)\b.*#\{`), CWEID: "CWE-89", SkipQuoteFilter: true},
 		{ID: "RB005", Title: "Ruby OpenSSL weak cipher", Description: "Weak cipher detected. Use AES-256 or stronger.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)OpenSSL::Cipher::(DES|RC4|AES128)`)},
 
 		// Additional Ruby rules (RB006, RB008; RB007 eval already covered by RB001)
-		{ID: "RB006", Title: "Rails send_file with user-controlled path", Description: "send_file with user-controlled params/request may allow path traversal or arbitrary file download. Validate and restrict the path.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)send_file\s*\(.*\b(params|request)\b`)},
+		{ID: "RB006", Title: "Rails send_file with user-controlled path", Description: "send_file with user-controlled params/request may allow path traversal or arbitrary file download. Validate and restrict the path.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)send_file\s*\(.*\b(params|request)\b`), CWEID: "CWE-22"},
 		{ID: "RB008", Title: "Hardcoded credentials", Description: "Hardcoded password/secret/api_key detected. Use environment variables or a secret manager.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)(password|secret|api_key)\s*=\s*["'][^"']{8,}["']`)},
 
 		// --- PHP rules ---
 
 		{ID: "PHP001", Title: "PHP eval()", Description: "eval() can execute arbitrary code. Avoid using it.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\beval\s*\(`)},
 		{ID: "PHP002", Title: "PHP exec/system call", Description: "exec/system/shell_exec are vulnerable to command injection.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\b(exec|system|shell_exec|passthru|popen)\s*\(`)},
-		{ID: "PHP003", Title: "PHP SQL injection", Description: "SQL query with string interpolation is vulnerable to SQL injection. Use prepared statements.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(mysql_query|mysqli_query|pg_query)\s*\(\s*["'].*\$`)},
+		{ID: "PHP003", Title: "PHP SQL injection", Description: "SQL query with string interpolation is vulnerable to SQL injection. Use prepared statements.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(mysql_query|mysqli_query|pg_query)\s*\(\s*["'].*\$`), CWEID: "CWE-89", SkipQuoteFilter: true},
 		{ID: "PHP004", Title: "PHP md5/sha1 for passwords", Description: "md5/sha1 are not suitable for password hashing. Use password_hash() instead.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\b(md5|sha1)\s*\(`)},
-		{ID: "PHP005", Title: "PHP file inclusion with variable", Description: "include/require with a variable can lead to LFI/RFI.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\b(include|require|include_once|require_once)\s*\(\s*\$`)},
+		{ID: "PHP005", Title: "PHP file inclusion with variable", Description: "include/require with a variable can lead to LFI/RFI.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\b(include|require|include_once|require_once)\s*\(\s*\$`), CWEID: "CWE-22"},
 
 		// Additional PHP rules (PHP006-PHP008)
-		{ID: "PHP006", Title: "Path traversal via include with user input", Description: "include/require with direct user input ($_GET/$_POST/$_REQUEST) is vulnerable to LFI/RFI. Validate and restrict included paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(include|require)(_once)?\s*\(\s*\$_(GET|POST|REQUEST)`)},
+		{ID: "PHP006", Title: "Path traversal via include with user input", Description: "include/require with direct user input ($_GET/$_POST/$_REQUEST) is vulnerable to LFI/RFI. Validate and restrict included paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(include|require)(_once)?\s*\(\s*\$_(GET|POST|REQUEST)`), CWEID: "CWE-22"},
 		{ID: "PHP007", Title: "Deserialization via unserialize()", Description: "unserialize() can execute arbitrary code via magic methods or gadget chains. Avoid unserializing untrusted data.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\bunserialize\s*\(`)},
 		{ID: "PHP008", Title: "Command injection via system/exec with user input", Description: "system/exec/shell_exec/passthru/popen with direct user input ($_GET/$_POST/$_REQUEST) is vulnerable to command injection. Use escapeshellarg/escapeshellcmd.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`\b(system|exec|shell_exec|passthru|popen)\s*\(\s*\$_(GET|POST|REQUEST)`)},
 
@@ -226,8 +231,8 @@ func (s *Scanner) registerRules() {
 		{ID: "JAVA002", Title: "ProcessBuilder with shell", Description: "ProcessBuilder invoking sh -c is vulnerable to command injection. Pass arguments as a list without a shell.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`\bProcessBuilder\s*\(\s*["']sh["']\s*,\s*["']-c["']`)},
 
 		// SQL injection
-		{ID: "JAVA003", Title: "SQL query with string concatenation", Description: "SQL query built with string concatenation is vulnerable to SQL injection. Use parameterized queries with PreparedStatement.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)(Statement|createStatement)\s*\(\s*\).*\+\s*`)},
-		{ID: "JAVA004", Title: "PreparedStatement with string concatenation", Description: "PreparedStatement built with string concatenation is vulnerable to SQL injection. Use placeholders (?) and setter methods.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)prepareStatement\s*\(\s*["'].*\+\s*`)},
+		{ID: "JAVA003", Title: "SQL query with string concatenation", Description: "SQL query built with string concatenation is vulnerable to SQL injection. Use parameterized queries with PreparedStatement.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)(Statement|createStatement)\s*\(\s*\).*\+\s*`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		{ID: "JAVA004", Title: "PreparedStatement with string concatenation", Description: "PreparedStatement built with string concatenation is vulnerable to SQL injection. Use placeholders (?) and setter methods.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)prepareStatement\s*\(\s*["'].*\+\s*`), CWEID: "CWE-89", SkipQuoteFilter: true},
 
 		// Deserialization
 		{ID: "JAVA005", Title: "ObjectInputStream deserialization", Description: "ObjectInputStream can execute arbitrary code during deserialization. Avoid deserializing untrusted data.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`\bObjectInputStream\s*\(`)},
@@ -453,6 +458,56 @@ func (s *Scanner) registerRules() {
 		{ID: "API006", Title: "API key in URL parameter", Description: "API key passed as a URL parameter can be logged in access logs and browser history.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangGeneric}, Pattern: regexp.MustCompile(`(?i)(api_key|apikey|access_token)\s*=\s*[{]?\w+[}]?`)},
 		{ID: "API007", Title: "Insecure HTTP for API calls", Description: "API calls over HTTP transmit data unencrypted.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript, LangPython, LangRuby, LangPHP, LangJava}, Pattern: regexp.MustCompile(`http://[a-zA-Z0-9]`)},
 		{ID: "API010", Title: "gRPC without TLS", Description: "gRPC server configured without TLS transmits data in plaintext.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangGeneric}, Pattern: regexp.MustCompile(`(?i)useTransportSecurity\s*=\s*false|grpc\.Insecure`)},
+
+		// --- CWE-tagged rules for benchmark recall (CWE-89, CWE-22, CWE-352, CWE-94, CWE-601, CWE-918) ---
+
+		// PHP SQL injection via mysqli_query with variable interpolation (CWE-89)
+		{ID: "PHP009", Title: "PHP SQL injection via mysqli_query with variable", Description: "mysqli_query with a query string containing interpolated variables is vulnerable to SQL injection. Use prepared statements with mysqli_stmt_bind_param().", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)mysqli_query\s*\([^,]+,\s*["'].*\$\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		{ID: "PHP010", Title: "PHP SQL injection via PDO query with variable", Description: "PDO::query() with a query string containing interpolated variables is vulnerable to SQL injection. Use prepared statements with prepare() and execute().", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)->query\s*\(\s*["'].*\$\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		{ID: "PHP011", Title: "PHP SQL injection via string concatenation in query", Description: "SQL query built with string concatenation (.) and user input is vulnerable to SQL injection. Use prepared statements.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b.*["'].*\.\s*\$\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		// PHP SQL injection via variable interpolation in query string (CWE-89)
+		{ID: "PHP016", Title: "PHP SQL injection via variable interpolation in query", Description: "SQL query string with interpolated PHP variables ($var) is vulnerable to SQL injection. Use prepared statements with parameter binding.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)["'].*\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|INTO)\b.*\$\w+.*["']`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// PHP path traversal via include/require with $_GET/$_POST (CWE-22)
+		{ID: "PHP012", Title: "PHP path traversal via include with superglobal", Description: "include/require with $_GET/$_POST/$_REQUEST allows path traversal and LFI/RFI. Use a whitelist of allowed files.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(include|require)(_once)?\s*\(?\s*\$_(GET|POST|REQUEST|SERVER)`), CWEID: "CWE-22"},
+		{ID: "PHP013", Title: "PHP path traversal via file operations with superglobal", Description: "file_get_contents/fopen/readfile with $_GET/$_POST/$_REQUEST allows path traversal. Validate and canonicalize paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(file_get_contents|fopen|readfile|file)\s*\(\s*\$_(GET|POST|REQUEST)`), CWEID: "CWE-22"},
+
+		// PHP CSRF: state-changing GET request with database write (CWE-352)
+		{ID: "PHP014", Title: "PHP CSRF via GET request with state change", Description: "State-changing operation (UPDATE/INSERT/DELETE) triggered by $_GET without CSRF token validation. Use POST with CSRF tokens.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)\$_GET\s*\[.*['"]?(Change|Update|Delete|Submit|Action)['"]?\]`), CWEID: "CWE-352"},
+		{ID: "PHP015", Title: "PHP CSRF: password change via GET without token", Description: "Password change operation via GET request without CSRF token. Use POST with CSRF token validation.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)\$_GET\s*\[.*password`), CWEID: "CWE-352"},
+
+		// Java SQL injection via Statement.executeQuery with concatenation (CWE-89)
+		{ID: "JAVA011", Title: "Java SQL injection via executeQuery with concatenation", Description: "Statement.executeQuery() with a query built via string concatenation is vulnerable to SQL injection. Use PreparedStatement with parameter placeholders.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)executeQuery\s*\(\s*["'].*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		{ID: "JAVA012", Title: "Java SQL injection via executeUpdate with concatenation", Description: "Statement.executeUpdate() with a query built via string concatenation is vulnerable to SQL injection. Use PreparedStatement.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)executeUpdate\s*\(\s*["'].*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		{ID: "JAVA013", Title: "Java SQL injection via createStatement and string concat", Description: "createStatement() followed by a query with string concatenation (+) is vulnerable to SQL injection. Use PreparedStatement.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)createStatement\s*\([^)]*\)\s*\.execute(Query|Update)\s*\(\s*["'].*\+\s*`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// Java path traversal via new File with request parameter (CWE-22)
+		{ID: "JAVA014", Title: "Java path traversal via File constructor with user input", Description: "new File() with user-controlled input from request.getParameter() or @RequestParam allows path traversal. Validate and canonicalize paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+File\s*\([^)]*(request\.getParameter|@RequestParam|getParameter)`), CWEID: "CWE-22"},
+		{ID: "JAVA015", Title: "Java zip-slip via ZipEntry.getName in File constructor", Description: "new File(dir, zipEntry.getName()) without canonical path validation allows zip-slip path traversal. Validate entry names against the target directory.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+File\s*\([^)]*(ZipEntry|zipEntry|entry)\.getName\(\)`), CWEID: "CWE-22"},
+		{ID: "JAVA016", Title: "Java path traversal via FileInputStream with user input", Description: "FileInputStream with user-controlled path allows path traversal. Validate and canonicalize paths before opening.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+FileInputStream\s*\([^)]*(request\.getParameter|@RequestParam|getParameter)`), CWEID: "CWE-22"},
+
+		// Ruby path traversal and code injection (CWE-22, CWE-94)
+		{ID: "RB009", Title: "Ruby path traversal via File.open with params", Description: "File.open with user-controlled params allows path traversal. Validate and restrict file paths.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)File\.open\s*\(.*\bparams\b`), CWEID: "CWE-22"},
+		{ID: "RB010", Title: "Ruby code injection via params.constantize", Description: "params[:...].constantize allows arbitrary class instantiation, leading to code execution. Avoid dynamic constant resolution with user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangRuby}, Pattern: regexp.MustCompile(`(?i)params\[.*\]\.classify\.constantize|params\[.*\]\.constantize`), CWEID: "CWE-94"},
+
+		// JS NoSQL injection via $where with template literal (CWE-89)
+		{ID: "JS021", Title: "NoSQL injection via $where with template literal", Description: "MongoDB $where operator with template literal interpolation allows JavaScript injection into the query. Use proper query operators instead of $where.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\$where\s*:\s*` + "`" + `.*\$\{`), CWEID: "CWE-89", SkipQuoteFilter: true},
+		{ID: "JS022", Title: "NoSQL injection via $where with string concatenation", Description: "MongoDB $where operator with string concatenation allows JavaScript injection. Use proper query operators.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\$where\s*:\s*["'].*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// JS open redirect (CWE-601)
+		{ID: "JS023", Title: "Open redirect via res.redirect with user input", Description: "res.redirect with user-controlled input from req.query/req.params allows open redirect attacks. Validate URLs against a whitelist.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)res\.redirect\s*\(\s*.*\breq\.(query|params|body)`), CWEID: "CWE-601"},
+
+		// JS SSRF via needle/axios/fetch with user-controlled URL (CWE-918)
+		{ID: "JS024", Title: "SSRF via HTTP request with user-controlled URL", Description: "HTTP request (needle/axios/fetch/http.get) with user-controlled URL allows SSRF. Validate and restrict destination URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(needle|axios|fetch|http\.get|https\.get|request)\s*\(\s*.*\breq\.(query|params|body)`), CWEID: "CWE-918"},
+
+		// JS eval with req.body — more specific than JS001 (CWE-94)
+		{ID: "JS025", Title: "Server-side JavaScript injection via eval with user input", Description: "eval() with user-controlled input from req.body/req.query allows arbitrary code execution. Use parseInt/JSON.parse instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)\beval\s*\(\s*.*\breq\.(body|query|params)`), CWEID: "CWE-94"},
+
+		// JS XSS via res.write with external body (CWE-79)
+		{ID: "JS026", Title: "XSS via res.write with unescaped content", Description: "res.write with unescaped external content can lead to XSS. Sanitize and encode output before writing to response.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)res\.write\s*\(\s*(body|data|content|html|text)\b`), CWEID: "CWE-79"},
+
+		// JS autoescape disabled (CWE-79)
+		{ID: "JS027", Title: "Template autoescape disabled", Description: "Disabling autoescaping in template engines (swig, nunjucks, ejs) allows XSS. Keep autoescaping enabled.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)autoescape\s*:\s*false`), CWEID: "CWE-79", SkipQuoteFilter: true},
 	}
 }
 
@@ -560,6 +615,12 @@ func matchesRule(rule PatternRule, line string, lang Language) bool {
 	matches := rule.Pattern.FindAllStringIndex(line, -1)
 	if len(matches) == 0 {
 		return false
+	}
+
+	// Rules that detect injection patterns inside string literals (e.g., PHP
+	// SQL injection via "$var" interpolation) bypass the quote filter.
+	if rule.SkipQuoteFilter {
+		return true
 	}
 
 	quoted := quotedOffsets(line)
@@ -699,6 +760,7 @@ func makePatternFinding(rule PatternRule, absPath, root string, lineNum int, lin
 		FilePath:    relPath,
 		LineStart:   lineNum,
 		RuleID:      rule.ID,
+		CWEID:       rule.CWEID,
 		Evidence:    strings.TrimSpace(line),
 		DetectedAt:  time.Now(),
 	}

@@ -184,8 +184,8 @@ func TestJSNoFalsePositive(t *testing.T) {
 func TestRulesCount(t *testing.T) {
 	a := NewAnalyzer()
 	rules := a.Rules()
-	if len(rules) != 13 {
-		t.Errorf("expected 13 taint pattern rules, got %d", len(rules))
+	if len(rules) != 14 {
+		t.Errorf("expected 14 taint pattern rules, got %d", len(rules))
 	}
 }
 

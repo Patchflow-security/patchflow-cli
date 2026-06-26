@@ -103,8 +103,8 @@ func TestExperimentalRulesNotBlocking(t *testing.T) {
 
 	for _, meta := range patternRules {
 		t.Run(meta.ID, func(t *testing.T) {
-			if meta.Maturity != MaturityExperimental {
-				t.Errorf("pattern rule %s: expected maturity experimental, got %s", meta.ID, meta.Maturity)
+			if meta.Maturity != MaturityBeta {
+				t.Errorf("pattern rule %s: expected maturity beta, got %s", meta.ID, meta.Maturity)
 			}
 			if meta.BlockingEligible {
 				t.Errorf("pattern rule %s: should NOT be blocking eligible", meta.ID)
@@ -113,9 +113,9 @@ func TestExperimentalRulesNotBlocking(t *testing.T) {
 			if r.IsRuleActiveInProfile(meta.ID, ProfileDev) {
 				t.Errorf("pattern rule %s: should NOT be active in dev profile", meta.ID)
 			}
-			// Should NOT be active in ci profile
-			if r.IsRuleActiveInProfile(meta.ID, ProfileCI) {
-				t.Errorf("pattern rule %s: should NOT be active in ci profile", meta.ID)
+			// SHOULD be active in ci profile (beta maturity, non-blocking)
+			if !r.IsRuleActiveInProfile(meta.ID, ProfileCI) {
+				t.Errorf("pattern rule %s: should be active in ci profile", meta.ID)
 			}
 			// SHOULD be active in audit profile
 			if !r.IsRuleActiveInProfile(meta.ID, ProfileAudit) {
@@ -340,15 +340,14 @@ func TestInactiveRulesForProfile(t *testing.T) {
 		t.Errorf("expected 0 inactive rules for audit profile, got %d", len(inactiveAudit))
 	}
 
-	// CI profile should have inactive rules (experimental only)
+	// CI profile may have inactive rules (experimental only). With all engines
+	// at beta or higher, CI may have 0 inactive rules — just verify dev has
+	// at least as many inactive as CI.
 	inactiveCI := r.InactiveRulesForProfile(ProfileCI)
-	if len(inactiveCI) == 0 {
-		t.Error("expected inactive rules for ci profile")
-	}
 
-	// Dev should have more inactive than CI
-	if len(inactiveDev) <= len(inactiveCI) {
-		t.Errorf("dev should have more inactive rules than ci (dev=%d, ci=%d)",
+	// Dev should have at least as many inactive as CI
+	if len(inactiveDev) < len(inactiveCI) {
+		t.Errorf("dev should have at least as many inactive rules as ci (dev=%d, ci=%d)",
 			len(inactiveDev), len(inactiveCI))
 	}
 }
@@ -362,7 +361,7 @@ func TestFilterFindingsByProfile(t *testing.T) {
 	ruleIDs := []string{
 		"G101",       // stable, Go SAST — active in dev
 		"G701",       // stable, taint SSA — active in dev
-		"PY001",      // experimental, patterns — NOT active in dev
+		"PY001",      // beta, patterns — NOT active in dev (beta requires PR+)
 		"TS-PY001",   // beta, tree-sitter — NOT active in dev
 		"SECRET-AWS Access Key ID", // stable, secrets — active in dev
 	}
@@ -379,9 +378,9 @@ func TestFilterFindingsByProfile(t *testing.T) {
 		t.Errorf("audit profile: expected 5 active rules, got %d (%v)", len(filtered), filtered)
 	}
 
-	// CI profile: should keep stable + beta (not experimental)
+	// CI profile: should keep stable + beta (all 5 now that patterns are beta)
 	filtered = r.FilterFindingsByProfile(ruleIDs, ProfileCI)
-	if len(filtered) != 4 {
-		t.Errorf("ci profile: expected 4 active rules, got %d (%v)", len(filtered), filtered)
+	if len(filtered) != 5 {
+		t.Errorf("ci profile: expected 5 active rules, got %d (%v)", len(filtered), filtered)
 	}
 }

@@ -355,10 +355,22 @@ func matchGlobSegments(pattern, target []string) bool {
 	// Find ** in the pattern
 	for i, seg := range pattern {
 		if seg == "**" {
-			// ** matches zero or more segments
-			// Try matching the rest of the pattern at every possible position
+			// ** matches zero or more segments.
+			// The segments before ** must match the corresponding target
+			// segments (prefix), and the segments after ** must match the
+			// remaining target segments (suffix). Try every possible split.
+			prefix := pattern[:i]
 			rest := pattern[i+1:]
 			for j := i; j <= len(target); j++ {
+				// Verify prefix matches target[0:i] (note: prefix has i segments)
+				if len(prefix) > 0 {
+					if len(target[:j]) < len(prefix) {
+						continue
+					}
+					if !matchGlobSegments(prefix, target[:len(prefix)]) {
+						continue
+					}
+				}
 				if matchGlobSegments(rest, target[j:]) {
 					return true
 				}

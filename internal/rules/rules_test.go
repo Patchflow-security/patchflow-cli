@@ -66,7 +66,7 @@ func TestDefaultMaturityForEngine(t *testing.T) {
 		EngineSecrets:       MaturityStable,
 		EngineTreeSitter:    MaturityBeta,
 		EngineTaintPatterns: MaturityBeta,
-		EnginePatterns:      MaturityExperimental,
+		EnginePatterns:      MaturityBeta,
 	}
 	for engine, want := range cases {
 		if got := DefaultMaturityForEngine(engine); got != want {
@@ -224,10 +224,10 @@ func TestRegistryCoverage(t *testing.T) {
 	if report.MaturityCounts["stable"] != 2 {
 		t.Errorf("expected 2 stable rules, got %d", report.MaturityCounts["stable"])
 	}
-	if report.MaturityCounts["experimental"] != 1 {
-		t.Errorf("expected 1 experimental rule, got %d", report.MaturityCounts["experimental"])
+	if report.MaturityCounts["beta"] != 1 {
+		t.Errorf("expected 1 beta rule, got %d", report.MaturityCounts["beta"])
 	}
-	// G101 is stable+high = blocking; G302 is stable+low = not blocking; PY001 is experimental = not blocking
+	// G101 is stable+high = blocking; G302 is stable+low = not blocking; PY001 is beta = not blocking
 	if report.BlockingEligible != 1 {
 		t.Errorf("expected 1 blocking eligible, got %d", report.BlockingEligible)
 	}

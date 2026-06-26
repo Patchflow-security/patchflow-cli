@@ -248,6 +248,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityMedium,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "javascript",
+			CWEID:       "CWE-918",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},
@@ -268,6 +269,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceHigh,
 			Language:    "javascript",
+			CWEID:       "CWE-94",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},
@@ -288,6 +290,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityMedium,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "javascript",
+			CWEID:       "CWE-601",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},
@@ -296,6 +299,28 @@ func builtInRules() []Rule {
 			Sinks: []SinkPattern{
 				{FuncName: "redirect", ArgIndex: 0},
 				{FuncName: "res.redirect", ArgIndex: 0},
+			},
+		},
+		{
+			ID:          "TP-JS008",
+			Title:       "NoSQL injection (tainted data in MongoDB query)",
+			Description: "User input flows into a MongoDB query function. Use proper query operators and validate input to prevent NoSQL injection.",
+			Severity:    analysis.SeverityHigh,
+			Confidence:  analysis.ConfidenceMedium,
+			Language:    "javascript",
+			CWEID:       "CWE-89",
+			Sources: []SourcePattern{
+				{FuncName: "req.query", IsSubscript: true},
+				{FuncName: "req.params", IsSubscript: true},
+				{FuncName: "req.body", IsSubscript: true},
+			},
+			Sinks: []SinkPattern{
+				{FuncName: "find", ArgIndex: 0},
+				{FuncName: "findOne", ArgIndex: 0},
+				{FuncName: "updateOne", ArgIndex: 0},
+				{FuncName: "deleteOne", ArgIndex: 0},
+				{FuncName: "aggregate", ArgIndex: 0},
+				{FuncName: "where", ArgIndex: 0},
 			},
 		},
 	}
