@@ -109,6 +109,8 @@ func vulnToFinding(vuln osvclient.Vulnerability, dep analysis.Dependency) analys
 	recommendation := ""
 	if fixedVer != "" {
 		recommendation = fmt.Sprintf("Upgrade %s to %s or later", dep.Name, fixedVer)
+	} else if advisoryURL != "" {
+		recommendation = fmt.Sprintf("Review advisory for %s — no fixed version available yet (%s)", dep.Name, advisoryURL)
 	} else {
 		recommendation = fmt.Sprintf("Review advisory for %s — no fixed version available", dep.Name)
 	}

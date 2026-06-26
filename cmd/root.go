@@ -73,6 +73,23 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// ExitCoder is an error that carries a specific exit code for CI integration.
+// When a command returns an ExitCoder error, main.go uses ExitCode() instead
+// of the default exit code.
+type ExitCoder interface {
+	error
+	ExitCode() int
+}
+
+// ExitError is a concrete implementation of ExitCoder.
+type ExitError struct {
+	Code int
+	Msg  string
+}
+
+func (e *ExitError) Error() string { return e.Msg }
+func (e *ExitError) ExitCode() int { return e.Code }
+
 func initLogger(verbose bool) (*zap.Logger, error) {
 	if verbose {
 		return zap.NewDevelopment()

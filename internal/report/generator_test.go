@@ -191,6 +191,90 @@ func TestSARIF(t *testing.T) {
 	}
 }
 
+func TestGroupSCAFindings(t *testing.T) {
+	findings := []analysis.Finding{
+		{
+			ID:             "sca-npm-next-GHSA-1",
+			Type:           analysis.TypeSCA,
+			Severity:       analysis.SeverityMedium,
+			Title:          "next@16.0.10: GHSA-1",
+			PackageName:    "next",
+			PackageVersion: "16.0.10",
+			FilePath:       "package.json",
+			Reachability:   analysis.ReachabilityHigh,
+			ReachabilityConfidence: analysis.ConfidenceHigh,
+		},
+		{
+			ID:             "sca-npm-next-GHSA-2",
+			Type:           analysis.TypeSCA,
+			Severity:       analysis.SeverityMedium,
+			Title:          "next@16.0.10: GHSA-2",
+			PackageName:    "next",
+			PackageVersion: "16.0.10",
+			FilePath:       "package.json",
+			Reachability:   analysis.ReachabilityHigh,
+			ReachabilityConfidence: analysis.ConfidenceHigh,
+		},
+		{
+			ID:             "sca-npm-vite-GHSA-3",
+			Type:           analysis.TypeSCA,
+			Severity:       analysis.SeverityMedium,
+			Title:          "vite@8.0.12: GHSA-3",
+			PackageName:    "vite",
+			PackageVersion: "8.0.12",
+			FilePath:       "package.json",
+			Reachability:   analysis.ReachabilityHigh,
+			ReachabilityConfidence: analysis.ConfidenceHigh,
+		},
+		{
+			ID:             "sast-1",
+			Type:           analysis.TypeSAST,
+			Severity:       analysis.SeverityHigh,
+			Title:          "SQL injection",
+			FilePath:       "src/main.go",
+			LineStart:      42,
+		},
+	}
+
+	grouped, groups := GroupSCAFindings(findings)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 package groups, got %d", len(groups))
+	}
+	if len(grouped) != 3 { // 2 SCA groups + 1 SAST
+		t.Fatalf("expected 3 grouped findings, got %d", len(grouped))
+	}
+
+	// Verify next group collapsed two advisories into one finding.
+	var nextGroup *analysis.Finding
+	for i := range grouped {
+		if grouped[i].PackageName == "next" {
+			nextGroup = &grouped[i]
+			break
+		}
+	}
+	if nextGroup == nil {
+		t.Fatal("expected a grouped next finding")
+	}
+	if !strings.Contains(nextGroup.Title, "2 advisories") {
+		t.Errorf("expected grouped title to mention 2 advisories, got %q", nextGroup.Title)
+	}
+	if nextGroup.ReachabilityConfidence != analysis.ConfidenceHigh {
+		t.Errorf("expected reachability confidence to be preserved, got %q", nextGroup.ReachabilityConfidence)
+	}
+	if !strings.Contains(nextGroup.Description, "GHSA-1") || !strings.Contains(nextGroup.Description, "GHSA-2") {
+		t.Errorf("expected grouped description to list both advisories, got %q", nextGroup.Description)
+	}
+
+	// Verify package summary table contains the packages.
+	table := packageSummaryTable(groups)
+	if !strings.Contains(table, "next") {
+		t.Error("package summary table should contain next")
+	}
+	if !strings.Contains(table, "vite") {
+		t.Error("package summary table should contain vite")
+	}
+}
+
 func TestSeverityToSARIFLevel(t *testing.T) {
 	tests := []struct {
 		sev   analysis.Severity

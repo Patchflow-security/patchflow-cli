@@ -105,22 +105,30 @@ type Dependency struct {
 
 // AnalysisResult is the complete output of an analysis run.
 type AnalysisResult struct {
-	ScanID         string    `json:"scan_id"`
-	ProjectRoot    string    `json:"project_root"`
-	Branch         string    `json:"branch"`
-	CommitSHA      string    `json:"commit_sha"`
-	BaseBranch     string    `json:"base_branch"`
-	StartedAt      time.Time `json:"started_at"`
-	CompletedAt    time.Time `json:"completed_at"`
-	Findings       []Finding `json:"findings"`
-	Dependencies   []Dependency `json:"dependencies"`
-	RiskScore      int       `json:"risk_score"`
-	RiskLevel      string    `json:"risk_level"`
-	FilesChanged   int       `json:"files_changed"`
-	AddedLines     int       `json:"added_lines"`
-	DeletedLines   int       `json:"deleted_lines"`
-	Manifests      []string  `json:"manifests"`
-	Analyzers      []string  `json:"analyzers"`
+	ScanID         string          `json:"scan_id"`
+	ProjectRoot    string          `json:"project_root"`
+	Branch         string          `json:"branch"`
+	CommitSHA      string          `json:"commit_sha"`
+	BaseBranch     string          `json:"base_branch"`
+	StartedAt      time.Time       `json:"started_at"`
+	CompletedAt    time.Time       `json:"completed_at"`
+	Findings       []Finding       `json:"findings"`
+	Dependencies   []Dependency    `json:"dependencies"`
+	RiskScore      int             `json:"risk_score"`
+	RiskLevel      string          `json:"risk_level"`
+	FilesChanged   int             `json:"files_changed"`
+	AddedLines     int             `json:"added_lines"`
+	DeletedLines   int             `json:"deleted_lines"`
+	Manifests      []string        `json:"manifests"`
+	Analyzers      []string        `json:"analyzers"`
+	EngineTimings  []EngineTiming  `json:"engine_timings,omitempty"`
+}
+
+// EngineTiming records the duration a specific scanner engine took.
+type EngineTiming struct {
+	Engine   string        `json:"engine"`
+	Duration time.Duration `json:"duration"`
+	Findings int           `json:"findings"`
 }
 
 // SeverityWeight returns a numeric weight for a severity level used in risk scoring.
@@ -168,9 +176,9 @@ func ReachabilityWeight(r ReachabilityStatus) float64 {
 	case ReachabilityMedium:
 		return 0.7
 	case ReachabilityLow:
-		return 0.4
+		return 0.3
 	case ReachabilityNone:
-		return 0.1
+		return 0.0
 	case ReachabilityUnknown:
 		return 0.5
 	default:

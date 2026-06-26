@@ -19,11 +19,16 @@ import (
 	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/patchflow/patchflow-cli/internal/ignore"
 	"github.com/patchflow/patchflow-cli/internal/sast/customrules"
 	"github.com/patchflow/patchflow-cli/internal/sast/gosast"
+	"github.com/patchflow/patchflow-cli/internal/sast/incremental"
 	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
 	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
 	"github.com/patchflow/patchflow-cli/internal/sast/suppression"
+	"github.com/patchflow/patchflow-cli/internal/sast/taint"
+	"github.com/patchflow/patchflow-cli/internal/sast/taintpatterns"
+	"github.com/patchflow/patchflow-cli/internal/sast/treesitter"
 )
 
 // Tool represents an external SAST tool that can be invoked via subprocess.
@@ -38,9 +43,12 @@ type Tool struct {
 // Runner manages embedded scanners and external SAST tools.
 type Runner struct {
 	// Embedded scanners (always available, no installation required)
-	gosastAnalyzer *gosast.Analyzer
-	secretScanner  *secrets.Scanner
-	patternScanner *patterns.Scanner
+	gosastAnalyzer     *gosast.Analyzer
+	secretScanner      *secrets.Scanner
+	patternScanner     *patterns.Scanner
+	taintAnalyzer      *taint.Analyzer
+	treesitterAnalyzer *treesitter.Analyzer
+	taintPatternAnalyzer *taintpatterns.Analyzer
 
 	// Suppression manager for //patchflow:ignore directives
 	suppressionMgr *suppression.Manager
@@ -52,9 +60,12 @@ type Runner struct {
 	Timeout      time.Duration
 
 	// Flags to control which scanners run
-	NoEmbeddedGo       bool
-	NoEmbeddedSecrets  bool
-	NoEmbeddedPatterns bool
+	NoEmbeddedGo           bool
+	NoEmbeddedSecrets      bool
+	NoEmbeddedPatterns     bool
+	NoEmbeddedTaint        bool
+	NoEmbeddedTreeSitter   bool
+	NoEmbeddedTaintPatterns bool
 
 	// ShowSuppressed controls whether suppressed findings are included in output
 	ShowSuppressed bool
@@ -65,16 +76,30 @@ type Runner struct {
 	// CustomRulesPath is the path to a custom rules YAML file.
 	// If empty, the runner looks for .patchflow/rules.yaml in the project root.
 	CustomRulesPath string
+
+	// IncrementalScan enables incremental scanning: only files that changed
+	// since the last scan (tracked via .patchflow/cache/sast_state.json) are
+	// re-scanned by the file-based scanners (patterns, secrets, tree-sitter).
+	// Go SAST and taint analysis always run fully (they use go/packages).
+	IncrementalScan bool
+
+	// RespectGitignore controls whether .gitignore patterns are loaded and
+	// used to skip files during scanning. When true, a .gitignore matcher is
+	// initialized on first use and shared across all embedded scanners.
+	RespectGitignore bool
 }
 
 // NewRunner creates a SAST runner with embedded scanners and external tools.
 func NewRunner() *Runner {
 	r := &Runner{
-		Timeout:        120 * time.Second,
-		gosastAnalyzer: gosast.NewAnalyzer(),
-		secretScanner:  secrets.NewScanner(),
-		patternScanner: patterns.NewScanner(),
-		suppressionMgr: suppression.NewManager(),
+		Timeout:               120 * time.Second,
+		gosastAnalyzer:        gosast.NewAnalyzer(),
+		secretScanner:         secrets.NewScanner(),
+		patternScanner:        patterns.NewScanner(),
+		taintAnalyzer:         taint.NewAnalyzer(),
+		treesitterAnalyzer:    treesitter.NewAnalyzer(),
+		taintPatternAnalyzer:  taintpatterns.NewAnalyzer(),
+		suppressionMgr:        suppression.NewManager(),
 	}
 
 	r.Tools = []Tool{
@@ -209,6 +234,63 @@ func (r *Runner) AllRules() []RuleGroup {
 		})
 	}
 
+	// Taint analysis rules (SSA-based, Go only)
+	if !r.NoEmbeddedTaint && !r.NoEmbeddedGo {
+		taintRules := r.taintAnalyzer.Rules()
+		entries := make([]RuleEntry, 0, len(taintRules))
+		for _, tr := range taintRules {
+			entries = append(entries, RuleEntry{
+				ID:       tr.ID,
+				Title:    tr.Title,
+				Severity: tr.Severity,
+			})
+		}
+		groups = append(groups, RuleGroup{
+			Scanner:   "taint-ssa",
+			Language:  "go",
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
+	// Tree-sitter AST rules (non-Go languages)
+	if !r.NoEmbeddedTreeSitter {
+		tsRules := r.treesitterAnalyzer.Rules()
+		entries := make([]RuleEntry, 0, len(tsRules))
+		for _, tr := range tsRules {
+			entries = append(entries, RuleEntry{
+				ID:       tr.ID,
+				Title:    tr.Title,
+				Severity: tr.Severity,
+			})
+		}
+		groups = append(groups, RuleGroup{
+			Scanner:   "treesitter-ast",
+			Language:  "multi",
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
+	// Taint pattern rules (Python and JS/TS source-sink analysis)
+	if !r.NoEmbeddedTaintPatterns {
+		tpRules := r.taintPatternAnalyzer.Rules()
+		entries := make([]RuleEntry, 0, len(tpRules))
+		for _, tr := range tpRules {
+			entries = append(entries, RuleEntry{
+				ID:       tr.ID,
+				Title:    tr.Title,
+				Severity: string(tr.Severity),
+			})
+		}
+		groups = append(groups, RuleGroup{
+			Scanner:   "taint-patterns",
+			Language:  "multi",
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
 	return groups
 }
 
@@ -232,7 +314,7 @@ func (r *Runner) AvailableTools() []string {
 
 // EmbeddedTools returns the names of embedded scanners that are always available.
 func (r *Runner) EmbeddedTools() []string {
-	return []string{"gosast-embedded", "secrets-embedded", "patterns-embedded"}
+	return []string{"gosast-embedded", "secrets-embedded", "patterns-embedded", "taint-ssa", "treesitter-ast", "taint-patterns"}
 }
 
 // Result is the output of a SAST analysis run.
@@ -253,7 +335,27 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		result.Errors = append(result.Errors, fmt.Sprintf("custom-rules: %v", err))
 	}
 
-	// --- Phase 1: Embedded scanners (run in parallel for performance) ---
+	// --- Phase 0b: Load .gitignore matcher if enabled ---
+	var ignoreMatcher *ignore.Matcher
+	if r.RespectGitignore {
+		ignoreCache := ignore.NewCache(root)
+		if matcher := ignoreCache.Get(); !matcher.IsEmpty() {
+			ignoreMatcher = matcher
+			r.secretScanner.SetIgnoreMatcher(matcher)
+			r.patternScanner.SetIgnoreMatcher(matcher)
+			r.treesitterAnalyzer.SetIgnoreMatcher(matcher)
+		}
+	}
+
+	// --- Phase 1: Embedded scanners ---
+	//
+	// Go SAST and taint analysis use go/packages (not file-by-file), so they
+	// run as separate goroutines. Pattern, secrets, and tree-sitter scanners
+	// use the single-pass parallel file collector for ~4x speedup.
+	//
+	// Two parallel groups:
+	//   Group A: Go SAST + Taint (goroutines, use go/packages)
+	//   Group B: Single-pass file dispatch (patterns + secrets + tree-sitter)
 
 	type scannerResult struct {
 		name     string
@@ -262,7 +364,9 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	}
 
 	var wg sync.WaitGroup
-	resultCh := make(chan scannerResult, 3) // buffered for 3 scanners
+	// Buffer must be large enough for all possible results:
+	// Go SAST (1) + Taint SSA (1) + up to 4 parallel scanners + errors
+	resultCh := make(chan scannerResult, 16)
 
 	// 1a. Embedded Go SAST (gosec rules ported to library)
 	if !r.NoEmbeddedGo {
@@ -276,33 +380,70 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		}()
 	}
 
-	// 1b. Embedded secret scanner
-	if !r.NoEmbeddedSecrets {
+	// 1b. Embedded SSA-based taint analysis (Go only)
+	if !r.NoEmbeddedTaint && !r.NoEmbeddedGo {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-			findings, err := r.secretScanner.Analyze(toolCtx, root)
+			findings, err := r.taintAnalyzer.Analyze(toolCtx, root)
 			cancel()
-			resultCh <- scannerResult{name: "secrets-embedded", findings: findings, err: err}
+			resultCh <- scannerResult{name: "taint-ssa", findings: findings, err: err}
 		}()
 	}
 
-	// 1c. Embedded multi-language pattern scanner
-	if !r.NoEmbeddedPatterns {
+	// 1c. Single-pass parallel scanning for patterns + secrets + tree-sitter + taint-patterns
+	// This walks the file tree once and dispatches files to all scanners
+	// in parallel using a worker pool, eliminating redundant tree walks.
+	// When incremental scanning is enabled, only changed files are processed.
+	scanPatterns := !r.NoEmbeddedPatterns
+	scanSecrets := !r.NoEmbeddedSecrets
+	scanTreeSitter := !r.NoEmbeddedTreeSitter
+	scanTaintPatterns := !r.NoEmbeddedTaintPatterns
+
+	// Load incremental state if enabled
+	var incState *incremental.State
+	if r.IncrementalScan {
+		incState = incremental.LoadState(root)
+	}
+
+	if scanPatterns || scanSecrets || scanTreeSitter {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-			findings, err := r.patternScanner.Analyze(toolCtx, root)
-			cancel()
-			resultCh <- scannerResult{name: "patterns-embedded", findings: findings, err: err}
+			scanCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+			defer cancel()
+
+			results, errors := runParallelScanners(
+				scanCtx, root, ignoreMatcher,
+				r.patternScanner, r.secretScanner, r.treesitterAnalyzer, r.taintPatternAnalyzer,
+				scanPatterns, scanSecrets, scanTreeSitter, scanTaintPatterns,
+				r.IncludeTests, r.Timeout, incState,
+			)
+
+			for _, e := range errors {
+				resultCh <- scannerResult{name: "parallel-scanner", err: fmt.Errorf("%s", e)}
+			}
+			for scannerName, findings := range results {
+				resultCh <- scannerResult{name: scannerName, findings: findings}
+			}
 		}()
 	}
 
-	// Wait for all embedded scanners to complete, then collect results
-	wg.Wait()
-	close(resultCh)
+	// Save incremental state after scanning completes
+	if r.IncrementalScan && incState != nil {
+		defer func() {
+			_ = incState.SaveState(root)
+		}()
+	}
+
+	// Close the result channel in a separate goroutine after all scanners
+	// finish. This allows us to drain the channel concurrently with the
+	// scanners running, avoiding a deadlock when the channel buffer fills up.
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
 
 	for sr := range resultCh {
 		if sr.err != nil {
@@ -318,6 +459,11 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			result.ToolsRun = append(result.ToolsRun, sr.name)
 		}
 	}
+
+	// Deduplicate cross-scanner findings: when two scanners detect the same
+	// issue at the same file+line, keep only the one with higher confidence
+	// (preferring AST-confirmed tree-sitter findings over regex patterns).
+	result.Findings = dedupFindings(result.Findings)
 
 	// --- Phase 2: External tools (supplement embedded scanners) ---
 
@@ -367,6 +513,96 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	}
 
 	return result, nil
+}
+
+// dedupFindings removes duplicate findings at the same file+line+rule, keeping
+// the one with higher confidence. This prevents both the regex pattern scanner
+// and the tree-sitter AST scanner from reporting the same issue twice.
+// AST-confirmed findings (treesitter-ast) are preferred over regex-based
+// findings (patterns-embedded) when confidence is equal.
+//
+// The dedup key includes the RuleID so that two different vulnerability types
+// on the same line are both kept (e.g., a SQL injection and a hardcoded
+// password on the same line should not be deduplicated).
+//
+// Uses a hash map for O(n) dedup with a slice for order preservation.
+func dedupFindings(findings []analysis.Finding) []analysis.Finding {
+	type key struct {
+		file   string
+		line   int
+		ruleID string
+	}
+	best := make(map[key]analysis.Finding)
+	var order []key // slice preserves insertion order in O(1) per append
+	prio := map[string]int{
+		"treesitter-ast":    3, // AST-confirmed findings have highest priority
+		"taint-ssa":         3, // SSA-based taint analysis is also high-confidence
+		"taint-patterns":    3, // Source-sink taint analysis is high-confidence
+		"gosast-embedded":   2,
+		"gosec":             2,
+		"secrets-embedded":  2,
+		"patterns-embedded": 1, // regex-based findings have lowest priority
+	}
+
+	for _, f := range findings {
+		// Normalize path for dedup key — different scanners may report
+		// absolute vs relative paths for the same file. Use the last two
+		// path components as a balance between uniqueness and robustness.
+		normalizedPath := f.FilePath
+		parts := strings.Split(filepath.ToSlash(normalizedPath), "/")
+		if len(parts) >= 2 {
+			normalizedPath = parts[len(parts)-2] + "/" + parts[len(parts)-1]
+		} else if len(parts) == 1 {
+			normalizedPath = parts[0]
+		}
+		// Include RuleID in the key so different vulnerability types on the
+		// same line are both kept. Also normalize equivalent rule IDs across
+		// scanners (e.g., a tree-sitter rule and pattern rule detecting the
+		// same issue may have different IDs — match on title as a fallback).
+		ruleKey := f.RuleID
+		if ruleKey == "" {
+			ruleKey = f.Title
+		}
+		k := key{file: normalizedPath, line: f.LineStart, ruleID: ruleKey}
+		existing, ok := best[k]
+		if !ok {
+			best[k] = f
+			order = append(order, k)
+			continue
+		}
+		// Prefer higher confidence (ConfidenceHigh > ConfidenceMedium > ConfidenceLow)
+		if confidenceRank(f.Confidence) > confidenceRank(existing.Confidence) {
+			best[k] = f
+			continue
+		}
+		// If same confidence, prefer higher-priority analyzer
+		if f.Confidence == existing.Confidence {
+			if prio[f.Analyzer] > prio[existing.Analyzer] {
+				best[k] = f
+			}
+		}
+	}
+
+	// Preserve insertion order — O(n) via slice iteration
+	result := make([]analysis.Finding, 0, len(order))
+	for _, k := range order {
+		result = append(result, best[k])
+	}
+	return result
+}
+
+// confidenceRank converts a Confidence string to a numeric rank for comparison.
+func confidenceRank(c analysis.Confidence) int {
+	switch c {
+	case analysis.ConfidenceHigh:
+		return 3
+	case analysis.ConfidenceMedium:
+		return 2
+	case analysis.ConfidenceLow:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func filterFindingsToChanged(findings []analysis.Finding, changedFiles []string) []analysis.Finding {

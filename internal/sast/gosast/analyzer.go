@@ -197,6 +197,15 @@ func (a *Analyzer) registerDefaultRules() {
 
 		// Implicit aliasing (pre-Go 1.22)
 		newImplicitAliasing(),
+
+		// Integer type conversion overflow
+		newIntegerConversion(),
+
+		// Secret serialization to text-based formats
+		newSecretSerialization(),
+
+		// Slice access out of range
+		newSliceBounds(),
 	}
 }
 

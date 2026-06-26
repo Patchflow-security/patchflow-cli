@@ -31,6 +31,7 @@ const (
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	cache      *Cache
 }
 
 // NewClient creates a new OSV client with default settings.
@@ -50,6 +51,12 @@ func NewClientWithHTTP(baseURL string, httpClient *http.Client) *Client {
 		httpClient = &http.Client{Timeout: DefaultTimeout}
 	}
 	return &Client{BaseURL: baseURL, HTTPClient: httpClient}
+}
+
+// SetCache attaches an optional disk cache. Passing nil disables caching and
+// preserves the default (no-cache) behavior.
+func (c *Client) SetCache(cache *Cache) {
+	c.cache = cache
 }
 
 // QueryRequest is the OSV.dev query payload for a single package.
@@ -132,16 +139,38 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 		return nil, nil
 	}
 
+	results := make([][]Vulnerability, len(deps))
+
+	// Check cache first; collect indices that still need an API call.
+	var uncachedIdx []int
+	var uncachedDeps []analysis.Dependency
+	for i, dep := range deps {
+		if c.cache != nil {
+			key := cacheKey(dep)
+			if vulns, ok := c.cache.Get(key); ok {
+				results[i] = vulns
+				continue
+			}
+		}
+		uncachedIdx = append(uncachedIdx, i)
+		uncachedDeps = append(uncachedDeps, dep)
+	}
+
+	// All deps were served from cache.
+	if len(uncachedDeps) == 0 {
+		return results, nil
+	}
+
 	var allResults [][]Vulnerability
 
 	// OSV.dev batch endpoint supports up to 1000 queries per request.
 	const batchSize = 1000
-	for i := 0; i < len(deps); i += batchSize {
+	for i := 0; i < len(uncachedDeps); i += batchSize {
 		end := i + batchSize
-		if end > len(deps) {
-			end = len(deps)
+		if end > len(uncachedDeps) {
+			end = len(uncachedDeps)
 		}
-		chunk := deps[i:end]
+		chunk := uncachedDeps[i:end]
 
 		queries := make([]QueryRequest, 0, len(chunk))
 		for _, dep := range chunk {
@@ -169,7 +198,17 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 		}
 	}
 
-	return allResults, nil
+	// Merge API results back into the parallel results slice and cache them.
+	for j, idx := range uncachedIdx {
+		if j < len(allResults) {
+			results[idx] = allResults[j]
+			if c.cache != nil {
+				c.cache.Set(cacheKey(deps[idx]), allResults[j])
+			}
+		}
+	}
+
+	return results, nil
 }
 
 // Query queries OSV.dev for a single package version.
@@ -177,6 +216,15 @@ func (c *Client) Query(ctx context.Context, name, version string, ecosystem anal
 	eco := ecosystemToOSV(ecosystem)
 	if eco == "" || version == "" {
 		return nil, nil
+	}
+
+	// Check cache first.
+	if c.cache != nil {
+		dep := analysis.Dependency{Name: name, Version: version, Ecosystem: ecosystem}
+		key := cacheKey(dep)
+		if vulns, ok := c.cache.Get(key); ok {
+			return vulns, nil
+		}
 	}
 
 	req := QueryRequest{
@@ -203,7 +251,12 @@ func (c *Client) Query(ctx context.Context, name, version string, ecosystem anal
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // no vulnerabilities found
+		vulns := []Vulnerability(nil)
+		if c.cache != nil {
+			dep := analysis.Dependency{Name: name, Version: version, Ecosystem: ecosystem}
+			c.cache.Set(cacheKey(dep), vulns)
+		}
+		return vulns, nil // no vulnerabilities found
 	}
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -213,6 +266,11 @@ func (c *Client) Query(ctx context.Context, name, version string, ecosystem anal
 	var result Response
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode osv response: %w", err)
+	}
+
+	if c.cache != nil {
+		dep := analysis.Dependency{Name: name, Version: version, Ecosystem: ecosystem}
+		c.cache.Set(cacheKey(dep), result.Vulns)
 	}
 
 	return result.Vulns, nil

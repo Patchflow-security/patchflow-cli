@@ -251,10 +251,19 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 		_ = formatter.Print("")
 	}
 
-	// Top findings
-	if len(riskScore.TopFindings) > 0 {
+	// Top findings (group SCA advisories by package for cleaner terminal output)
+	topFindings := riskScore.TopFindings
+	if result != nil && len(result.Findings) > 0 {
+		grouped, _ := report.GroupSCAFindings(result.Findings)
+		sortedTop := report.SortFindings(grouped)
+		if len(sortedTop) > 10 {
+			sortedTop = sortedTop[:10]
+		}
+		topFindings = sortedTop
+	}
+	if len(topFindings) > 0 {
 		_ = formatter.Print("Top findings:")
-		for i, f := range riskScore.TopFindings {
+		for i, f := range topFindings {
 			_ = formatter.Print(fmt.Sprintf("  %d. [%s] %s", i+1, strings.ToUpper(string(f.Severity)), f.Title))
 			if f.PackageName != "" {
 				_ = formatter.Print(fmt.Sprintf("     Package: %s@%s", f.PackageName, f.PackageVersion))

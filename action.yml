@@ -1,0 +1,51 @@
+name: 'PatchFlow Security Scan'
+description: 'Run PatchFlow security analysis (SCA + SAST + secrets) and upload SARIF to GitHub Code Scanning'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  scan-profile:
+    description: 'Scan profile: quick, standard, or deep'
+    required: false
+    default: 'standard'
+  fail-on-risk:
+    description: 'Fail the workflow if risk score exceeds this threshold (0-100, 0 = never fail)'
+    required: false
+    default: '0'
+  extra-args:
+    description: 'Additional arguments to pass to patchflow scan run'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+
+    - name: Install PatchFlow CLI
+      shell: bash
+      run: go install github.com/patchflow/patchflow-cli@${{ github.action_ref || 'main' }}
+
+    - name: Run PatchFlow scan
+      shell: bash
+      run: patchflow scan run --format sarif --output patchflow-results.sarif --profile ${{ inputs.scan-profile }} ${{ inputs.extra-args }}
+
+    - name: Upload SARIF to GitHub Code Scanning
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: patchflow-results.sarif
+        category: patchflow
+
+    - name: Check risk threshold
+      if: ${{ inputs.fail-on-risk != '0' }}
+      shell: bash
+      run: |
+        RISK=$(patchflow scan run --format json --output /dev/stdout --profile ${{ inputs.scan-profile }} 2>/dev/null | jq '.risk_score // 0')
+        if [ "$RISK" -gt ${{ inputs.fail-on-risk }} ]; then
+          echo "::error::Risk score $RISK exceeds threshold ${{ inputs.fail-on-risk }}"
+          exit 1
+        fi

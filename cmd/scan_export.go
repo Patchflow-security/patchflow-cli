@@ -13,6 +13,7 @@ import (
 	"github.com/patchflow/patchflow-cli/internal/risk"
 	"github.com/patchflow/patchflow-cli/internal/sast"
 	"github.com/patchflow/patchflow-cli/internal/sca"
+	"github.com/patchflow/patchflow-cli/internal/scan"
 	"github.com/spf13/cobra"
 )
 
@@ -28,11 +29,15 @@ then exports the findings in the specified format.`,
 func init() {
 	scanExportCmd.Flags().String("format", "json", "Export format (json, sarif)")
 	scanExportCmd.Flags().String("output", "", "Output file path (stdout if omitted)")
+	scanExportCmd.Flags().Bool("upload-github", false, "Upload SARIF to GitHub Code Scanning (requires --format sarif and GITHUB_TOKEN)")
+	scanExportCmd.Flags().Bool("no-gitignore", false, "Do not respect .gitignore patterns (scan all files)")
 }
 
 func runScanExport(cmd *cobra.Command, _ []string) error {
 	format, _ := cmd.Flags().GetString("format")
 	outputPath, _ := cmd.Flags().GetString("output")
+	uploadGitHub, _ := cmd.Flags().GetBool("upload-github")
+	noGitignore, _ := cmd.Flags().GetBool("no-gitignore")
 	formatter := FormatterFromContext(cmd.Context())
 	ctx := cmd.Context()
 
@@ -41,6 +46,11 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 	case "json", "sarif":
 	default:
 		return fmt.Errorf("unsupported format: %q (supported: json, sarif)", format)
+	}
+
+	// --upload-github requires SARIF format.
+	if uploadGitHub && format != "sarif" {
+		return fmt.Errorf("--upload-github requires --format sarif")
 	}
 
 	// Detect project context. Export can run on unpacked source trees that are
@@ -70,6 +80,7 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 
 	// Run SAST
 	sastRunner := sast.NewRunner()
+	sastRunner.RespectGitignore = !noGitignore
 	sastResult, err := sastRunner.Analyze(ctx, repo.Root)
 	if err == nil {
 		allFindings = append(allFindings, sastResult.Findings...)
@@ -143,7 +154,29 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 		if err := os.WriteFile(outputPath, data, 0644); err != nil {
 			return fmt.Errorf("failed to write output file: %w", err)
 		}
-		return formatter.PrintSuccess("Report written to " + outputPath)
+		if !uploadGitHub {
+			return formatter.PrintSuccess("Report written to " + outputPath)
+		}
+	}
+
+	// Upload SARIF to GitHub Code Scanning when requested.
+	if uploadGitHub {
+		uploadCfg, err := scan.ResolveGitHubUploadConfig(repo)
+		if err != nil {
+			return formatter.PrintError(fmt.Errorf("GitHub upload config: %w", err))
+		}
+		uploadResult, err := scan.UploadSARIF(uploadCfg, data)
+		if err != nil {
+			return formatter.PrintError(fmt.Errorf("failed to upload SARIF to GitHub: %w", err))
+		}
+		msg := fmt.Sprintf("SARIF uploaded to GitHub Code Scanning (id: %s)", uploadResult.ID)
+		if uploadResult.URL != "" {
+			msg += " - status: " + uploadResult.URL
+		}
+		if outputPath != "" {
+			msg = "Report written to " + outputPath + "\n" + msg
+		}
+		return formatter.PrintSuccess(msg)
 	}
 
 	_, err = fmt.Fprintln(os.Stdout, string(data))

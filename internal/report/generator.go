@@ -51,6 +51,16 @@ func (g *Generator) TerminalSummary() string {
 		sb.WriteString(fmt.Sprintf("Manifests:     %d\n", len(g.Result.Manifests)))
 		sb.WriteString(fmt.Sprintf("Analyzers:     %s\n", strings.Join(g.Result.Analyzers, ", ")))
 		sb.WriteString("\n")
+
+		// Per-engine timing
+		if len(g.Result.EngineTimings) > 0 {
+			sb.WriteString("Engine timings:\n")
+			for _, et := range g.Result.EngineTimings {
+				sb.WriteString(fmt.Sprintf("  %-15s  %s  (%d findings)\n", et.Engine, et.Duration.Round(time.Millisecond), et.Findings))
+			}
+			sb.WriteString(fmt.Sprintf("  %-15s  %s\n", "total", g.Result.CompletedAt.Sub(g.Result.StartedAt).Round(time.Millisecond)))
+			sb.WriteString("\n")
+		}
 	}
 
 	// Risk score
@@ -72,9 +82,18 @@ func (g *Generator) TerminalSummary() string {
 	}
 
 	// Top findings
-	if g.Risk != nil && len(g.Risk.TopFindings) > 0 {
+	topFindings := g.Risk.TopFindings
+	if g.Result != nil && len(g.Result.Findings) > 0 {
+		grouped, _ := GroupSCAFindings(g.Result.Findings)
+		sortedTop := SortFindings(grouped)
+		if len(sortedTop) > 10 {
+			sortedTop = sortedTop[:10]
+		}
+		topFindings = sortedTop
+	}
+	if len(topFindings) > 0 {
 		sb.WriteString("Top findings:\n")
-		for i, f := range g.Risk.TopFindings {
+		for i, f := range topFindings {
 			sb.WriteString(fmt.Sprintf("  %d. [%s] %s\n", i+1, strings.ToUpper(string(f.Severity)), f.Title))
 			if f.PackageName != "" {
 				sb.WriteString(fmt.Sprintf("     Package: %s@%s\n", f.PackageName, f.PackageVersion))
@@ -162,15 +181,31 @@ func (g *Generator) generateRecommendations() []string {
 		recs = append(recs, fmt.Sprintf("Address %d high-severity reachable vulnerability(s)", highReachable))
 	}
 
-	// Check for upgradeable packages
-	upgrades := 0
+	// Reachability-aware SCA counts
+	reachableVulns := 0
+	unreachableVulns := 0
+	upgradeableReachable := 0
 	for _, f := range findings {
-		if f.FixedVersion != "" {
-			upgrades++
+		if f.Type == analysis.TypeSCA {
+			if f.Reachability == analysis.ReachabilityHigh || f.Reachability == analysis.ReachabilityMedium {
+				reachableVulns++
+				if f.FixedVersion != "" {
+					upgradeableReachable++
+				}
+			} else if f.Reachability == analysis.ReachabilityNone || f.Reachability == analysis.ReachabilityLow {
+				unreachableVulns++
+			}
 		}
 	}
-	if upgrades > 0 {
-		recs = append(recs, fmt.Sprintf("Upgrade %d vulnerable package(s) to fixed versions", upgrades))
+
+	if upgradeableReachable > 0 {
+		recs = append(recs, fmt.Sprintf("Upgrade %d reachable vulnerable package(s) with fixed versions", upgradeableReachable))
+	}
+	if reachableVulns > upgradeableReachable {
+		recs = append(recs, fmt.Sprintf("Review %d reachable dependency advisories with no fixed version yet", reachableVulns-upgradeableReachable))
+	}
+	if unreachableVulns > 0 {
+		recs = append(recs, fmt.Sprintf("Track %d unreachable dependency advisories (no immediate action required)", unreachableVulns))
 	}
 
 	if g.Risk.Score >= 80 && len(recs) == 0 {
@@ -190,6 +225,242 @@ func isSecretFinding(f analysis.Finding) bool {
 	return f.Type == analysis.TypeSecret ||
 		strings.Contains(strings.ToLower(f.Analyzer), "secret") ||
 		strings.HasPrefix(strings.ToUpper(f.RuleID), "SECRET-")
+}
+
+// PackageGroup aggregates SCA findings for the same package version into a
+// single, more readable report entry. The raw findings are still emitted in
+// JSON/SARIF; grouping is applied only to terminal and markdown output.
+type PackageGroup struct {
+	PackageName          string
+	PackageVersion       string
+	FilePath             string
+	Severity             analysis.Severity
+	Reachability         analysis.ReachabilityStatus
+	ReachabilityConfidence analysis.Confidence
+	Advisories           []AdvisoryEntry
+	ReachabilityEvidence []string
+}
+
+// AdvisoryEntry captures the details of a single advisory within a package group.
+type AdvisoryEntry struct {
+	ID          string
+	Title       string
+	Severity    analysis.Severity
+	FixedVersion string
+	AdvisoryURL string
+	CVEID       string
+	Aliases     []string
+}
+
+// GroupSCAFindings folds SCA findings by (package, version). Non-SCA findings
+// and SCA findings with no package name are returned unchanged.
+func GroupSCAFindings(findings []analysis.Finding) ([]analysis.Finding, []PackageGroup) {
+	var nonGrouped []analysis.Finding
+	groups := make(map[string]*PackageGroup)
+
+	for _, f := range findings {
+		if f.Type != analysis.TypeSCA || f.PackageName == "" {
+			nonGrouped = append(nonGrouped, f)
+			continue
+		}
+
+		key := f.PackageName + "@" + f.PackageVersion
+		g, ok := groups[key]
+		if !ok {
+			g = &PackageGroup{
+				PackageName:          f.PackageName,
+				PackageVersion:       f.PackageVersion,
+				FilePath:             f.FilePath,
+				Reachability:         f.Reachability,
+				ReachabilityConfidence: f.ReachabilityConfidence,
+				ReachabilityEvidence: f.ReachabilityEvidence,
+			}
+			groups[key] = g
+		}
+
+		adv := AdvisoryEntry{
+			ID:           f.ID,
+			Title:        f.Title,
+			Severity:     f.Severity,
+			FixedVersion: f.FixedVersion,
+			AdvisoryURL:  f.AdvisoryURL,
+			CVEID:        f.CVEID,
+			Aliases:      aliasesFromEvidence(f.Evidence),
+		}
+		g.Advisories = append(g.Advisories, adv)
+		if analysis.SeverityOrder(g.Severity) < analysis.SeverityOrder(f.Severity) {
+			g.Severity = f.Severity
+		}
+	}
+
+	// Convert map to slice and sort by severity, then by package name.
+	var result []PackageGroup
+	for _, g := range groups {
+		result = append(result, *g)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		si := analysis.SeverityOrder(result[i].Severity)
+		sj := analysis.SeverityOrder(result[j].Severity)
+		if si != sj {
+			return si > sj
+		}
+		ri := analysis.ReachabilityWeight(result[i].Reachability)
+		rj := analysis.ReachabilityWeight(result[j].Reachability)
+		if ri != rj {
+			return ri > rj
+		}
+		return result[i].PackageName < result[j].PackageName
+	})
+
+	// Build representative findings for the grouped packages.
+	var groupedFindings []analysis.Finding
+	for _, g := range result {
+		groupedFindings = append(groupedFindings, g.toFinding())
+	}
+
+	return append(groupedFindings, nonGrouped...), result
+}
+
+// toFinding converts a PackageGroup into a single analysis.Finding that
+// represents all advisories in the group.
+func (g PackageGroup) toFinding() analysis.Finding {
+	advisoryLines := make([]string, 0, len(g.Advisories))
+	for _, a := range g.Advisories {
+		line := fmt.Sprintf("- %s", a.ID)
+		if a.Title != "" && a.Title != a.ID {
+			line = fmt.Sprintf("- %s — %s", a.ID, a.Title)
+		}
+		if a.Severity != "" {
+			line += fmt.Sprintf(" (%s)", a.Severity)
+		}
+		if a.CVEID != "" {
+			line += fmt.Sprintf(" [%s]", a.CVEID)
+		}
+		if a.AdvisoryURL != "" {
+			line += fmt.Sprintf(" — <%s>", a.AdvisoryURL)
+		}
+		advisoryLines = append(advisoryLines, line)
+	}
+
+	fixedVersion := commonFixedVersion(g.Advisories)
+	recommendation := buildGroupedRecommendation(g.PackageName, g.PackageVersion, len(g.Advisories), fixedVersion, g.Reachability)
+
+	// For a single advisory, preserve the original title and details so the
+	// report remains specific and existing tests/content keep working.
+	if len(g.Advisories) == 1 {
+		a := g.Advisories[0]
+		return analysis.Finding{
+			ID:                     a.ID,
+			Type:                   analysis.TypeSCA,
+			Analyzer:               "osv",
+			Severity:               g.Severity,
+			Confidence:             analysis.ConfidenceHigh,
+			Title:                  a.Title,
+			Description:            a.Title,
+			FilePath:               g.FilePath,
+			PackageName:            g.PackageName,
+			PackageVersion:         g.PackageVersion,
+			FixedVersion:           a.FixedVersion,
+			CVEID:                  a.CVEID,
+			AdvisoryURL:            a.AdvisoryURL,
+			Reachability:           g.Reachability,
+			ReachabilityConfidence: g.ReachabilityConfidence,
+			ReachabilityEvidence:   g.ReachabilityEvidence,
+			Recommendation:         recommendation,
+			DetectedAt:           time.Now(),
+		}
+	}
+
+	description := fmt.Sprintf("%d advisories affect %s@%s:\n\n%s", len(g.Advisories), g.PackageName, g.PackageVersion, strings.Join(advisoryLines, "\n"))
+
+	return analysis.Finding{
+		ID:                     fmt.Sprintf("sca-group-%s-%s", g.PackageName, g.PackageVersion),
+		Type:                   analysis.TypeSCA,
+		Analyzer:               "osv",
+		Severity:               g.Severity,
+		Confidence:             analysis.ConfidenceHigh,
+		Title:                  fmt.Sprintf("%s@%s — %d advisories", g.PackageName, g.PackageVersion, len(g.Advisories)),
+		Description:            description,
+		FilePath:               g.FilePath,
+		PackageName:            g.PackageName,
+		PackageVersion:         g.PackageVersion,
+		FixedVersion:           fixedVersion,
+		Reachability:           g.Reachability,
+		ReachabilityConfidence: g.ReachabilityConfidence,
+		ReachabilityEvidence:   g.ReachabilityEvidence,
+		Recommendation:         recommendation,
+		DetectedAt:           time.Now(),
+	}
+}
+
+// commonFixedVersion returns the fixed version if all advisories agree on one.
+func commonFixedVersion(advisories []AdvisoryEntry) string {
+	if len(advisories) == 0 {
+		return ""
+	}
+	version := advisories[0].FixedVersion
+	for _, a := range advisories[1:] {
+		if a.FixedVersion != version {
+			return ""
+		}
+	}
+	return version
+}
+
+// buildGroupedRecommendation creates an actionable recommendation for a group.
+func buildGroupedRecommendation(name, version string, count int, fixedVersion string, reachability analysis.ReachabilityStatus) string {
+	if reachability == analysis.ReachabilityNone {
+		if count == 1 {
+			return fmt.Sprintf("%s@%s is not imported. Track the advisory but no immediate action is required.", name, version)
+		}
+		return fmt.Sprintf("%s@%s is not imported. Track %d advisories but no immediate action is required.", name, version, count)
+	}
+
+	if fixedVersion != "" {
+		if count == 1 {
+			return fmt.Sprintf("Upgrade %s to %s", name, fixedVersion)
+		}
+		return fmt.Sprintf("Upgrade %s to %s to address %d advisories", name, fixedVersion, count)
+	}
+
+	if count == 1 {
+		return fmt.Sprintf("Review the advisory for %s@%s — no fixed version is available yet", name, version)
+	}
+	return fmt.Sprintf("Review %d advisories for %s@%s — no fixed version is available yet", count, name, version)
+}
+
+// aliasesFromEvidence extracts alias strings from the Evidence field when it
+// contains an "Aliases: ..." suffix produced by the SCA analyzer.
+func aliasesFromEvidence(evidence string) []string {
+	idx := strings.Index(evidence, "Aliases: ")
+	if idx == -1 {
+		return nil
+	}
+	aliases := strings.TrimPrefix(evidence[idx:], "Aliases: ")
+	aliases = strings.TrimSuffix(aliases, ")")
+	return strings.Split(aliases, ", ")
+}
+
+// packageSummaryTable renders a markdown table summarizing vulnerable packages.
+func packageSummaryTable(groups []PackageGroup) string {
+	if len(groups) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("| Package | Version | Advisories | Reachability | Max Severity | Action |\n")
+	sb.WriteString("|---------|---------|------------|--------------|--------------|--------|\n")
+	for _, g := range groups {
+		action := "Review"
+		if g.Reachability == analysis.ReachabilityNone {
+			action = "Track"
+		} else if commonFixedVersion(g.Advisories) != "" {
+			action = "Upgrade"
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s | %d | %s | %s | %s |\n",
+			g.PackageName, g.PackageVersion, len(g.Advisories), g.Reachability, g.Severity, action))
+	}
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 // --- Markdown ---
@@ -244,10 +515,21 @@ func (g *Generator) Markdown() string {
 		}
 	}
 
+	// Package summary table (grouped SCA view)
+	var groupedFindings []analysis.Finding
+	var packageGroups []PackageGroup
+	if g.Result != nil {
+		groupedFindings, packageGroups = GroupSCAFindings(g.Result.Findings)
+	}
+	if len(packageGroups) > 0 {
+		sb.WriteString("## Vulnerable Packages Summary\n\n")
+		sb.WriteString(packageSummaryTable(packageGroups))
+	}
+
 	// Findings
 	if g.Result != nil && len(g.Result.Findings) > 0 {
 		sb.WriteString("## Findings\n\n")
-		sortedFindings := sortFindings(g.Result.Findings)
+		sortedFindings := SortFindings(groupedFindings)
 		for i, f := range sortedFindings {
 			sb.WriteString(fmt.Sprintf("### %d. %s\n\n", i+1, f.Title))
 			sb.WriteString(fmt.Sprintf("- **Type:** %s\n", f.Type))
@@ -500,7 +782,8 @@ func severityToSARIFLevel(s analysis.Severity) string {
 	}
 }
 
-func sortFindings(findings []analysis.Finding) []analysis.Finding {
+// SortFindings sorts findings by severity and reachability, highest first.
+func SortFindings(findings []analysis.Finding) []analysis.Finding {
 	sorted := make([]analysis.Finding, len(findings))
 	copy(sorted, findings)
 	sort.Slice(sorted, func(i, j int) bool {

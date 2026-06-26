@@ -1,0 +1,46 @@
+name: PatchFlow Security Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Monday at 09:00 UTC
+    - cron: '0 9 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  patchflow-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install PatchFlow
+        run: go install github.com/patchflow/patchflow-cli/cmd/patchflow@latest
+
+      - name: Run PatchFlow scan
+        run: patchflow scan run --format sarif --output patchflow-results.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('patchflow-results.sarif') != ''
+        with:
+          sarif_file: patchflow-results.sarif
+          category: patchflow
+
+      - name: Upload scan results artifact
+        uses: actions/upload-artifact@v4
+        if: always() && hashFiles('patchflow-results.sarif') != ''
+        with:
+          name: patchflow-sarif
+          path: patchflow-results.sarif

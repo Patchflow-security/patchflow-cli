@@ -28,6 +28,13 @@ type SecretPattern struct {
 	Confidence analysis.Confidence
 }
 
+// IgnoreMatcher is the interface implemented by the gitignore matcher.
+// If set on a Scanner, files matching .gitignore patterns are skipped.
+type IgnoreMatcher interface {
+	Match(path string, isDir bool) bool
+	IsEmpty() bool
+}
+
 // Scanner is the embedded secret scanner.
 type Scanner struct {
 	patterns          []SecretPattern
@@ -36,6 +43,13 @@ type Scanner struct {
 	ignoredExtensions map[string]bool
 	ignoredDirs       map[string]bool
 	maxFileSize       int64
+	ignoreMatcher     IgnoreMatcher
+}
+
+// SetIgnoreMatcher sets the .gitignore matcher for this scanner. When set,
+// files matching .gitignore patterns are skipped during scanning.
+func (s *Scanner) SetIgnoreMatcher(m IgnoreMatcher) {
+	s.ignoreMatcher = m
 }
 
 // SecretRuleInfo provides metadata about a secret pattern for listing purposes.
@@ -154,7 +168,20 @@ func (s *Scanner) Analyze(ctx context.Context, root string) ([]analysis.Finding,
 			if s.ignoredDirs[name] {
 				return filepath.SkipDir
 			}
+			// Check .gitignore for directories
+			if s.ignoreMatcher != nil && !s.ignoreMatcher.IsEmpty() {
+				if s.ignoreMatcher.Match(path, true) {
+					return filepath.SkipDir
+				}
+			}
 			return nil
+		}
+
+		// Check .gitignore for files
+		if s.ignoreMatcher != nil && !s.ignoreMatcher.IsEmpty() {
+			if s.ignoreMatcher.Match(path, false) {
+				return nil
+			}
 		}
 
 		// Check extension
@@ -191,6 +218,24 @@ func (s *Scanner) Analyze(ctx context.Context, root string) ([]analysis.Finding,
 		return nil, err
 	}
 	return findings, nil
+}
+
+// ScanFilePublic is the exported version of scanFile for use by the
+// parallel file scanner. It scans a single file for secrets.
+// It applies the same example-file and binary-file filtering as Analyze.
+func (s *Scanner) ScanFilePublic(absPath, root string) ([]analysis.Finding, error) {
+	baseName := filepath.Base(absPath)
+	if isExampleFile(baseName) {
+		return nil, nil
+	}
+	if isBinaryFile(absPath) {
+		return nil, nil
+	}
+	ext := filepath.Ext(absPath)
+	if s.ignoredExtensions[ext] {
+		return nil, nil
+	}
+	return s.scanFile(absPath, root)
 }
 
 // scanFile scans a single file for secrets.

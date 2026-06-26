@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/patchflow/patchflow-cli/internal/baseline"
+	"github.com/patchflow/patchflow-cli/internal/exitcode"
 	"github.com/patchflow/patchflow-cli/internal/git"
 	"github.com/patchflow/patchflow-cli/internal/output"
 	"github.com/patchflow/patchflow-cli/internal/reachability"
@@ -13,6 +15,7 @@ import (
 	"github.com/patchflow/patchflow-cli/internal/risk"
 	"github.com/patchflow/patchflow-cli/internal/sast"
 	"github.com/patchflow/patchflow-cli/internal/sca"
+	osvclient "github.com/patchflow/patchflow-cli/internal/osv"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +30,12 @@ var (
 	scanShowSuppressed bool
 	scanRulesPath      string
 	scanIncludeTests   bool
+	scanNoGitignore    bool
+	scanIncremental    bool
+	scanNewOnly        bool
+	scanFailOn         string
+	scanSince          string
+	scanBaselineName   string
 )
 
 var scanRealCmd = &cobra.Command{
@@ -54,6 +63,12 @@ func init() {
 	scanRealCmd.Flags().BoolVar(&scanShowSuppressed, "show-suppressed", false, "Show findings suppressed by //patchflow:ignore comments")
 	scanRealCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file (default: .patchflow/rules.yaml)")
 	scanRealCmd.Flags().BoolVar(&scanIncludeTests, "include-tests", false, "Include test files in SAST analysis")
+	scanRealCmd.Flags().BoolVar(&scanNoGitignore, "no-gitignore", false, "Do not respect .gitignore patterns (scan all files)")
+	scanRealCmd.Flags().BoolVar(&scanIncremental, "incremental", false, "Only re-scan files changed since last scan (uses .patchflow/cache/sast_state.json)")
+	scanRealCmd.Flags().BoolVar(&scanNewOnly, "new-only", false, "Only report findings not in the baseline (requires --baseline)")
+	scanRealCmd.Flags().StringVar(&scanFailOn, "fail-on", "", "Fail (exit code 1) if findings at or above this severity: low, medium, high, critical")
+	scanRealCmd.Flags().StringVar(&scanSince, "since", "", "Scan files changed since the given branch/commit (e.g., --since main)")
+	scanRealCmd.Flags().StringVar(&scanBaselineName, "baseline", "", "Baseline name to compare against (used with --new-only)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -71,18 +86,24 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	if isGitRepo {
 		_ = repo.DetectChangedFiles()
 		_ = repo.DetectDiffStats()
-	} else if scanChangedOnly {
-		return formatter.PrintError(fmt.Errorf("--changed-only requires a git repository"))
+		// --since <branch> implies changed-only mode with a specific base
+		if scanSince != "" {
+			scanChangedOnly = true
+		}
+	} else if scanChangedOnly || scanSince != "" {
+		return formatter.PrintError(fmt.Errorf("--changed-only/--since requires a git repository"))
 	} else if !output.IsJSON(formatter) {
 		_ = formatter.Print("Non-git directory detected; running full-project scan.")
 	}
 
 	started := time.Now()
+	var engineTimings []analysis.EngineTiming
 
 	// 1. SCA Analysis
 	if !output.IsJSON(formatter) {
 		_ = formatter.Print("Running SCA analysis (OSV.dev)...")
 	}
+	scaStart := time.Now()
 	scaAnalyzer := sca.NewAnalyzer()
 	if scanChangedOnly {
 		scaAnalyzer.ChangedOnly = true
@@ -97,10 +118,18 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		scaAnalyzer.MaxDepth = 3
 	}
 
+	// Wire up OSV response cache so repeated scans skip API calls for
+	// unchanged dependencies. Cache lives at {root}/.patchflow/cache/osv/.
+	osvCache := osvclient.NewCache(repo.Root)
+	scaAnalyzer.OSV.SetCache(osvCache)
+
 	scaResult, err := scaAnalyzer.Analyze(ctx, repo.Root)
 	if err != nil {
 		return formatter.PrintError(fmt.Errorf("SCA analysis failed: %w", err))
 	}
+	engineTimings = append(engineTimings, analysis.EngineTiming{
+		Engine: "osv-sca", Duration: time.Since(scaStart), Findings: len(scaResult.Findings),
+	})
 
 	// 2. SAST Analysis
 	var sastResult *sast.Result
@@ -113,6 +142,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		if !output.IsJSON(formatter) {
 			_ = formatter.Print("Running SAST analysis (local tools)...")
 		}
+		sastStart := time.Now()
 		sastRunner := sast.NewRunner()
 		if scanChangedOnly {
 			sastRunner.ChangedOnly = true
@@ -130,6 +160,32 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 		sastRunner.ShowSuppressed = scanShowSuppressed
 		sastRunner.CustomRulesPath = scanRulesPath
+		sastRunner.RespectGitignore = !scanNoGitignore
+		sastRunner.IncrementalScan = scanIncremental
+
+		// Profile-aware SAST: adjust scanner selection and timeouts per profile.
+		// quick: skip taint and tree-sitter for fast CI feedback (~2x faster)
+		// standard: all scanners with default 120s timeout
+		// deep: all scanners with 10-minute timeout for thorough analysis
+		switch scanProfile {
+		case "quick":
+			sastRunner.NoEmbeddedTaint = true
+			sastRunner.NoEmbeddedTreeSitter = true
+			sastRunner.NoEmbeddedTaintPatterns = true
+			sastRunner.Timeout = 60 * time.Second
+			// Quick profile: skip slow external tools (semgrep, bandit)
+			var quickTools []sast.Tool
+			for _, t := range sastRunner.Tools {
+				if t.Name == "gosec" || t.Name == "gitleaks" {
+					quickTools = append(quickTools, t)
+				}
+			}
+			sastRunner.Tools = quickTools
+		case "deep":
+			sastRunner.Timeout = 10 * time.Minute
+		default: // standard
+			sastRunner.Timeout = 120 * time.Second
+		}
 
 		// Filter external tools based on flags
 		if scanNoSAST && !scanNoSecrets {
@@ -158,6 +214,9 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return formatter.PrintError(fmt.Errorf("SAST analysis failed: %w", err))
 		}
+		engineTimings = append(engineTimings, analysis.EngineTiming{
+			Engine: "sast", Duration: time.Since(sastStart), Findings: len(sastResult.Findings),
+		})
 		allFindings = append(allFindings, sastResult.Findings...)
 		analyzersRun = append(analyzersRun, sastResult.ToolsRun...)
 	}
@@ -167,6 +226,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		if !output.IsJSON(formatter) {
 			_ = formatter.Print("Running reachability analysis...")
 		}
+		reachStart := time.Now()
 		reachAnalyzer := reachability.NewAnalyzer()
 		reachResult, err := reachAnalyzer.Analyze(ctx, repo.Root, allFindings, scaResult.Dependencies)
 		if err != nil {
@@ -176,6 +236,9 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			}
 		} else {
 			allFindings = reachResult.Findings
+			engineTimings = append(engineTimings, analysis.EngineTiming{
+				Engine: "reachability", Duration: time.Since(reachStart), Findings: len(allFindings),
+			})
 		}
 	}
 
@@ -200,21 +263,22 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	}
 
 	result := &analysis.AnalysisResult{
-		ProjectRoot:  repo.Root,
-		Branch:       repo.CurrentBranch,
-		CommitSHA:    repo.CommitSHA,
-		BaseBranch:   repo.BaseBranch,
-		StartedAt:    started,
-		CompletedAt:  completed,
-		Findings:     allFindings,
-		Dependencies: scaResult.Dependencies,
-		RiskScore:    riskScore.Score,
-		RiskLevel:    riskScore.Level,
-		FilesChanged: len(repo.ChangedFiles),
-		AddedLines:   repo.AddedLines,
-		DeletedLines: repo.DeletedLines,
-		Manifests:    manifestPaths,
-		Analyzers:    analyzersRun,
+		ProjectRoot:   repo.Root,
+		Branch:        repo.CurrentBranch,
+		CommitSHA:     repo.CommitSHA,
+		BaseBranch:    repo.BaseBranch,
+		StartedAt:     started,
+		CompletedAt:   completed,
+		Findings:      allFindings,
+		Dependencies:  scaResult.Dependencies,
+		RiskScore:     riskScore.Score,
+		RiskLevel:     riskScore.Level,
+		FilesChanged:  len(repo.ChangedFiles),
+		AddedLines:    repo.AddedLines,
+		DeletedLines:  repo.DeletedLines,
+		Manifests:     manifestPaths,
+		Analyzers:     analyzersRun,
+		EngineTimings: engineTimings,
 	}
 
 	// 5. Output
@@ -236,6 +300,14 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Auto-save a markdown report to .patchflow/reports/ for full scans, even in
+	// non-git directories, so users always have a persistent artifact to share.
+	if !output.IsJSON(formatter) {
+		if writtenPath, err := gen.WriteToReportsDir(repo.Root, "markdown"); err == nil {
+			_ = formatter.Print("  Report saved: " + writtenPath)
+		}
+	}
+
 	if output.IsJSON(formatter) {
 		// For JSON mode, output the full result
 		return formatter.Print(struct {
@@ -249,6 +321,43 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 
 	// Terminal summary
 	_ = formatter.Print(gen.TerminalSummary())
+
+	// --new-only: filter findings against baseline, show only new ones
+	if scanNewOnly && scanBaselineName != "" {
+		mgr := baseline.NewManager(repo.Root)
+		diff, err := mgr.Compare(scanBaselineName, allFindings)
+		if err != nil {
+			return formatter.PrintError(fmt.Errorf("baseline comparison failed: %w", err))
+		}
+		_ = formatter.Print(fmt.Sprintf("\nBaseline: %s — New: %d, Resolved: %d, Unchanged: %d",
+			scanBaselineName, diff.NewCount, diff.ResolvedCount, diff.UnchangedCount))
+		if diff.NewCount > 0 {
+			_ = formatter.Print("\nNew findings:")
+			for _, f := range diff.New {
+				_ = formatter.Print(fmt.Sprintf("  [%s] %s:%d — %s", f.RuleID, f.FilePath, f.LineStart, f.Title))
+			}
+		}
+		// Replace allFindings with just new findings for fail-on check
+		allFindings = diff.New
+	}
+
+	// --fail-on: exit with code 1 if findings at or above the severity threshold exist
+	if scanFailOn != "" {
+		threshold := parseSeverityThreshold(scanFailOn)
+		blockingCount := 0
+		for _, f := range allFindings {
+			if severityRank(f.Severity) >= threshold {
+				blockingCount++
+			}
+		}
+		if blockingCount > 0 {
+			return &ExitError{
+				Code: exitcode.FindingsFound,
+				Msg:  fmt.Sprintf("%d finding(s) at or above %s severity", blockingCount, scanFailOn),
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -326,6 +435,40 @@ func getRepoRoot() (string, error) {
 		return "", err
 	}
 	return repo.Root, nil
+}
+
+// parseSeverityThreshold converts a severity string to a numeric rank.
+// low=1, medium=2, high=3, critical=4. Higher = more severe.
+func parseSeverityThreshold(s string) int {
+	switch toLower(s) {
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "critical":
+		return 4
+	default:
+		return 0
+	}
+}
+
+// severityRank converts an analysis.Severity to a numeric rank.
+func severityRank(s analysis.Severity) int {
+	switch s {
+	case analysis.SeverityLow:
+		return 1
+	case analysis.SeverityMedium:
+		return 2
+	case analysis.SeverityHigh:
+		return 3
+	case analysis.SeverityCritical:
+		return 4
+	case analysis.SeverityInfo:
+		return 0
+	}
+	return 0
 }
 
 // Ensure context is used
