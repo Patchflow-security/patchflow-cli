@@ -14,6 +14,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "python",
+			CWEID:       "CWE-89",
 			Sources: []SourcePattern{
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
@@ -40,6 +41,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "python",
+			CWEID:       "CWE-78",
 			Sources: []SourcePattern{
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
@@ -64,6 +66,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "python",
+			CWEID:       "CWE-22",
 			Sources: []SourcePattern{
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
@@ -87,6 +90,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityMedium,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "python",
+			CWEID:       "CWE-918",
 			Sources: []SourcePattern{
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
@@ -109,6 +113,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceHigh,
 			Language:    "python",
+			CWEID:       "CWE-94",
 			Sources: []SourcePattern{
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
@@ -129,6 +134,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityMedium,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "python",
+			CWEID:       "CWE-79",
 			Sources: []SourcePattern{
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
@@ -150,6 +156,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "javascript",
+			CWEID:       "CWE-89",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},
@@ -175,6 +182,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "javascript",
+			CWEID:       "CWE-78",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},
@@ -195,6 +203,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityMedium,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "javascript",
+			CWEID:       "CWE-79",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},
@@ -215,6 +224,7 @@ func builtInRules() []Rule {
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "javascript",
+			CWEID:       "CWE-22",
 			Sources: []SourcePattern{
 				{FuncName: "req.query", IsSubscript: true},
 				{FuncName: "req.params", IsSubscript: true},

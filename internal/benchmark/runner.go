@@ -37,6 +37,7 @@ type pfFinding struct {
 	Confidence string `json:"confidence"`
 	RuleID     string `json:"rule_id"`
 	CVEID      string `json:"cve_id"`
+	CWEID      string `json:"cwe_id"`
 	Analyzer   string `json:"analyzer"`
 }
 
@@ -124,14 +125,22 @@ func (r *Runner) runRepo(ctx context.Context, spec RepoSpec, resultsDir string) 
 	}
 	r.logf("  LOC: %d across %d files", loc.LOC, loc.FilesScanned)
 
-	sarifPath := filepath.Join(resultsDir, "sarif", spec.Name+".sarif")
-	jsonPath := filepath.Join(resultsDir, "raw", spec.Name+".json")
-	mdPath := filepath.Join(resultsDir, "markdown", spec.Name+".md")
+	// Convert to absolute paths because patchflow runs with cmd.Dir = repoPath,
+	// so relative paths would resolve against the clone dir, not the CWD.
+	sarifPath, _ := filepath.Abs(filepath.Join(resultsDir, "sarif", spec.Name+".sarif"))
+	jsonPath, _ := filepath.Abs(filepath.Join(resultsDir, "raw", spec.Name+".json"))
+	mdPath, _ := filepath.Abs(filepath.Join(resultsDir, "markdown", spec.Name+".md"))
 
 	// Cold run: clear the patchflow cache so OSV/SAST caches start empty.
-	coldOut, coldDur, coldExit, coldMem, err := r.runPatchFlow(ctx, repoPath, sarifPath, jsonPath, mdPath, true)
-	if err != nil {
-		return nil, fmt.Errorf("cold scan %q: %w", spec.Name, err)
+	coldOut, coldDur, coldExit, coldMem, scanErr := r.runPatchFlow(ctx, repoPath, sarifPath, jsonPath, mdPath, true)
+	if scanErr != nil {
+		// Record the error but still produce a result with 0 findings so the
+		// repo appears in the report with its error noted. This handles cases
+		// like SCA API failures that abort the scan before SAST runs.
+		r.logf("  scan error: %v", scanErr)
+		loc, _ := CountLOC(repoPath)
+		m := buildMetrics(spec, &pfJSONOutput{}, loc, coldDur, coldDur, coldExit, coldMem)
+		return &RepoResult{Repo: spec, PatchFlow: m, Error: scanErr.Error()}, nil
 	}
 
 	// Warm run: reuse the cache populated by the cold run. Measures cache speedup.
@@ -280,16 +289,31 @@ func (r *Runner) prepareRepo(ctx context.Context, spec RepoSpec) (string, error)
 	cloneCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
+	// Clone with --depth 1. If a ref is specified, try --branch first (works
+	// for branches and tags). If that fails, fall back to a full clone + checkout.
 	args := []string{"clone", "--depth", "1"}
 	if spec.Ref != "" {
-		// For tags/commits, shallow clone then checkout. --depth 1 with a tag
-		// works via --branch <tag>.
 		args = append(args, "--branch", spec.Ref)
 	}
 	args = append(args, spec.URL, dest)
 	cmd := exec.CommandContext(cloneCtx, "git", args...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git clone: %w (%s)", err, truncate(combined, 300))
+		// Fallback: clone default branch, then checkout the ref (handles tags
+		// that aren't directly cloneable with --depth 1, and renamed default
+		// branches like main vs master).
+		if spec.Ref != "" {
+			_ = os.RemoveAll(dest)
+			fbCmd := exec.CommandContext(cloneCtx, "git", "clone", "--depth", "50", spec.URL, dest)
+			if fbErr := fbCmd.Run(); fbErr != nil {
+				return "", fmt.Errorf("git clone: %w (initial: %s)", fbErr, truncate(combined, 200))
+			}
+			coCmd := exec.CommandContext(cloneCtx, "git", "-C", dest, "checkout", spec.Ref)
+			if coErr := coCmd.Run(); coErr != nil {
+				return "", fmt.Errorf("git checkout %s: %w (clone: %s)", spec.Ref, coErr, truncate(combined, 200))
+			}
+		} else {
+			return "", fmt.Errorf("git clone: %w (%s)", err, truncate(combined, 300))
+		}
 	}
 	return dest, nil
 }
@@ -340,7 +364,7 @@ func buildMetrics(spec RepoSpec, pf *pfJSONOutput, loc LOCStats, coldDur, warmDu
 }
 
 // applyExpected computes recall against the curated ExpectedFindings list by
-// matching rule IDs and CVE IDs found in the scan output.
+// matching rule IDs, CVE IDs, and CWE IDs found in the scan output.
 func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 	if len(spec.ExpectedFindings) == 0 || pf == nil {
 		return
@@ -352,6 +376,9 @@ func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 		}
 		if f.CVEID != "" {
 			found[f.CVEID] = true
+		}
+		if f.CWEID != "" {
+			found[f.CWEID] = true
 		}
 	}
 	for _, exp := range spec.ExpectedFindings {
@@ -367,10 +394,20 @@ func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 }
 
 // parsePatchFlowJSON decodes the JSON printed to stdout by `patchflow scan run --json`.
+// It also detects the error format `{"error": "..."}` that the CLI emits when a
+// scan fails (e.g. SCA API error), returning an error so the runner can record
+// it instead of silently treating it as 0 findings.
 func parsePatchFlowJSON(stdout []byte) (*pfJSONOutput, error) {
 	stdout = bytes.TrimSpace(stdout)
 	if len(stdout) == 0 {
 		return nil, fmt.Errorf("empty stdout from patchflow")
+	}
+	// Detect CLI error responses before attempting to parse as analysis output.
+	var errProbe struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(stdout, &errProbe) == nil && errProbe.Error != "" {
+		return nil, fmt.Errorf("patchflow scan error: %s", errProbe.Error)
 	}
 	var pf pfJSONOutput
 	if err := json.Unmarshal(stdout, &pf); err != nil {

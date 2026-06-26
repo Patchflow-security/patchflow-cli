@@ -164,6 +164,10 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 	var allResults [][]Vulnerability
 
 	// OSV.dev batch endpoint supports up to 1000 queries per request.
+	// We only send queries for deps with a valid ecosystem and version —
+	// sending empty QueryRequest{} objects causes the OSV API to reject the
+	// entire batch with HTTP 400, which would lose all valid queries too.
+	// allResults stays parallel to uncachedDeps: skipped deps get nil.
 	const batchSize = 1000
 	for i := 0; i < len(uncachedDeps); i += batchSize {
 		end := i + batchSize
@@ -173,11 +177,11 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 		chunk := uncachedDeps[i:end]
 
 		queries := make([]QueryRequest, 0, len(chunk))
-		for _, dep := range chunk {
+		queryIdxToChunkIdx := make([]int, 0, len(chunk)) // maps query position → chunk position
+		for ci, dep := range chunk {
 			eco := ecosystemToOSV(dep.Ecosystem)
 			if eco == "" || dep.Version == "" {
-				queries = append(queries, QueryRequest{}) // empty = no result
-				continue
+				continue // skip — no valid query possible
 			}
 			queries = append(queries, QueryRequest{
 				Package: &Package{
@@ -186,16 +190,22 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 				},
 				Version: dep.Version,
 			})
+			queryIdxToChunkIdx = append(queryIdxToChunkIdx, ci)
 		}
 
-		responses, err := c.postBatch(ctx, queries)
-		if err != nil {
-			return nil, err
+		// Build chunk results: nil for skipped deps, vulns for queried deps.
+		chunkResults := make([][]Vulnerability, len(chunk))
+		if len(queries) > 0 {
+			responses, err := c.postBatch(ctx, queries)
+			if err != nil {
+				return nil, err
+			}
+			for qi, resp := range responses {
+				ci := queryIdxToChunkIdx[qi]
+				chunkResults[ci] = resp.Vulns
+			}
 		}
-		// Convert []Response to [][]Vulnerability
-		for _, resp := range responses {
-			allResults = append(allResults, resp.Vulns)
-		}
+		allResults = append(allResults, chunkResults...)
 	}
 
 	// Merge API results back into the parallel results slice and cache them.

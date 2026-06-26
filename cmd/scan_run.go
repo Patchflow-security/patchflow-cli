@@ -299,6 +299,14 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		filtered := make([]analysis.Finding, 0, len(allFindings))
 		dropped := 0
 		for _, f := range allFindings {
+			// SCA and secret findings from external sources (OSV, gitleaks)
+			// don't have rule_ids in the governance registry — they should
+			// never be filtered by governance profile. Only SAST findings
+			// with a rule_id are subject to governance filtering.
+			if f.RuleID == "" || f.Type == analysis.TypeSCA || f.Type == analysis.TypeSecret {
+				filtered = append(filtered, f)
+				continue
+			}
 			if registry.IsRuleActiveInProfile(f.RuleID, governanceProfile) {
 				filtered = append(filtered, f)
 			} else {

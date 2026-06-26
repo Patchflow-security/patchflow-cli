@@ -38,6 +38,7 @@ type Rule struct {
 	Severity    analysis.Severity
 	Confidence  analysis.Confidence
 	Language    string // "python", "javascript", "typescript"
+	CWEID       string // associated CWE ID (e.g., "CWE-89" for SQL injection)
 	Sources     []SourcePattern
 	Sinks       []SinkPattern
 }
@@ -447,6 +448,7 @@ func (a *Analyzer) makeFinding(rule Rule, node *gotreesitter.Node, bt *gotreesit
 		LineStart:      lineStart,
 		LineEnd:        lineEnd,
 		RuleID:         rule.ID,
+		CWEID:          rule.CWEID,
 		Evidence:       evidence,
 		Recommendation: fmt.Sprintf("Ensure user input flowing into %s is sanitized/validated.", sinkFunc),
 		DetectedAt:     time.Now(),
