@@ -158,3 +158,105 @@ func TestListEmptyDir(t *testing.T) {
 		t.Errorf("expected 0 baselines, got %d", len(names))
 	}
 }
+
+// TestCompareLineShiftResilience verifies the core production guarantee: a
+// finding that moves to a different line (due to unrelated edits above it)
+// must still be recognized as "unchanged" against the baseline, not "new".
+func TestCompareLineShiftResilience(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+
+	baselineFindings := []analysis.Finding{
+		{
+			Type:     analysis.TypeSAST,
+			Analyzer: "gosast-embedded",
+			RuleID:   "G104",
+			FilePath: "app/handler.go",
+			LineStart: 10,
+			Evidence: "resp, err := http.Get(url)",
+			Title:    "Errors unhandled",
+		},
+	}
+	if err := mgr.Create("v1.0", baselineFindings, "abc"); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Same finding, but line shifted from 10 -> 87 due to unrelated edits.
+	current := []analysis.Finding{
+		{
+			Type:     analysis.TypeSAST,
+			Analyzer: "gosast-embedded",
+			RuleID:   "G104",
+			FilePath: "app/handler.go",
+			LineStart: 87,
+			Evidence: "resp, err := http.Get(url)",
+			Title:    "Errors unhandled",
+		},
+	}
+
+	diff, err := mgr.Compare("v1.0", current)
+	if err != nil {
+		t.Fatalf("Compare failed: %v", err)
+	}
+	if diff.NewCount != 0 {
+		t.Errorf("expected 0 new findings after line shift, got %d (fingerprints should be line-independent)", diff.NewCount)
+	}
+	if diff.UnchangedCount != 1 {
+		t.Errorf("expected 1 unchanged finding after line shift, got %d", diff.UnchangedCount)
+	}
+}
+
+// TestCompareNewFindingAfterBaseline verifies that adding one genuinely new
+// vulnerable line after baseline creation produces exactly one new finding.
+func TestCompareNewFindingAfterBaseline(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(dir)
+
+	baselineFindings := []analysis.Finding{
+		{
+			Type:     analysis.TypeSAST,
+			Analyzer: "patterns-embedded",
+			RuleID:   "PY001",
+			FilePath: "app.py",
+			LineStart: 10,
+			Evidence: "eval(user_input)",
+			Title:    "eval() usage",
+		},
+	}
+	if err := mgr.Create("v1.0", baselineFindings, ""); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Same baseline finding plus one brand-new finding.
+	current := []analysis.Finding{
+		{
+			Type:     analysis.TypeSAST,
+			Analyzer: "patterns-embedded",
+			RuleID:   "PY001",
+			FilePath: "app.py",
+			LineStart: 10,
+			Evidence: "eval(user_input)",
+			Title:    "eval() usage",
+		},
+		{
+			Type:     analysis.TypeSecret,
+			Analyzer: "secrets-embedded",
+			RuleID:   "SECRET-aws",
+			FilePath: "config.py",
+			LineStart: 5,
+			Evidence: "AKIAIOSFODNN7EXAMPLE",
+			Title:    "AWS access key",
+		},
+	}
+
+	diff, err := mgr.Compare("v1.0", current)
+	if err != nil {
+		t.Fatalf("Compare failed: %v", err)
+	}
+	if diff.NewCount != 1 {
+		t.Errorf("expected exactly 1 new finding, got %d", diff.NewCount)
+	}
+	if diff.New[0].RuleID != "SECRET-aws" {
+		t.Errorf("expected new finding SECRET-aws, got %s", diff.New[0].RuleID)
+	}
+}

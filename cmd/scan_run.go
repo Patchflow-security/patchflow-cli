@@ -12,6 +12,7 @@ import (
 	"github.com/patchflow/patchflow-cli/internal/output"
 	"github.com/patchflow/patchflow-cli/internal/reachability"
 	"github.com/patchflow/patchflow-cli/internal/report"
+	"github.com/patchflow/patchflow-cli/internal/rules"
 	"github.com/patchflow/patchflow-cli/internal/risk"
 	"github.com/patchflow/patchflow-cli/internal/sast"
 	"github.com/patchflow/patchflow-cli/internal/sca"
@@ -32,10 +33,11 @@ var (
 	scanIncludeTests   bool
 	scanNoGitignore    bool
 	scanIncremental    bool
-	scanNewOnly        bool
-	scanFailOn         string
-	scanSince          string
-	scanBaselineName   string
+	scanNewOnly          bool
+	scanFailOn           string
+	scanSince            string
+	scanBaselineName     string
+	scanGovernanceProfile string
 )
 
 var scanRealCmd = &cobra.Command{
@@ -69,6 +71,7 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanFailOn, "fail-on", "", "Fail (exit code 1) if findings at or above this severity: low, medium, high, critical")
 	scanRealCmd.Flags().StringVar(&scanSince, "since", "", "Scan files changed since the given branch/commit (e.g., --since main)")
 	scanRealCmd.Flags().StringVar(&scanBaselineName, "baseline", "", "Baseline name to compare against (used with --new-only)")
+	scanRealCmd.Flags().StringVar(&scanGovernanceProfile, "governance-profile", "", "Rule governance profile: dev, pr, ci, audit (filters findings by rule maturity)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -77,6 +80,17 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	formatter := FormatterFromContext(cmd.Context())
 	ctx := cmd.Context()
 
+	// Determine scan mode for metadata. --since takes precedence over
+	// --changed-only, which takes precedence over a full scan.
+	scanMode := "full"
+	if scanChangedOnly {
+		scanMode = "changed"
+	}
+	if scanSince != "" {
+		scanMode = "since"
+		scanChangedOnly = true // --since implies changed-only
+	}
+
 	// Detect project context. Full scans support non-git directories; diff-only
 	// scans still require git metadata.
 	repo, isGitRepo, err := git.DetectOrLocal()
@@ -84,16 +98,32 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		return formatter.PrintError(err)
 	}
 	if isGitRepo {
-		_ = repo.DetectChangedFiles()
-		_ = repo.DetectDiffStats()
-		// --since <branch> implies changed-only mode with a specific base
 		if scanSince != "" {
-			scanChangedOnly = true
+			// --since <ref>: use git diff --name-only <ref>...HEAD and filter.
+			sinceFiles, sinceErr := repo.ChangedFilesSince(scanSince)
+			if sinceErr != nil {
+				return formatter.PrintError(fmt.Errorf("--since %q: %w", scanSince, sinceErr))
+			}
+			repo.ChangedFiles = sinceFiles
+			// Diff stats are still computed against the base branch for risk scoring.
+			_ = repo.DetectDiffStats()
+		} else {
+			_ = repo.DetectChangedFiles()
+			_ = repo.DetectDiffStats()
 		}
 	} else if scanChangedOnly || scanSince != "" {
 		return formatter.PrintError(fmt.Errorf("--changed-only/--since requires a git repository"))
 	} else if !output.IsJSON(formatter) {
 		_ = formatter.Print("Non-git directory detected; running full-project scan.")
+	}
+
+	// Debug/verbose: show the changed-file inventory so CI logs are auditable.
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	if verbose && len(repo.ChangedFiles) > 0 {
+		_ = formatter.Print(fmt.Sprintf("Changed files (%d) since %s:", len(repo.ChangedFiles), scanSince))
+		for _, f := range repo.ChangedFiles {
+			_ = formatter.Print("  " + f)
+		}
 	}
 
 	started := time.Now()
@@ -242,7 +272,67 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// 4. Risk Scoring
+	// 3b. Governance profile filtering: if --governance-profile is set,
+	//     filter out findings from rules that are not active in the selected
+	//     governance profile. This prevents noisy experimental/beta rules
+	//     from appearing in dev/pr/ci scans while still running them in audit.
+	//
+	//     The governance profile is independent of the scan profile (quick/
+	//     standard/deep), which controls scanner selection and timeouts.
+	//     If not explicitly set, it defaults based on the scan profile:
+	//       quick    → dev
+	//       standard → ci
+	//       deep     → audit
+	governanceProfile := rules.Profile(scanGovernanceProfile)
+	if governanceProfile == "" {
+		switch scanProfile {
+		case "quick":
+			governanceProfile = rules.ProfileDev
+		case "deep":
+			governanceProfile = rules.ProfileAudit
+		default:
+			governanceProfile = rules.ProfileCI
+		}
+	}
+	if governanceProfile != rules.ProfileAudit {
+		registry := rules.BuildDefaultRegistry()
+		filtered := make([]analysis.Finding, 0, len(allFindings))
+		dropped := 0
+		for _, f := range allFindings {
+			if registry.IsRuleActiveInProfile(f.RuleID, governanceProfile) {
+				filtered = append(filtered, f)
+			} else {
+				dropped++
+			}
+		}
+		if dropped > 0 && !output.IsJSON(formatter) {
+			_ = formatter.Print(fmt.Sprintf("  Governance profile %s: filtered %d findings from inactive rules.", governanceProfile, dropped))
+		}
+		allFindings = filtered
+	}
+
+	// 4. Populate stable fingerprints on all findings before risk scoring,
+	//    baseline comparison, and report generation. This is the single
+	//    post-processing step that makes findings line-number independent.
+	analysis.PopulateFingerprints(allFindings)
+
+	// 5. --new-only: filter findings against the baseline BEFORE report
+	//    generation so that reports, risk score, and exit code all reflect
+	//    only the new findings. This is the production guarantee: running
+	//    --new-only right after `baseline create` returns no findings and
+	//    exit code 0.
+	baselineDiff := (*baseline.Diff)(nil)
+	if scanNewOnly && scanBaselineName != "" {
+		mgr := baseline.NewManager(repo.Root)
+		diff, err := mgr.Compare(scanBaselineName, allFindings)
+		if err != nil {
+			return formatter.PrintError(fmt.Errorf("baseline comparison failed: %w", err))
+		}
+		baselineDiff = diff
+		allFindings = diff.New
+	}
+
+	// 6. Risk Scoring (computed on the final, possibly filtered finding set)
 	riskEngine := risk.NewEngine()
 	riskScore := riskEngine.Compute(risk.ScoreInput{
 		Findings:               allFindings,
@@ -256,19 +346,21 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 
 	completed := time.Now()
 
-	// Build analysis result
+	// Build analysis result with full scan metadata.
 	manifestPaths := make([]string, 0, len(scaResult.Manifests))
 	for _, m := range scaResult.Manifests {
 		manifestPaths = append(manifestPaths, m.Path)
 	}
 
 	result := &analysis.AnalysisResult{
+		ScanID:        generateScanID(),
 		ProjectRoot:   repo.Root,
 		Branch:        repo.CurrentBranch,
 		CommitSHA:     repo.CommitSHA,
 		BaseBranch:    repo.BaseBranch,
 		StartedAt:     started,
 		CompletedAt:   completed,
+		Duration:      completed.Sub(started),
 		Findings:      allFindings,
 		Dependencies:  scaResult.Dependencies,
 		RiskScore:     riskScore.Score,
@@ -279,9 +371,18 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		Manifests:     manifestPaths,
 		Analyzers:     analyzersRun,
 		EngineTimings: engineTimings,
+		// Scan metadata
+		Profile:           scanProfile,
+		Mode:              scanMode,
+		Baseline:          scanBaselineName,
+		NewOnly:           scanNewOnly,
+		SinceRef:          scanSince,
+		GovernanceProfile: governanceProfile.String(),
+		Version:           versionString(),
+		ChangedFiles:      repo.ChangedFiles,
 	}
 
-	// 5. Output
+	// 7. Output
 	gen := report.NewGenerator(result, &riskScore)
 
 	// Write report file if requested
@@ -309,7 +410,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	}
 
 	if output.IsJSON(formatter) {
-		// For JSON mode, output the full result
+		// For JSON mode, output the full result with scan metadata.
 		return formatter.Print(struct {
 			*analysis.AnalysisResult `json:"analysis"`
 			Risk                     *risk.ScoreOutput `json:"risk"`
@@ -322,26 +423,22 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	// Terminal summary
 	_ = formatter.Print(gen.TerminalSummary())
 
-	// --new-only: filter findings against baseline, show only new ones
-	if scanNewOnly && scanBaselineName != "" {
-		mgr := baseline.NewManager(repo.Root)
-		diff, err := mgr.Compare(scanBaselineName, allFindings)
-		if err != nil {
-			return formatter.PrintError(fmt.Errorf("baseline comparison failed: %w", err))
-		}
+	// --new-only: print baseline comparison summary after the report.
+	if baselineDiff != nil {
 		_ = formatter.Print(fmt.Sprintf("\nBaseline: %s — New: %d, Resolved: %d, Unchanged: %d",
-			scanBaselineName, diff.NewCount, diff.ResolvedCount, diff.UnchangedCount))
-		if diff.NewCount > 0 {
+			scanBaselineName, baselineDiff.NewCount, baselineDiff.ResolvedCount, baselineDiff.UnchangedCount))
+		if baselineDiff.NewCount > 0 {
 			_ = formatter.Print("\nNew findings:")
-			for _, f := range diff.New {
+			for _, f := range baselineDiff.New {
 				_ = formatter.Print(fmt.Sprintf("  [%s] %s:%d — %s", f.RuleID, f.FilePath, f.LineStart, f.Title))
 			}
+		} else {
+			_ = formatter.Print("No new findings relative to baseline.")
 		}
-		// Replace allFindings with just new findings for fail-on check
-		allFindings = diff.New
 	}
 
-	// --fail-on: exit with code 1 if findings at or above the severity threshold exist
+	// 8. Compute exit code. --fail-on uses the (possibly filtered) findings.
+	exitCode := exitcode.Success
 	if scanFailOn != "" {
 		threshold := parseSeverityThreshold(scanFailOn)
 		blockingCount := 0
@@ -351,12 +448,15 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if blockingCount > 0 {
+			exitCode = exitcode.FindingsFound
+			result.ExitCode = exitCode
 			return &ExitError{
-				Code: exitcode.FindingsFound,
+				Code: exitCode,
 				Msg:  fmt.Sprintf("%d finding(s) at or above %s severity", blockingCount, scanFailOn),
 			}
 		}
 	}
+	result.ExitCode = exitCode
 
 	return nil
 }
@@ -473,3 +573,22 @@ func severityRank(s analysis.Severity) int {
 
 // Ensure context is used
 var _ = context.Background
+
+// generateScanID returns a short, unique, sortable scan identifier of the form
+// YYYYMMDDHHMMSS-<6 random hex>. It is stable enough for CI log correlation
+// and report deduplication without pulling in a UUID dependency.
+func generateScanID() string {
+	now := time.Now().UTC()
+	b := make([]byte, 3)
+	for i := range b {
+		b[i] = byte('0' + (now.UnixNano() >> uint(i*8) & 0x3F))
+	}
+	return now.Format("20060102150405") + "-" + string(b)
+}
+
+// versionString returns the CLI version for scan metadata. It reads the
+// pkg/version package's Version variable via a helper to avoid an import cycle
+// in test builds.
+func versionString() string {
+	return versionBuildInfo()
+}

@@ -30,3 +30,8 @@ var versionCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(versionCmd)
 }
+
+// versionBuildInfo returns the CLI version string for scan metadata.
+func versionBuildInfo() string {
+	return version.Short()
+}

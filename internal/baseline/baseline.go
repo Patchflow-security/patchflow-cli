@@ -43,12 +43,18 @@ func (m *Manager) baselinePath(name string) string {
 }
 
 // Create saves a new baseline with the given name and findings.
-// If a baseline with the same name exists, it is overwritten.
+// If a baseline with the same name exists, it is overwritten. Findings are
+// fingerprinted with stable semantic fingerprints before storage so that
+// subsequent comparisons are resilient to line-number shifts.
 func (m *Manager) Create(name string, findings []analysis.Finding, commit string) error {
 	dir := m.baselinesDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create baselines directory: %w", err)
 	}
+
+	// Populate stable fingerprints before storing so the baseline is
+	// line-number independent.
+	analysis.PopulateFingerprints(findings)
 
 	bl := &Baseline{
 		Name:        name,
@@ -58,7 +64,7 @@ func (m *Manager) Create(name string, findings []analysis.Finding, commit string
 		Findings:    findings,
 	}
 	for _, f := range findings {
-		bl.FindingKeys[fingerprint(f)] = true
+		bl.FindingKeys[f.SemanticFingerprint] = true
 	}
 
 	data, err := json.MarshalIndent(bl, "", "  ")
@@ -126,16 +132,22 @@ type Diff struct {
 }
 
 // Compare diffs current findings against a saved baseline.
-// Findings are matched by fingerprint (rule_id + file + line).
+// Findings are matched by their stable semantic fingerprint (rule id +
+// scanner + normalized path + normalized snippet), which is resilient to
+// line-number shifts caused by code reformatting or unrelated edits.
 func (m *Manager) Compare(name string, current []analysis.Finding) (*Diff, error) {
 	bl, err := m.Load(name)
 	if err != nil {
 		return nil, err
 	}
 
+	// Ensure both sides have stable fingerprints populated so the comparison
+	// is line-number independent.
+	analysis.PopulateFingerprints(current)
+
 	currentMap := make(map[string]analysis.Finding, len(current))
 	for _, f := range current {
-		currentMap[fingerprint(f)] = f
+		currentMap[f.SemanticFingerprint] = f
 	}
 
 	var diff Diff
@@ -143,8 +155,7 @@ func (m *Manager) Compare(name string, current []analysis.Finding) (*Diff, error
 
 	// Find new and unchanged findings
 	for _, f := range current {
-		fp := fingerprint(f)
-		if bl.FindingKeys[fp] {
+		if bl.FindingKeys[f.SemanticFingerprint] {
 			diff.Unchanged = append(diff.Unchanged, f)
 		} else {
 			diff.New = append(diff.New, f)
@@ -153,7 +164,10 @@ func (m *Manager) Compare(name string, current []analysis.Finding) (*Diff, error
 
 	// Find resolved findings (in baseline but not in current)
 	for _, f := range bl.Findings {
-		fp := fingerprint(f)
+		fp := f.SemanticFingerprint
+		if fp == "" {
+			fp = analysis.ComputeSemanticFingerprint(f)
+		}
 		if _, exists := currentMap[fp]; !exists {
 			diff.Resolved = append(diff.Resolved, f)
 		}
@@ -164,11 +178,4 @@ func (m *Manager) Compare(name string, current []analysis.Finding) (*Diff, error
 	diff.UnchangedCount = len(diff.Unchanged)
 
 	return &diff, nil
-}
-
-// fingerprint creates a unique key for a finding based on rule ID, file, and line.
-// This is used for baseline comparison — two findings with the same fingerprint
-// are considered the same issue.
-func fingerprint(f analysis.Finding) string {
-	return fmt.Sprintf("%s:%s:%d", f.RuleID, f.FilePath, f.LineStart)
 }

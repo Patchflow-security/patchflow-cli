@@ -43,6 +43,32 @@ func (g *Generator) TerminalSummary() string {
 		sb.WriteString(fmt.Sprintf("Branch:      %s\n", g.Result.Branch))
 		sb.WriteString(fmt.Sprintf("Commit:      %s\n", shortenSHA(g.Result.CommitSHA)))
 		sb.WriteString(fmt.Sprintf("Base:        %s\n", g.Result.BaseBranch))
+		// Scan metadata line
+		var metaParts []string
+		if g.Result.ScanID != "" {
+			metaParts = append(metaParts, "scan="+g.Result.ScanID)
+		}
+		if g.Result.Version != "" {
+			metaParts = append(metaParts, "v"+g.Result.Version)
+		}
+		if g.Result.Profile != "" {
+			metaParts = append(metaParts, "profile="+g.Result.Profile)
+		}
+		if g.Result.Mode != "" {
+			metaParts = append(metaParts, "mode="+g.Result.Mode)
+		}
+		if g.Result.Baseline != "" {
+			metaParts = append(metaParts, "baseline="+g.Result.Baseline)
+		}
+		if g.Result.NewOnly {
+			metaParts = append(metaParts, "new-only")
+		}
+		if g.Result.SinceRef != "" {
+			metaParts = append(metaParts, "since="+g.Result.SinceRef)
+		}
+		if len(metaParts) > 0 {
+			sb.WriteString(fmt.Sprintf("Scan:        %s\n", strings.Join(metaParts, "  ")))
+		}
 		sb.WriteString("\n")
 
 		sb.WriteString(fmt.Sprintf("Files changed: %d  (+%d / -%d)\n",
@@ -58,7 +84,11 @@ func (g *Generator) TerminalSummary() string {
 			for _, et := range g.Result.EngineTimings {
 				sb.WriteString(fmt.Sprintf("  %-15s  %s  (%d findings)\n", et.Engine, et.Duration.Round(time.Millisecond), et.Findings))
 			}
-			sb.WriteString(fmt.Sprintf("  %-15s  %s\n", "total", g.Result.CompletedAt.Sub(g.Result.StartedAt).Round(time.Millisecond)))
+			totalDur := g.Result.Duration
+			if totalDur == 0 {
+				totalDur = g.Result.CompletedAt.Sub(g.Result.StartedAt)
+			}
+			sb.WriteString(fmt.Sprintf("  %-15s  %s\n", "total", totalDur.Round(time.Millisecond)))
 			sb.WriteString("\n")
 		}
 	}
@@ -485,6 +515,34 @@ func (g *Generator) Markdown() string {
 		sb.WriteString(fmt.Sprintf("| Deleted lines | %d |\n", g.Result.DeletedLines))
 		sb.WriteString(fmt.Sprintf("| Dependencies | %d |\n", len(g.Result.Dependencies)))
 		sb.WriteString(fmt.Sprintf("| Analyzers | %s |\n", strings.Join(g.Result.Analyzers, ", ")))
+		// Scan metadata
+		if g.Result.ScanID != "" {
+			sb.WriteString(fmt.Sprintf("| Scan ID | %s |\n", g.Result.ScanID))
+		}
+		if g.Result.Version != "" {
+			sb.WriteString(fmt.Sprintf("| CLI version | %s |\n", g.Result.Version))
+		}
+		if g.Result.Profile != "" {
+			sb.WriteString(fmt.Sprintf("| Profile | %s |\n", g.Result.Profile))
+		}
+		if g.Result.Mode != "" {
+			sb.WriteString(fmt.Sprintf("| Mode | %s |\n", g.Result.Mode))
+		}
+		if g.Result.Baseline != "" {
+			sb.WriteString(fmt.Sprintf("| Baseline | %s |\n", g.Result.Baseline))
+		}
+		if g.Result.NewOnly {
+			sb.WriteString("| New only | true |\n")
+		}
+		if g.Result.SinceRef != "" {
+			sb.WriteString(fmt.Sprintf("| Since ref | %s |\n", g.Result.SinceRef))
+		}
+		if g.Result.Duration > 0 {
+			sb.WriteString(fmt.Sprintf("| Duration | %s |\n", g.Result.Duration.Round(time.Millisecond)))
+		}
+		if g.Result.ExitCode != 0 {
+			sb.WriteString(fmt.Sprintf("| Exit code | %d |\n", g.Result.ExitCode))
+		}
 		sb.WriteString("\n")
 	}
 
@@ -573,6 +631,19 @@ func (g *Generator) Markdown() string {
 		}
 	}
 
+	// Engine timings
+	if g.Result != nil && len(g.Result.EngineTimings) > 0 {
+		sb.WriteString("## Engine Timings\n\n")
+		sb.WriteString("| Engine | Duration | Findings |\n|--------|----------|----------|\n")
+		for _, et := range g.Result.EngineTimings {
+			sb.WriteString(fmt.Sprintf("| %s | %s | %d |\n", et.Engine, et.Duration.Round(time.Millisecond), et.Findings))
+		}
+		if g.Result.Duration > 0 {
+			sb.WriteString(fmt.Sprintf("| **total** | %s | — |\n", g.Result.Duration.Round(time.Millisecond)))
+		}
+		sb.WriteString("\n")
+	}
+
 	// Dependencies
 	if g.Result != nil && len(g.Result.Dependencies) > 0 {
 		sb.WriteString("## Dependencies\n\n")
@@ -604,13 +675,47 @@ func (g *Generator) Markdown() string {
 
 // JSON returns a full JSON report.
 func (g *Generator) JSON() ([]byte, error) {
+	// scanMetadata is a compact, top-level summary of how the scan was run.
+	// The full details remain in the analysis block; this block is for
+	// quick CI consumption and log correlation.
+	type scanMetadata struct {
+		ScanID    string        `json:"scan_id,omitempty"`
+		Version   string        `json:"version,omitempty"`
+		Profile   string        `json:"profile,omitempty"`
+		Mode      string        `json:"mode,omitempty"`
+		Baseline  string        `json:"baseline,omitempty"`
+		NewOnly   bool          `json:"new_only,omitempty"`
+		SinceRef  string        `json:"since_ref,omitempty"`
+		Duration  time.Duration `json:"duration,omitempty"`
+		ExitCode  int           `json:"exit_code,omitempty"`
+		StartedAt time.Time     `json:"started_at,omitempty"`
+	}
+
+	var meta scanMetadata
+	if g.Result != nil {
+		meta = scanMetadata{
+			ScanID:    g.Result.ScanID,
+			Version:   g.Result.Version,
+			Profile:   g.Result.Profile,
+			Mode:      g.Result.Mode,
+			Baseline:  g.Result.Baseline,
+			NewOnly:   g.Result.NewOnly,
+			SinceRef:  g.Result.SinceRef,
+			Duration:  g.Result.Duration,
+			ExitCode:  g.Result.ExitCode,
+			StartedAt: g.Result.StartedAt,
+		}
+	}
+
 	report := struct {
 		Generated       time.Time                `json:"generated"`
+		Scan            scanMetadata             `json:"scan"`
 		Analysis        *analysis.AnalysisResult `json:"analysis"`
 		Risk            *risk.ScoreOutput        `json:"risk"`
 		Recommendations []string                 `json:"recommendations"`
 	}{
 		Generated:       time.Now().UTC(),
+		Scan:            meta,
 		Analysis:        g.Result,
 		Risk:            g.Risk,
 		Recommendations: g.generateRecommendations(),
@@ -630,8 +735,29 @@ type SARIFReport struct {
 
 // SARIFRun is a single run in a SARIF report.
 type SARIFRun struct {
-	Tool    SARIFTool     `json:"tool"`
-	Results []SARIFResult `json:"results"`
+	Tool        SARIFTool          `json:"tool"`
+	Results     []SARIFResult      `json:"results"`
+	Invocations []SARIFInvocation  `json:"invocations,omitempty"`
+}
+
+// SARIFInvocation describes a single invocation of the tool, carrying scan
+// metadata as properties for CI traceability.
+type SARIFInvocation struct {
+	StartTimeUTC string           `json:"startTimeUtc,omitempty"`
+	EndTimeUTC   string           `json:"endTimeUtc,omitempty"`
+	Properties   *SARIFScanMeta   `json:"properties,omitempty"`
+}
+
+// SARIFScanMeta is the scan metadata embedded in a SARIF invocation.
+type SARIFScanMeta struct {
+	ScanID   string `json:"scan_id,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Profile  string `json:"profile,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Baseline string `json:"baseline,omitempty"`
+	NewOnly  bool   `json:"new_only,omitempty"`
+	SinceRef string `json:"since_ref,omitempty"`
+	ExitCode int    `json:"exit_code,omitempty"`
 }
 
 // SARIFTool describes the tool that produced the report.
@@ -647,10 +773,27 @@ type SARIFDriver struct {
 
 // SARIFResult is a single finding in SARIF format.
 type SARIFResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   SARIFMessage    `json:"message"`
-	Locations []SARIFLocation `json:"locations,omitempty"`
+	RuleID     string             `json:"ruleId"`
+	Level      string             `json:"level"`
+	Message    SARIFMessage       `json:"message"`
+	Locations  []SARIFLocation    `json:"locations,omitempty"`
+	Properties *SARIFProperties   `json:"properties,omitempty"`
+}
+
+// SARIFProperties carries finding fingerprints and scan metadata as SARIF
+// result properties. This lets downstream tools (GitHub Code Scanning, Azure
+// DevOps) deduplicate findings across runs using stable fingerprints.
+type SARIFProperties struct {
+	SemanticFingerprint  string `json:"semantic_fingerprint,omitempty"`
+	LocationFingerprint  string `json:"location_fingerprint,omitempty"`
+	Analyzer             string `json:"analyzer,omitempty"`
+	Severity             string `json:"severity,omitempty"`
+	Confidence           string `json:"confidence,omitempty"`
+	CWEID                string `json:"cwe_id,omitempty"`
+	PackageName          string `json:"package_name,omitempty"`
+	PackageVersion       string `json:"package_version,omitempty"`
+	FixedVersion         string `json:"fixed_version,omitempty"`
+	Reachability         string `json:"reachability,omitempty"`
 }
 
 // SARIFMessage is a SARIF message.
@@ -715,8 +858,42 @@ func (g *Generator) SARIF(toolVersion string) *SARIFReport {
 				result.RuleID = string(f.Type) + "-" + f.Analyzer
 			}
 
+			// Attach stable fingerprints and finding metadata as properties
+			// so downstream tools can deduplicate across runs.
+			result.Properties = &SARIFProperties{
+				SemanticFingerprint: f.SemanticFingerprint,
+				LocationFingerprint: f.LocationFingerprint,
+				Analyzer:            f.Analyzer,
+				Severity:            string(f.Severity),
+				Confidence:          string(f.Confidence),
+				CWEID:               f.CWEID,
+				PackageName:         f.PackageName,
+				PackageVersion:      f.PackageVersion,
+				FixedVersion:        f.FixedVersion,
+				Reachability:        string(f.Reachability),
+			}
+
 			results = append(results, result)
 		}
+	}
+
+	// Build invocation with scan metadata for CI traceability.
+	var invocations []SARIFInvocation
+	if g.Result != nil {
+		invocations = []SARIFInvocation{{
+			StartTimeUTC: g.Result.StartedAt.UTC().Format(time.RFC3339),
+			EndTimeUTC:   g.Result.CompletedAt.UTC().Format(time.RFC3339),
+			Properties: &SARIFScanMeta{
+				ScanID:   g.Result.ScanID,
+				Version:  g.Result.Version,
+				Profile:  g.Result.Profile,
+				Mode:     g.Result.Mode,
+				Baseline: g.Result.Baseline,
+				NewOnly:  g.Result.NewOnly,
+				SinceRef: g.Result.SinceRef,
+				ExitCode: g.Result.ExitCode,
+			},
+		}}
 	}
 
 	return &SARIFReport{
@@ -730,7 +907,8 @@ func (g *Generator) SARIF(toolVersion string) *SARIFReport {
 						Version: toolVersion,
 					},
 				},
-				Results: results,
+				Results:     results,
+				Invocations: invocations,
 			},
 		},
 	}

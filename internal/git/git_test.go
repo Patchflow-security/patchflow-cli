@@ -358,3 +358,97 @@ func TestMockExecutorTracksCalls(t *testing.T) {
 		t.Fatalf("expected second call %q, got %q", "rev-parse --abbrev-ref HEAD", mock.Calls[1])
 	}
 }
+
+func TestChangedFilesSinceWithMock(t *testing.T) {
+	dir := t.TempDir()
+	// Create a couple of source files so the "still on disk" filter keeps them.
+	mustWrite(t, dir, "app/main.go", "package main\n")
+	mustWrite(t, dir, "lib/util.py", "print('hi')\n")
+
+	mock := &MockExecutor{
+		Responses: map[string]string{
+			"rev-parse --show-toplevel":             dir,
+			"rev-parse --abbrev-ref HEAD":           "feature",
+			"rev-parse HEAD":                        "abc123",
+			"remote get-url origin":                 "",
+			"rev-parse --verify main":               "main-sha\n",
+			"diff --name-only main...HEAD":          "app/main.go\nlib/util.py\ndeleted.go\nnode_modules/x.js\nbig.bin\n",
+		},
+	}
+	repo, err := NewRepository(mock)
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+
+	files, err := repo.ChangedFilesSince("main")
+	if err != nil {
+		t.Fatalf("ChangedFilesSince: %v", err)
+	}
+	// deleted.go is absent on disk, node_modules is ignored, .bin is binary.
+	want := map[string]bool{"app/main.go": true, "lib/util.py": true}
+	if len(files) != len(want) {
+		t.Fatalf("expected %d files, got %d: %v", len(want), len(files), files)
+	}
+	for _, f := range files {
+		if !want[f] {
+			t.Errorf("unexpected file %q in filtered result", f)
+		}
+	}
+}
+
+func TestChangedFilesSinceMissingRef(t *testing.T) {
+	dir := t.TempDir()
+	mock := &MockExecutor{
+		Responses: map[string]string{
+			"rev-parse --show-toplevel": dir,
+			"rev-parse --abbrev-ref HEAD": "feature",
+			"rev-parse HEAD":              "abc123",
+			"remote get-url origin":       "",
+		},
+		Errors: map[string]error{
+			"rev-parse --verify nope": errors.New("not found"),
+		},
+	}
+	repo, err := NewRepository(mock)
+	if err != nil {
+		t.Fatalf("NewRepository: %v", err)
+	}
+	if _, err := repo.ChangedFilesSince("nope"); err == nil {
+		t.Fatal("expected error for missing ref")
+	}
+}
+
+func TestIsInIgnoredDir(t *testing.T) {
+	cases := map[string]bool{
+		"node_modules/foo.js": true,
+		"vendor/pkg.go":       true,
+		"src/app/main.go":     false,
+		".git/config":         true,
+		"foo/bar.go":          false,
+	}
+	for path, want := range cases {
+		if got := isInIgnoredDir(path); got != want {
+			t.Errorf("isInIgnoredDir(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+func TestIsBinaryExt(t *testing.T) {
+	if !isBinaryExt(".PNG") {
+		t.Error(".PNG should be binary (case-insensitive)")
+	}
+	if isBinaryExt(".go") {
+		t.Error(".go should not be binary")
+	}
+}
+
+func mustWrite(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	abs := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(abs, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}

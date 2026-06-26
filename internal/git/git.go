@@ -199,6 +199,113 @@ func parseDiffStat(stat string) (int, int) {
 	return totalAdded, totalDeleted
 }
 
+// ChangedFilesSince returns the list of files changed between the given ref
+// (branch, tag, or commit) and HEAD, using `git diff --name-only <ref>...HEAD`.
+// The three-dot syntax compares the merge-base of <ref> and HEAD against HEAD,
+// so only changes introduced on the current branch are reported.
+//
+// The returned list is filtered to remove:
+//   - deleted files (no longer present on disk)
+//   - files inside ignored directories (vendor, node_modules, .git, ...)
+//   - binary files (by extension)
+//   - oversized files (larger than maxBytes)
+//
+// If maxBytes <= 0, a default of 2 MiB is used.
+func (r *Repository) ChangedFilesSince(ref string) ([]string, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("ChangedFilesSince: ref is required")
+	}
+
+	// Verify the ref exists before diffing so we can return a clear error.
+	if _, err := r.executor.Run(r.Root, "rev-parse", "--verify", ref); err != nil {
+		return nil, fmt.Errorf("git ref %q does not exist: %w", ref, err)
+	}
+
+	out, err := r.executor.Run(r.Root, "diff", "--name-only", ref+"...HEAD")
+	if err != nil {
+		// Fall back to two-dot diff if three-dot fails (e.g. no merge-base).
+		out, err = r.executor.Run(r.Root, "diff", "--name-only", ref, "HEAD")
+		if err != nil {
+			return nil, fmt.Errorf("failed to diff against %q: %w", ref, err)
+		}
+	}
+
+	raw := strings.Split(strings.TrimSpace(out), "\n")
+	return r.filterChangedFiles(raw), nil
+}
+
+// filterChangedFiles applies the production filtering rules to a raw list of
+// changed file paths: drops empties, deleted files, ignored dirs, binary
+// extensions, and oversized files.
+func (r *Repository) filterChangedFiles(raw []string) []string {
+	const defaultMaxBytes int64 = 2 * 1024 * 1024 // 2 MiB
+
+	var result []string
+	for _, f := range raw {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		// Skip deleted files (no longer on disk).
+		abs := filepath.Join(r.Root, f)
+		info, err := os.Stat(abs)
+		if err != nil {
+			continue
+		}
+		// Skip ignored directories.
+		if isInIgnoredDir(f) {
+			continue
+		}
+		// Skip binary files by extension.
+		if isBinaryExt(filepath.Ext(f)) {
+			continue
+		}
+		// Skip oversized files.
+		if info.Size() > defaultMaxBytes {
+			continue
+		}
+		result = append(result, f)
+	}
+	return result
+}
+
+// ignoredDirSet lists directory names whose contents are never scanned.
+var ignoredDirSet = map[string]bool{
+	".git": true, "vendor": true, "node_modules": true, "dist": true,
+	"build": true, "__pycache__": true, ".next": true, ".nuxt": true,
+	"target": true, ".gradle": true, ".idea": true, ".vscode": true,
+	"bin": true, "obj": true, ".cache": true, ".pytest_cache": true,
+	".mypy_cache": true, ".ruff_cache": true, "coverage": true,
+	".turbo": true, ".svelte-kit": true,
+}
+
+func isInIgnoredDir(path string) bool {
+	path = filepath.ToSlash(path)
+	for _, part := range strings.Split(path, "/") {
+		if ignoredDirSet[part] {
+			return true
+		}
+	}
+	return false
+}
+
+// binaryExts lists file extensions that are never source-scannable.
+var binaryExts = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".bmp": true,
+	".ico": true, ".webp": true, ".mp3": true, ".mp4": true, ".avi": true,
+	".mov": true, ".wav": true, ".flv": true, ".zip": true, ".tar": true,
+	".gz": true, ".bz2": true, ".xz": true, ".7z": true, ".rar": true,
+	".pdf": true, ".doc": true, ".docx": true, ".xls": true, ".xlsx": true,
+	".exe": true, ".dll": true, ".so": true, ".dylib": true, ".o": true,
+	".a": true, ".class": true, ".jar": true, ".war": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".eot": true, ".otf": true,
+	".pyc": true, ".pyo": true, ".wasm": true,
+}
+
+func isBinaryExt(ext string) bool {
+	return binaryExts[strings.ToLower(ext)]
+}
+
 // MockExecutor is a test double for git commands.
 type MockExecutor struct {
 	Responses map[string]string

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
 	"github.com/patchflow/patchflow-cli/internal/risk"
@@ -289,6 +290,150 @@ func TestSeverityToSARIFLevel(t *testing.T) {
 	for _, tt := range tests {
 		if got := severityToSARIFLevel(tt.sev); got != tt.level {
 			t.Errorf("severityToSARIFLevel(%s) = %s, want %s", tt.sev, got, tt.level)
+		}
+	}
+}
+
+func TestJSONIncludesScanMetadataAndFingerprints(t *testing.T) {
+	findings := []analysis.Finding{
+		{
+			Type:     analysis.TypeSAST,
+			Analyzer: "gosast-embedded",
+			RuleID:   "G104",
+			FilePath: "app/handler.go",
+			LineStart: 10,
+			Evidence: "http.Get(url)",
+			Title:    "Errors unhandled",
+			Severity: analysis.SeverityMedium,
+		},
+	}
+	analysis.PopulateFingerprints(findings)
+
+	result := &analysis.AnalysisResult{
+		ScanID:    "test-scan-123",
+		ProjectRoot: "/test/repo",
+		Branch:    "main",
+		CommitSHA: "abc123",
+		Findings:  findings,
+		Profile:   "standard",
+		Mode:      "changed",
+		Baseline:  "v1.0",
+		NewOnly:   true,
+		SinceRef:  "main",
+		Version:   "0.1.0",
+		Duration:  1500 * time.Millisecond,
+		ExitCode:  0,
+	}
+	riskScore := &risk.ScoreOutput{Score: 30, Level: "low"}
+
+	gen := NewGenerator(result, riskScore)
+	data, err := gen.JSON()
+	if err != nil {
+		t.Fatalf("JSON failed: %v", err)
+	}
+	s := string(data)
+
+	// Scan metadata (MarshalIndent adds a space after the colon)
+	for _, want := range []string{`"scan_id": "test-scan-123"`, `"profile": "standard"`, `"mode": "changed"`, `"baseline": "v1.0"`, `"new_only": true`, `"since_ref": "main"`, `"version": "0.1.0"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("JSON report missing scan metadata %s", want)
+		}
+	}
+	// Fingerprints on findings
+	if !strings.Contains(s, `"semantic_fingerprint"`) {
+		t.Error("JSON report should include semantic_fingerprint on findings")
+	}
+	if !strings.Contains(s, `"location_fingerprint"`) {
+		t.Error("JSON report should include location_fingerprint on findings")
+	}
+}
+
+func TestSARIFIncludesFingerprintsAndScanMeta(t *testing.T) {
+	findings := []analysis.Finding{
+		{
+			Type:     analysis.TypeSAST,
+			Analyzer: "gosast-embedded",
+			RuleID:   "G104",
+			FilePath: "app/handler.go",
+			LineStart: 10,
+			Evidence: "http.Get(url)",
+			Title:    "Errors unhandled",
+			Severity: analysis.SeverityMedium,
+		},
+	}
+	analysis.PopulateFingerprints(findings)
+
+	result := &analysis.AnalysisResult{
+		ScanID:    "sarif-scan-1",
+		ProjectRoot: "/test/repo",
+		Profile:   "deep",
+		Mode:      "since",
+		SinceRef:  "main",
+		Version:   "0.1.0",
+		Findings:  findings,
+	}
+	riskScore := &risk.ScoreOutput{Score: 40, Level: "medium"}
+
+	gen := NewGenerator(result, riskScore)
+	sarif := gen.SARIF("0.1.0")
+	if len(sarif.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(sarif.Runs))
+	}
+	run := sarif.Runs[0]
+	if len(run.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(run.Results))
+	}
+	r := run.Results[0]
+	if r.Properties == nil {
+		t.Fatal("SARIF result should have properties")
+	}
+	if r.Properties.SemanticFingerprint == "" {
+		t.Error("SARIF result properties should include semantic_fingerprint")
+	}
+	if r.Properties.LocationFingerprint == "" {
+		t.Error("SARIF result properties should include location_fingerprint")
+	}
+	// Invocation with scan metadata
+	if len(run.Invocations) != 1 {
+		t.Fatalf("expected 1 invocation, got %d", len(run.Invocations))
+	}
+	inv := run.Invocations[0]
+	if inv.Properties == nil {
+		t.Fatal("SARIF invocation should have properties")
+	}
+	if inv.Properties.ScanID != "sarif-scan-1" {
+		t.Errorf("expected scan_id sarif-scan-1, got %s", inv.Properties.ScanID)
+	}
+	if inv.Properties.Mode != "since" {
+		t.Errorf("expected mode since, got %s", inv.Properties.Mode)
+	}
+	if inv.Properties.SinceRef != "main" {
+		t.Errorf("expected since_ref main, got %s", inv.Properties.SinceRef)
+	}
+}
+
+func TestMarkdownIncludesScanMetadata(t *testing.T) {
+	result := &analysis.AnalysisResult{
+		ScanID:    "md-scan-1",
+		ProjectRoot: "/test/repo",
+		Branch:    "main",
+		CommitSHA: "abc123",
+		Profile:   "standard",
+		Mode:      "changed",
+		Baseline:  "v1.0",
+		NewOnly:   true,
+		SinceRef:  "main",
+		Version:   "0.1.0",
+		Duration:  1500 * time.Millisecond,
+	}
+	riskScore := &risk.ScoreOutput{Score: 30, Level: "low"}
+
+	gen := NewGenerator(result, riskScore)
+	md := gen.Markdown()
+
+	for _, want := range []string{"md-scan-1", "standard", "changed", "v1.0", "main", "0.1.0"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("Markdown report missing scan metadata: %s", want)
 		}
 	}
 }
