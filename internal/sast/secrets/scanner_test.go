@@ -149,6 +149,23 @@ func TestSecretScanner_SkipsIgnoredDirs(t *testing.T) {
 	}
 }
 
+func TestSecretScanner_SkipsEntropyInLockfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "package-lock.json", `"integrity": "sha512-XJw9Kq2nP7vLmR8sT4uY6zAbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdef"`)
+
+	s := NewScanner()
+	findings, err := s.Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+
+	for _, f := range findings {
+		if f.RuleID == "SECRET-HIGH-ENTROPY" {
+			t.Fatalf("lockfile integrity hashes should not trigger entropy findings: %#v", findings)
+		}
+	}
+}
+
 func TestSecretScanner_RedactsEvidence(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "config.py", `api_key = "AKIAIOSFODNN7EXAMPLE"`)

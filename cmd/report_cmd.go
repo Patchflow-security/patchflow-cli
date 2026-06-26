@@ -52,13 +52,16 @@ func runReport(cmd *cobra.Command, _ []string) error {
 		return formatter.PrintError(fmt.Errorf("unsupported format: %s (supported: markdown, json, sarif)", reportFormat))
 	}
 
-	// Detect git repository
-	repo, err := git.Detect()
+	// Detect project context. Report generation supports non-git directories;
+	// diff stats are included only when available.
+	repo, isGitRepo, err := git.DetectOrLocal()
 	if err != nil {
 		return formatter.PrintError(err)
 	}
-	_ = repo.DetectChangedFiles()
-	_ = repo.DetectDiffStats()
+	if isGitRepo {
+		_ = repo.DetectChangedFiles()
+		_ = repo.DetectDiffStats()
+	}
 
 	started := time.Now()
 
@@ -103,13 +106,13 @@ func runReport(cmd *cobra.Command, _ []string) error {
 	// Risk scoring
 	riskEngine := risk.NewEngine()
 	riskScore := riskEngine.Compute(risk.ScoreInput{
-		Findings:              allFindings,
-		FilesChanged:          len(repo.ChangedFiles),
-		AddedLines:            repo.AddedLines,
-		DeletedLines:          repo.DeletedLines,
+		Findings:               allFindings,
+		FilesChanged:           len(repo.ChangedFiles),
+		AddedLines:             repo.AddedLines,
+		DeletedLines:           repo.DeletedLines,
 		DependencyFilesChanged: hasDependencyFiles(repo.ChangedFiles),
-		CIWorkflowChanged:     hasCIWorkflow(repo.ChangedFiles),
-		AuthFilesChanged:      hasAuthFiles(repo.ChangedFiles),
+		CIWorkflowChanged:      hasCIWorkflow(repo.ChangedFiles),
+		AuthFilesChanged:       hasAuthFiles(repo.ChangedFiles),
 	})
 
 	completed := time.Now()

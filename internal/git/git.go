@@ -3,7 +3,9 @@ package git
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -73,6 +75,30 @@ func NewRepository(executor Executor) (*Repository, error) {
 // Detect returns a Repository for the current working directory.
 func Detect() (*Repository, error) {
 	return NewRepository(nil)
+}
+
+// DetectOrLocal returns git metadata when available, otherwise a local project
+// rooted at the current working directory. This lets full scans work on
+// unpacked source trees that are not git checkouts.
+func DetectOrLocal() (*Repository, bool, error) {
+	repo, err := Detect()
+	if err == nil {
+		return repo, true, nil
+	}
+
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		return nil, false, cwdErr
+	}
+	root, absErr := filepath.Abs(cwd)
+	if absErr != nil {
+		return nil, false, absErr
+	}
+
+	return &Repository{
+		Root:          root,
+		CurrentBranch: "local",
+	}, false, nil
 }
 
 // detectBaseBranch tries to determine the default base branch.

@@ -24,8 +24,8 @@ func TestTerminalSummary(t *testing.T) {
 	}
 
 	riskScore := &risk.ScoreOutput{
-		Score:            45,
-		Level:            "medium",
+		Score:              45,
+		Level:              "medium",
 		FindingsBySeverity: map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 0},
 		TopFindings: []analysis.Finding{
 			{Title: "Test finding", Severity: analysis.SeverityHigh, PackageName: "test-pkg"},
@@ -51,26 +51,26 @@ func TestTerminalSummary(t *testing.T) {
 
 func TestMarkdown(t *testing.T) {
 	result := &analysis.AnalysisResult{
-		ProjectRoot:  "/test/repo",
-		Branch:       "main",
-		CommitSHA:    "abc123",
+		ProjectRoot: "/test/repo",
+		Branch:      "main",
+		CommitSHA:   "abc123",
 		Findings: []analysis.Finding{
 			{
-				Title:       "Test vulnerability",
-				Type:        analysis.TypeSCA,
-				Severity:    analysis.SeverityHigh,
-				PackageName: "vuln-pkg",
+				Title:          "Test vulnerability",
+				Type:           analysis.TypeSCA,
+				Severity:       analysis.SeverityHigh,
+				PackageName:    "vuln-pkg",
 				PackageVersion: "1.0.0",
-				FixedVersion: "2.0.0",
-				CVEID:       "CVE-2024-1234",
+				FixedVersion:   "2.0.0",
+				CVEID:          "CVE-2024-1234",
 			},
 		},
 		Dependencies: []analysis.Dependency{{Name: "test-pkg", Version: "1.0.0"}},
 	}
 
 	riskScore := &risk.ScoreOutput{
-		Score: 60,
-		Level: "high",
+		Score:              60,
+		Level:              "high",
 		FindingsBySeverity: map[string]int{"high": 1},
 	}
 
@@ -118,6 +118,32 @@ func TestJSON(t *testing.T) {
 
 	if parsed["generated"] == nil {
 		t.Error("JSON should contain generated field")
+	}
+	if parsed["analysis"] == nil {
+		t.Error("JSON should contain analysis field")
+	}
+	if parsed["result"] != nil {
+		t.Error("JSON should not use legacy result field")
+	}
+}
+
+func TestRecommendationsDoNotClaimSafeWhenHighFindingsExist(t *testing.T) {
+	result := &analysis.AnalysisResult{
+		Findings: []analysis.Finding{
+			{Title: "High finding", Severity: analysis.SeverityHigh},
+		},
+	}
+	riskScore := &risk.ScoreOutput{Score: 80, Level: "critical"}
+
+	gen := NewGenerator(result, riskScore)
+	recs := gen.GenerateRecommendationsPublic()
+
+	joined := strings.Join(recs, "\n")
+	if strings.Contains(joined, "No critical issues detected") {
+		t.Fatalf("recommendations should not claim safe on blocking risk: %v", recs)
+	}
+	if !strings.Contains(joined, "high-severity") {
+		t.Fatalf("expected high severity recommendation, got %v", recs)
 	}
 }
 

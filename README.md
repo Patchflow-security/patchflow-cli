@@ -103,7 +103,8 @@ result = eval(user_input)
 | `--no-sast` | Skip SAST analysis (gosast-embedded, patterns-embedded, gosec, bandit, semgrep) |
 | `--no-secrets` | Skip secret detection (secrets-embedded, gitleaks) |
 | `--no-reachability` | Skip reachability analysis |
-| `--changed-only` | Only analyze changed files |
+| `--changed-only` | Only analyze changed files (requires git) |
+| `--include-tests` | Include test files in SAST findings (tests are skipped by default) |
 | `--show-suppressed` | Show findings suppressed by `//patchflow:ignore` comments |
 | `--format <markdown\|json\|sarif>` | Output format for report file |
 | `--output <path>` | Write report to file (stdout if omitted) |
@@ -242,6 +243,7 @@ patchflow scan changed
 patchflow scan run
 patchflow scan run --profile deep
 patchflow scan run --no-sast --no-secrets
+patchflow scan run --include-tests
 
 # Export scan results with real vulnerability findings
 patchflow scan export --format sarif --output findings.sarif

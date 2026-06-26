@@ -52,12 +52,15 @@ type Runner struct {
 	Timeout      time.Duration
 
 	// Flags to control which scanners run
-	NoEmbeddedGo      bool
-	NoEmbeddedSecrets bool
+	NoEmbeddedGo       bool
+	NoEmbeddedSecrets  bool
 	NoEmbeddedPatterns bool
 
 	// ShowSuppressed controls whether suppressed findings are included in output
 	ShowSuppressed bool
+
+	// IncludeTests controls whether findings from test files are included.
+	IncludeTests bool
 
 	// CustomRulesPath is the path to a custom rules YAML file.
 	// If empty, the runner looks for .patchflow/rules.yaml in the project root.
@@ -67,11 +70,11 @@ type Runner struct {
 // NewRunner creates a SAST runner with embedded scanners and external tools.
 func NewRunner() *Runner {
 	r := &Runner{
-		Timeout:          120 * time.Second,
-		gosastAnalyzer:   gosast.NewAnalyzer(),
-		secretScanner:    secrets.NewScanner(),
-		patternScanner:   patterns.NewScanner(),
-		suppressionMgr:   suppression.NewManager(),
+		Timeout:        120 * time.Second,
+		gosastAnalyzer: gosast.NewAnalyzer(),
+		secretScanner:  secrets.NewScanner(),
+		patternScanner: patterns.NewScanner(),
+		suppressionMgr: suppression.NewManager(),
 	}
 
 	r.Tools = []Tool{
@@ -131,10 +134,10 @@ func (r *Runner) loadCustomRules(root string) error {
 
 // RuleGroup represents a group of rules from a specific scanner.
 type RuleGroup struct {
-	Scanner    string      // "gosast-embedded", "secrets-embedded", "patterns-embedded"
-	Language   string      // "go", "multi", "secrets"
-	RuleCount  int
-	Rules      []RuleEntry
+	Scanner   string // "gosast-embedded", "secrets-embedded", "patterns-embedded"
+	Language  string // "go", "multi", "secrets"
+	RuleCount int
+	Rules     []RuleEntry
 }
 
 // RuleEntry represents a single rule for display purposes.
@@ -308,6 +311,9 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
 				sr.findings = filterFindingsToChanged(sr.findings, r.ChangedFiles)
 			}
+			if !r.IncludeTests {
+				sr.findings = filterFindingsToNonTests(sr.findings)
+			}
 			result.Findings = append(result.Findings, sr.findings...)
 			result.ToolsRun = append(result.ToolsRun, sr.name)
 		}
@@ -334,6 +340,9 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		// Filter to changed files if requested
 		if r.ChangedOnly && len(r.ChangedFiles) > 0 {
 			findings = filterFindingsToChanged(findings, r.ChangedFiles)
+		}
+		if !r.IncludeTests {
+			findings = filterFindingsToNonTests(findings)
 		}
 
 		result.Findings = append(result.Findings, findings...)
@@ -378,6 +387,43 @@ func filterFindingsToChanged(findings []analysis.Finding, changedFiles []string)
 	return filtered
 }
 
+func filterFindingsToNonTests(findings []analysis.Finding) []analysis.Finding {
+	var filtered []analysis.Finding
+	for _, f := range findings {
+		if isTestPath(f.FilePath) {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
+}
+
+func isTestPath(path string) bool {
+	normalized := filepath.ToSlash(strings.TrimPrefix(path, "./"))
+	lower := strings.ToLower(normalized)
+	base := filepath.Base(lower)
+
+	if strings.Contains(lower, "/test/") ||
+		strings.Contains(lower, "/tests/") ||
+		strings.Contains(lower, "/__tests__/") ||
+		strings.Contains(lower, "/spec/") ||
+		strings.Contains(lower, "/specs/") {
+		return true
+	}
+
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.HasSuffix(base, "_test.py") ||
+		(strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py")) ||
+		strings.HasSuffix(base, ".test.js") ||
+		strings.HasSuffix(base, ".spec.js") ||
+		strings.HasSuffix(base, ".test.jsx") ||
+		strings.HasSuffix(base, ".spec.jsx") ||
+		strings.HasSuffix(base, ".test.ts") ||
+		strings.HasSuffix(base, ".spec.ts") ||
+		strings.HasSuffix(base, ".test.tsx") ||
+		strings.HasSuffix(base, ".spec.tsx")
+}
+
 // commandExists checks if a binary is available on the PATH.
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
@@ -395,7 +441,7 @@ func parseIntSafe(s string) int {
 // --- gosec ---
 
 type gosecReport struct {
-	Issues []gosecIssue `json:"Issues"`
+	Issues []gosecIssue         `json:"Issues"`
 	Rules  map[string]gosecRule `json:"Rules"`
 }
 
@@ -513,16 +559,16 @@ type banditReport struct {
 }
 
 type banditResult struct {
-	TestID     string `json:"test_id"`
-	TestName   string `json:"test_name"`
-	IssueSeverity string `json:"issue_severity"`
+	TestID          string `json:"test_id"`
+	TestName        string `json:"test_name"`
+	IssueSeverity   string `json:"issue_severity"`
 	IssueConfidence string `json:"issue_confidence"`
-	IssueText  string `json:"issue_text"`
-	Filename   string `json:"filename"`
-	LineNumber int    `json:"line_number"`
-	ColNumber  int    `json:"col_number"`
-	MoreInfo   string `json:"more_info"`
-	Code       string `json:"issue_cwe"`
+	IssueText       string `json:"issue_text"`
+	Filename        string `json:"filename"`
+	LineNumber      int    `json:"line_number"`
+	ColNumber       int    `json:"col_number"`
+	MoreInfo        string `json:"more_info"`
+	Code            string `json:"issue_cwe"`
 }
 
 func runBandit(ctx context.Context, root string) ([]analysis.Finding, error) {
@@ -598,11 +644,11 @@ type semgrepReport struct {
 }
 
 type semgrepResult struct {
-	CheckID string `json:"check_id"`
-	Path    string `json:"path"`
+	CheckID string          `json:"check_id"`
+	Path    string          `json:"path"`
 	Start   semgrepPosition `json:"start"`
 	End     semgrepPosition `json:"end"`
-	Extra   semgrepExtra `json:"extra"`
+	Extra   semgrepExtra    `json:"extra"`
 }
 
 type semgrepPosition struct {
@@ -612,9 +658,9 @@ type semgrepPosition struct {
 }
 
 type semgrepExtra struct {
-	Message  string `json:"message"`
-	Severity string `json:"severity"`
-	Lines    string `json:"lines"`
+	Message  string                 `json:"message"`
+	Severity string                 `json:"severity"`
+	Lines    string                 `json:"lines"`
 	Metadata map[string]interface{} `json:"metadata"`
 }
 
@@ -749,20 +795,20 @@ func runGitleaks(ctx context.Context, root string) ([]analysis.Finding, error) {
 		}
 
 		findings = append(findings, analysis.Finding{
-			ID:          fmt.Sprintf("secret-gitleaks-%s-%s-%d", f.RuleID, filepath.Base(f.File), f.StartLine),
-			Type:        analysis.TypeSecret,
-			Analyzer:    "gitleaks",
-			Severity:    analysis.SeverityHigh, // secrets are always high severity
-			Confidence:  analysis.ConfidenceHigh,
-			Title:       fmt.Sprintf("Secret detected: %s", title),
-			Description: fmt.Sprintf("Potential secret matching rule %s detected. Value masked: %s", f.RuleID, maskedSecret),
-			FilePath:    f.File,
-			LineStart:   f.StartLine,
-			LineEnd:     f.EndLine,
-			RuleID:      f.RuleID,
-			Evidence:    maskSecret(f.Match),
+			ID:             fmt.Sprintf("secret-gitleaks-%s-%s-%d", f.RuleID, filepath.Base(f.File), f.StartLine),
+			Type:           analysis.TypeSecret,
+			Analyzer:       "gitleaks",
+			Severity:       analysis.SeverityHigh, // secrets are always high severity
+			Confidence:     analysis.ConfidenceHigh,
+			Title:          fmt.Sprintf("Secret detected: %s", title),
+			Description:    fmt.Sprintf("Potential secret matching rule %s detected. Value masked: %s", f.RuleID, maskedSecret),
+			FilePath:       f.File,
+			LineStart:      f.StartLine,
+			LineEnd:        f.EndLine,
+			RuleID:         f.RuleID,
+			Evidence:       maskSecret(f.Match),
 			Recommendation: "Remove the secret from the code, rotate it immediately, and use environment variables or a secrets manager.",
-			DetectedAt:  time.Now(),
+			DetectedAt:     time.Now(),
 		})
 	}
 

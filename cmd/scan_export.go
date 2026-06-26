@@ -43,13 +43,16 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("unsupported format: %q (supported: json, sarif)", format)
 	}
 
-	// Detect git repository
-	repo, err := git.Detect()
+	// Detect project context. Export can run on unpacked source trees that are
+	// not git repositories; diff stats are included only when available.
+	repo, isGitRepo, err := git.DetectOrLocal()
 	if err != nil {
 		return formatter.PrintError(err)
 	}
-	_ = repo.DetectChangedFiles()
-	_ = repo.DetectDiffStats()
+	if isGitRepo {
+		_ = repo.DetectChangedFiles()
+		_ = repo.DetectDiffStats()
+	}
 
 	started := time.Now()
 
@@ -85,13 +88,13 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 	// Risk scoring
 	riskEngine := risk.NewEngine()
 	riskScore := riskEngine.Compute(risk.ScoreInput{
-		Findings:              allFindings,
-		FilesChanged:          len(repo.ChangedFiles),
-		AddedLines:            repo.AddedLines,
-		DeletedLines:          repo.DeletedLines,
+		Findings:               allFindings,
+		FilesChanged:           len(repo.ChangedFiles),
+		AddedLines:             repo.AddedLines,
+		DeletedLines:           repo.DeletedLines,
 		DependencyFilesChanged: hasDependencyFiles(repo.ChangedFiles),
-		CIWorkflowChanged:     hasCIWorkflow(repo.ChangedFiles),
-		AuthFilesChanged:      hasAuthFiles(repo.ChangedFiles),
+		CIWorkflowChanged:      hasCIWorkflow(repo.ChangedFiles),
+		AuthFilesChanged:       hasAuthFiles(repo.ChangedFiles),
 	})
 
 	completed := time.Now()

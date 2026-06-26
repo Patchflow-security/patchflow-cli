@@ -730,6 +730,8 @@ Running `patchflow init` on an already-initialized repository is a no-op — it 
 
 Run a full local security analysis: SCA (OSV.dev), SAST (local tools), reachability analysis, and risk scoring. No backend connection required.
 
+`scan run`, `scan export`, and `report` can run in a non-git source directory. Diff-aware options such as `--changed-only` and `pr-review` still require a git working tree.
+
 ```bash
 patchflow scan run
 Running SCA analysis (OSV.dev)...
@@ -753,7 +755,8 @@ Risk Score: 28/100 (LOW)
 | `--show-suppressed` | bool | false | Show findings suppressed by `//patchflow:ignore` comments |
 | `--format` | string | (terminal) | Report format: `markdown`, `json`, `sarif` |
 | `--output` | string | (stdout) | Write report to file |
-| `--changed-only` | bool | false | Only analyze changed files |
+| `--changed-only` | bool | false | Only analyze changed files; requires git |
+| `--include-tests` | bool | false | Include test files in SAST findings |
 
 #### Examples
 
@@ -1316,7 +1319,7 @@ patchflow review pr --submit --json
 
 ### `not a git repository`
 
-The CLI must be run from inside a Git working tree. Run `patchflow doctor` to confirm. If you are in a subdirectory, the CLI will resolve the repository root automatically via `git rev-parse --show-toplevel`.
+Full local scans can run outside a Git working tree. Commands that depend on diffs still require git: `patchflow pr-review`, `patchflow scan changed`, and `patchflow scan run --changed-only`. Run `patchflow doctor` to confirm repository detection. If you are in a subdirectory, the CLI will resolve the repository root automatically via `git rev-parse --show-toplevel`.
 
 ### `Not authenticated. Run 'patchflow login --token <token>' first.`
 

@@ -22,11 +22,11 @@ from pathlib import Path
 	imports := parsePythonImports(path)
 
 	expected := map[string]bool{
-		"os":     true,
-		"sys":    true,
-		"flask":  true,
-		"django": true,
-		"numpy":  true,
+		"os":      true,
+		"sys":     true,
+		"flask":   true,
+		"django":  true,
+		"numpy":   true,
 		"pathlib": true,
 	}
 
@@ -62,11 +62,11 @@ func main() {}
 	imports := parseGoImports(path)
 
 	expected := map[string]bool{
-		"fmt":                   true,
-		"os":                    true,
+		"fmt":                    true,
+		"os":                     true,
 		"github.com/spf13/cobra": true,
 		"github.com/spf13/viper": true,
-		"strings":               true,
+		"strings":                true,
 	}
 
 	if len(imports) != len(expected) {
@@ -97,10 +97,10 @@ export { default } from '@scope/pkg';
 	imports := parseJSImports(path)
 
 	expected := map[string]bool{
-		"express":     true,
-		"lodash":      true,
-		"http":        true,
-		"@scope/pkg":  true,
+		"express":    true,
+		"lodash":     true,
+		"http":       true,
+		"@scope/pkg": true,
 	}
 
 	// Note: dynamic-module may or may not be captured depending on regex
@@ -173,11 +173,11 @@ func main() {}
 	}
 
 	expected := map[string]bool{
-		"flask":  true,
-		"requests": true,
-		"fmt":    true,
+		"flask":                  true,
+		"requests":               true,
+		"fmt":                    true,
 		"github.com/spf13/cobra": true,
-		"express": true,
+		"express":                true,
 	}
 
 	for pkg := range expected {
@@ -206,6 +206,23 @@ func TestAssessReachabilityDirectImport(t *testing.T) {
 	}
 	if len(evidence) == 0 {
 		t.Error("expected evidence for directly imported package")
+	}
+}
+
+func TestAssessReachabilityPythonPackageImportAlias(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "auth.py"), []byte("from jose import jwt\n"), 0644)
+
+	analyzer := NewAnalyzer()
+	graph, _ := analyzer.buildImportGraph(dir)
+
+	status, evidence := analyzer.assessReachability("python-jose", "", graph, nil)
+
+	if status != "high" {
+		t.Errorf("expected high reachability for python-jose imported as jose, got %s", status)
+	}
+	if len(evidence) == 0 || evidence[0] == "" {
+		t.Error("expected alias evidence")
 	}
 }
 

@@ -2,6 +2,8 @@ package git
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -53,6 +55,36 @@ func TestNewRepositoryNonGitRepo(t *testing.T) {
 	}
 	if err.Error() != "not a git repository" {
 		t.Fatalf("expected error %q, got %q", "not a git repository", err.Error())
+	}
+}
+
+func TestDetectOrLocalNonGitRepo(t *testing.T) {
+	dir := t.TempDir()
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir temp: %v", err)
+	}
+	defer os.Chdir(original)
+
+	repo, isGit, err := DetectOrLocal()
+	if err != nil {
+		t.Fatalf("DetectOrLocal failed: %v", err)
+	}
+	if isGit {
+		t.Fatal("expected non-git fallback")
+	}
+	expectedRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("eval symlink: %v", err)
+	}
+	if repo.Root != expectedRoot {
+		t.Fatalf("expected root %q, got %q", expectedRoot, repo.Root)
+	}
+	if repo.CurrentBranch != "local" {
+		t.Fatalf("expected local branch marker, got %q", repo.CurrentBranch)
 	}
 }
 

@@ -99,3 +99,23 @@ func TestNewRunner(t *testing.T) {
 		}
 	}
 }
+
+func TestIsTestPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"src/auth.go", false},
+		{"src/auth_test.go", true},
+		{"tests/test_auth.py", true},
+		{"app/test_auth.py", true},
+		{"frontend/login.spec.tsx", true},
+		{"frontend/__tests__/login.tsx", true},
+	}
+
+	for _, tt := range tests {
+		if got := isTestPath(tt.path); got != tt.want {
+			t.Errorf("isTestPath(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}

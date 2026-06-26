@@ -26,6 +26,7 @@ var (
 	scanChangedOnly    bool
 	scanShowSuppressed bool
 	scanRulesPath      string
+	scanIncludeTests   bool
 )
 
 var scanRealCmd = &cobra.Command{
@@ -52,6 +53,7 @@ func init() {
 	scanRealCmd.Flags().BoolVar(&scanChangedOnly, "changed-only", false, "Only analyze changed files")
 	scanRealCmd.Flags().BoolVar(&scanShowSuppressed, "show-suppressed", false, "Show findings suppressed by //patchflow:ignore comments")
 	scanRealCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file (default: .patchflow/rules.yaml)")
+	scanRealCmd.Flags().BoolVar(&scanIncludeTests, "include-tests", false, "Include test files in SAST analysis")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -60,13 +62,20 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	formatter := FormatterFromContext(cmd.Context())
 	ctx := cmd.Context()
 
-	// Detect git repository
-	repo, err := git.Detect()
+	// Detect project context. Full scans support non-git directories; diff-only
+	// scans still require git metadata.
+	repo, isGitRepo, err := git.DetectOrLocal()
 	if err != nil {
 		return formatter.PrintError(err)
 	}
-	_ = repo.DetectChangedFiles()
-	_ = repo.DetectDiffStats()
+	if isGitRepo {
+		_ = repo.DetectChangedFiles()
+		_ = repo.DetectDiffStats()
+	} else if scanChangedOnly {
+		return formatter.PrintError(fmt.Errorf("--changed-only requires a git repository"))
+	} else if !output.IsJSON(formatter) {
+		_ = formatter.Print("Non-git directory detected; running full-project scan.")
+	}
 
 	started := time.Now()
 
@@ -109,6 +118,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			sastRunner.ChangedOnly = true
 			sastRunner.ChangedFiles = repo.ChangedFiles
 		}
+		sastRunner.IncludeTests = scanIncludeTests
 
 		// Wire embedded scanner flags based on --no-sast / --no-secrets
 		if scanNoSAST {
@@ -172,13 +182,13 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	// 4. Risk Scoring
 	riskEngine := risk.NewEngine()
 	riskScore := riskEngine.Compute(risk.ScoreInput{
-		Findings:              allFindings,
-		FilesChanged:          len(repo.ChangedFiles),
-		AddedLines:            repo.AddedLines,
-		DeletedLines:          repo.DeletedLines,
+		Findings:               allFindings,
+		FilesChanged:           len(repo.ChangedFiles),
+		AddedLines:             repo.AddedLines,
+		DeletedLines:           repo.DeletedLines,
 		DependencyFilesChanged: hasDependencyFiles(repo.ChangedFiles),
-		CIWorkflowChanged:     hasCIWorkflow(repo.ChangedFiles),
-		AuthFilesChanged:      hasAuthFiles(repo.ChangedFiles),
+		CIWorkflowChanged:      hasCIWorkflow(repo.ChangedFiles),
+		AuthFilesChanged:       hasAuthFiles(repo.ChangedFiles),
 	})
 
 	completed := time.Now()

@@ -112,12 +112,30 @@ func (g *Generator) generateRecommendations() []string {
 		return recs
 	}
 
-	// Critical/high reachable vulnerabilities
+	var findings []analysis.Finding
+	if g.Result != nil {
+		findings = g.Result.Findings
+	}
+	if len(findings) == 0 {
+		findings = g.Risk.TopFindings
+	}
+
+	criticalCount := 0
+	highCount := 0
+	mediumCount := 0
 	criticalReachable := 0
 	highReachable := 0
 	secretsFound := 0
-	for _, f := range g.Risk.TopFindings {
-		if f.Type == analysis.TypeSecret {
+	for _, f := range findings {
+		switch f.Severity {
+		case analysis.SeverityCritical:
+			criticalCount++
+		case analysis.SeverityHigh:
+			highCount++
+		case analysis.SeverityMedium:
+			mediumCount++
+		}
+		if isSecretFinding(f) {
 			secretsFound++
 		}
 		if f.Severity == analysis.SeverityCritical && f.Reachability == analysis.ReachabilityHigh {
@@ -131,8 +149,14 @@ func (g *Generator) generateRecommendations() []string {
 	if secretsFound > 0 {
 		recs = append(recs, fmt.Sprintf("Rotate and remove %d detected secret(s) immediately", secretsFound))
 	}
+	if criticalCount > criticalReachable {
+		recs = append(recs, fmt.Sprintf("Fix or triage %d critical finding(s) before opening a PR", criticalCount-criticalReachable))
+	}
 	if criticalReachable > 0 {
 		recs = append(recs, fmt.Sprintf("Fix %d critical reachable vulnerability(s) before opening a PR", criticalReachable))
+	}
+	if highCount > highReachable {
+		recs = append(recs, fmt.Sprintf("Address or triage %d high-severity finding(s)", highCount-highReachable))
 	}
 	if highReachable > 0 {
 		recs = append(recs, fmt.Sprintf("Address %d high-severity reachable vulnerability(s)", highReachable))
@@ -140,7 +164,7 @@ func (g *Generator) generateRecommendations() []string {
 
 	// Check for upgradeable packages
 	upgrades := 0
-	for _, f := range g.Risk.TopFindings {
+	for _, f := range findings {
 		if f.FixedVersion != "" {
 			upgrades++
 		}
@@ -149,11 +173,23 @@ func (g *Generator) generateRecommendations() []string {
 		recs = append(recs, fmt.Sprintf("Upgrade %d vulnerable package(s) to fixed versions", upgrades))
 	}
 
-	if len(recs) == 0 {
+	if g.Risk.Score >= 80 && len(recs) == 0 {
+		recs = append(recs, "Risk score is blocking; review the highest weighted findings before opening a PR")
+	}
+	if len(recs) == 0 && criticalCount == 0 && highCount == 0 && secretsFound == 0 {
 		recs = append(recs, "No critical issues detected — proceed with normal review")
+	}
+	if len(recs) == 0 && mediumCount > 0 {
+		recs = append(recs, fmt.Sprintf("Review %d medium-severity finding(s) during normal review", mediumCount))
 	}
 
 	return recs
+}
+
+func isSecretFinding(f analysis.Finding) bool {
+	return f.Type == analysis.TypeSecret ||
+		strings.Contains(strings.ToLower(f.Analyzer), "secret") ||
+		strings.HasPrefix(strings.ToUpper(f.RuleID), "SECRET-")
 }
 
 // --- Markdown ---
@@ -287,13 +323,13 @@ func (g *Generator) Markdown() string {
 // JSON returns a full JSON report.
 func (g *Generator) JSON() ([]byte, error) {
 	report := struct {
-		Generated    time.Time              `json:"generated"`
-		Result       *analysis.AnalysisResult `json:"result"`
-		Risk         *risk.ScoreOutput       `json:"risk"`
-		Recommendations []string             `json:"recommendations"`
+		Generated       time.Time                `json:"generated"`
+		Analysis        *analysis.AnalysisResult `json:"analysis"`
+		Risk            *risk.ScoreOutput        `json:"risk"`
+		Recommendations []string                 `json:"recommendations"`
 	}{
 		Generated:       time.Now().UTC(),
-		Result:          g.Result,
+		Analysis:        g.Result,
 		Risk:            g.Risk,
 		Recommendations: g.generateRecommendations(),
 	}
@@ -312,8 +348,8 @@ type SARIFReport struct {
 
 // SARIFRun is a single run in a SARIF report.
 type SARIFRun struct {
-	Tool    SARIFTool       `json:"tool"`
-	Results []SARIFResult   `json:"results"`
+	Tool    SARIFTool     `json:"tool"`
+	Results []SARIFResult `json:"results"`
 }
 
 // SARIFTool describes the tool that produced the report.

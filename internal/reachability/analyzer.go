@@ -173,9 +173,28 @@ func (a *Analyzer) buildImportGraph(root string) (*ImportGraph, error) {
 func (a *Analyzer) assessReachability(pkgName, version string, graph *ImportGraph, deps []analysis.Dependency) (analysis.ReachabilityStatus, []string) {
 	var evidence []string
 
-	// Check if the package is directly imported
-	if files, ok := graph.PackageFiles[pkgName]; ok && len(files) > 0 {
-		evidence = append(evidence, fmt.Sprintf("Directly imported in %d file(s):", len(files)))
+	// Check if the package or a known import alias is directly imported.
+	for _, importName := range packageImportNames(pkgName) {
+		if files, ok := graph.PackageFiles[importName]; ok && len(files) > 0 {
+			if importName == pkgName {
+				evidence = append(evidence, fmt.Sprintf("Directly imported in %d file(s):", len(files)))
+			} else {
+				evidence = append(evidence, fmt.Sprintf("Package %s imported as %s in %d file(s):", pkgName, importName, len(files)))
+			}
+			for _, f := range files {
+				if len(evidence) > 10 {
+					evidence = append(evidence, "  ... and more")
+					break
+				}
+				evidence = append(evidence, "  - "+f)
+			}
+			return analysis.ReachabilityHigh, evidence
+		}
+	}
+
+	normalizedPkgName := strings.ToLower(pkgName)
+	if files, ok := graph.PackageFiles[normalizedPkgName]; ok && len(files) > 0 {
+		evidence = append(evidence, fmt.Sprintf("Package %s imported as %s in %d file(s):", pkgName, normalizedPkgName, len(files)))
 		for _, f := range files {
 			if len(evidence) > 10 {
 				evidence = append(evidence, "  ... and more")
@@ -242,6 +261,37 @@ func (a *Analyzer) assessReachability(pkgName, version string, graph *ImportGrap
 	return analysis.ReachabilityNone, evidence
 }
 
+func packageImportNames(pkgName string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(pkgName))
+	aliases := map[string][]string{
+		"beautifulsoup4":  {"bs4"},
+		"opencv-python":   {"cv2"},
+		"pillow":          {"pil"},
+		"psycopg2-binary": {"psycopg2"},
+		"pyjwt":           {"jwt"},
+		"pymysql":         {"pymysql"},
+		"pypdf2":          {"pypdf2"},
+		"python-dateutil": {"dateutil"},
+		"python-dotenv":   {"dotenv"},
+		"python-jose":     {"jose"},
+		"pyyaml":          {"yaml"},
+		"scikit-learn":    {"sklearn"},
+	}
+
+	names := []string{pkgName}
+	if normalized != pkgName {
+		names = append(names, normalized)
+	}
+	if strings.HasPrefix(normalized, "google-cloud-") {
+		names = append(names, "google", "google.cloud")
+	}
+	if strings.HasPrefix(normalized, "azure-") {
+		names = append(names, "azure")
+	}
+	names = append(names, aliases[normalized]...)
+	return dedupStrings(names)
+}
+
 func reachabilityToConfidence(status analysis.ReachabilityStatus) analysis.Confidence {
 	switch status {
 	case analysis.ReachabilityHigh:
@@ -260,7 +310,7 @@ func reachabilityToConfidence(status analysis.ReachabilityStatus) analysis.Confi
 // --- Python import parsing ---
 
 var (
-	pyImportRe   = regexp.MustCompile(`^\s*(?:import|from)\s+([A-Za-z0-9_.]+)`)
+	pyImportRe     = regexp.MustCompile(`^\s*(?:import|from)\s+([A-Za-z0-9_.]+)`)
 	pyFromImportRe = regexp.MustCompile(`^\s*from\s+([A-Za-z0-9_.]+)\s+import`)
 )
 
@@ -320,7 +370,7 @@ func parsePythonImports(path string) []string {
 // --- Go import parsing ---
 
 var (
-	goImportRe = regexp.MustCompile(`^\s*"([^"]+)"`)
+	goImportRe      = regexp.MustCompile(`^\s*"([^"]+)"`)
 	goImportBlockRe = regexp.MustCompile(`^\s*\(([^)]+)\)`)
 )
 
@@ -392,8 +442,8 @@ func parseGoImports(path string) []string {
 // --- JavaScript/TypeScript import parsing ---
 
 var (
-	jsImportFromRe = regexp.MustCompile(`(?:import|export)\s+.*?\s+from\s+['"]([^'"]+)['"]`)
-	jsRequireRe    = regexp.MustCompile(`require\(\s*['"]([^'"]+)['"]\s*\)`)
+	jsImportFromRe    = regexp.MustCompile(`(?:import|export)\s+.*?\s+from\s+['"]([^'"]+)['"]`)
+	jsRequireRe       = regexp.MustCompile(`require\(\s*['"]([^'"]+)['"]\s*\)`)
 	jsDynamicImportRe = regexp.MustCompile(`import\(\s*['"]([^'"]+)['"]\s*\)`)
 )
 

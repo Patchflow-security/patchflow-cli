@@ -267,6 +267,24 @@ func TestPatternScanner_SkipsComments(t *testing.T) {
 	}
 }
 
+func TestPatternScanner_SkipsQuotedExamples(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "app.py", `examples = [
+    "eval(user_input)",
+    "subprocess.run(cmd, shell=True)",
+]`)
+
+	s := NewScanner()
+	findings, err := s.Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+
+	if len(findings) != 0 {
+		t.Fatalf("expected no findings for quoted examples, got %d: %#v", len(findings), findings)
+	}
+}
+
 func TestPatternScanner_SkipsIgnoredDirs(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "node_modules/lib.js", `eval(userInput);`)

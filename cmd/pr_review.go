@@ -77,13 +77,13 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 
 	started := time.Now()
 
-	// 1. SCA — only on changed manifests
+	// 1. SCA — full dependency baseline. PR review keeps SAST scoped to changed
+	// files, but dependency risk should not disappear when manifests are not in
+	// the diff.
 	if !output.IsJSON(formatter) {
 		_ = formatter.Print("Analyzing dependencies (SCA via OSV.dev)...")
 	}
 	scaAnalyzer := sca.NewAnalyzer()
-	scaAnalyzer.ChangedOnly = true
-	scaAnalyzer.ChangedFiles = repo.ChangedFiles
 	scaAnalyzer.MaxDepth = 3
 
 	scaResult, err := scaAnalyzer.Analyze(ctx, repo.Root)
@@ -96,13 +96,22 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 	analyzersRun := []string{"osv"}
 
 	// 2. SAST — only on changed files
-	if !scanNoSAST || !scanNoSecrets {
+	if !prReviewNoSAST || !prReviewNoSecrets {
 		if !output.IsJSON(formatter) {
 			_ = formatter.Print("Running SAST (local tools)...")
 		}
 		sastRunner := sast.NewRunner()
 		sastRunner.ChangedOnly = true
 		sastRunner.ChangedFiles = repo.ChangedFiles
+		sastRunner.IncludeTests = false
+
+		if prReviewNoSAST {
+			sastRunner.NoEmbeddedGo = true
+			sastRunner.NoEmbeddedPatterns = true
+		}
+		if prReviewNoSecrets {
+			sastRunner.NoEmbeddedSecrets = true
+		}
 
 		if prReviewNoSAST && !prReviewNoSecrets {
 			var filtered []sast.Tool
@@ -150,13 +159,13 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 	// 4. Risk scoring
 	riskEngine := risk.NewEngine()
 	riskScore := riskEngine.Compute(risk.ScoreInput{
-		Findings:              allFindings,
-		FilesChanged:          len(repo.ChangedFiles),
-		AddedLines:            repo.AddedLines,
-		DeletedLines:          repo.DeletedLines,
+		Findings:               allFindings,
+		FilesChanged:           len(repo.ChangedFiles),
+		AddedLines:             repo.AddedLines,
+		DeletedLines:           repo.DeletedLines,
 		DependencyFilesChanged: hasDependencyFiles(repo.ChangedFiles),
-		CIWorkflowChanged:     hasCIWorkflow(repo.ChangedFiles),
-		AuthFilesChanged:      hasAuthFiles(repo.ChangedFiles),
+		CIWorkflowChanged:      hasCIWorkflow(repo.ChangedFiles),
+		AuthFilesChanged:       hasAuthFiles(repo.ChangedFiles),
 	})
 
 	completed := time.Now()

@@ -237,18 +237,64 @@ func (s *Scanner) scanFile(absPath, root string, lang Language) ([]analysis.Find
 				continue
 			}
 
-			if rule.Pattern.MatchString(line) {
-				// Skip if it's in a comment (except for TODO/FIXME rules)
-				if isComment(line, lang) && rule.ID != "XLANG002" {
-					continue
-				}
-
+			if matchesRule(rule, line, lang) {
 				findings = append(findings, makePatternFinding(rule, absPath, root, lineNum, line))
 			}
 		}
 	}
 
 	return findings, nil
+}
+
+func matchesRule(rule PatternRule, line string, lang Language) bool {
+	if isComment(line, lang) && rule.ID != "XLANG002" {
+		return false
+	}
+
+	matches := rule.Pattern.FindAllStringIndex(line, -1)
+	if len(matches) == 0 {
+		return false
+	}
+
+	quoted := quotedOffsets(line)
+	for _, match := range matches {
+		if !quoted[match[0]] {
+			return true
+		}
+	}
+	return false
+}
+
+func quotedOffsets(line string) []bool {
+	quoted := make([]bool, len(line))
+	var quote rune
+	escaped := false
+
+	for i, r := range line {
+		if quote != 0 {
+			quoted[i] = true
+			if escaped {
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+
+		switch r {
+		case '\'', '"', '`':
+			quote = r
+			quoted[i] = true
+		}
+	}
+
+	return quoted
 }
 
 // detectLanguage determines the programming language from the file extension.

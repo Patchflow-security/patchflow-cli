@@ -63,7 +63,7 @@ func NewScanner() *Scanner {
 	s := &Scanner{
 		entropyThreshold: 4.5,
 		minEntropyLength: 20,
-		maxFileSize:       2 * 1024 * 1024, // 2MB
+		maxFileSize:      2 * 1024 * 1024, // 2MB
 		ignoredExtensions: map[string]bool{
 			".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".ico": true,
 			".pdf": true, ".zip": true, ".tar": true, ".gz": true, ".bz2": true,
@@ -206,6 +206,7 @@ func (s *Scanner) scanFile(absPath, root string) ([]analysis.Finding, error) {
 
 	var findings []analysis.Finding
 	lineNum := 0
+	skipEntropy := isLockfile(absPath)
 
 	for scanner.Scan() {
 		lineNum++
@@ -233,8 +234,12 @@ func (s *Scanner) scanFile(absPath, root string) ([]analysis.Finding, error) {
 			}
 		}
 
-		// Entropy-based detection for high-entropy strings
-		s.checkEntropy(line, absPath, root, lineNum, &findings)
+		// Entropy-based detection for high-entropy strings. Lockfiles contain
+		// integrity hashes that are expected to be high entropy and are not
+		// credentials.
+		if !skipEntropy {
+			s.checkEntropy(line, absPath, root, lineNum, &findings)
+		}
 	}
 
 	return findings, nil
@@ -347,6 +352,17 @@ func isExampleFile(name string) bool {
 		return true
 	}
 	return false
+}
+
+func isLockfile(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	switch base {
+	case "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+		"poetry.lock", "pipfile.lock", "gemfile.lock", "cargo.lock", "composer.lock",
+		"go.sum":
+		return true
+	}
+	return strings.HasSuffix(base, ".lock")
 }
 
 // isCommentLine checks if a line is a comment.

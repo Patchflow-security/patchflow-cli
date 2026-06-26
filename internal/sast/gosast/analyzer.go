@@ -13,8 +13,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io"
 	"log"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -125,7 +125,7 @@ type Analyzer struct {
 func NewAnalyzer() *Analyzer {
 	a := &Analyzer{
 		concurrency: runtime.NumCPU(),
-		logger:      log.New(os.Stderr, "[gosast] ", log.LstdFlags),
+		logger:      log.New(io.Discard, "[gosast] ", log.LstdFlags),
 	}
 	a.registerDefaultRules()
 	return a
