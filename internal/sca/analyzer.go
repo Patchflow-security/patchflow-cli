@@ -73,6 +73,14 @@ func (a *Analyzer) Analyze(ctx context.Context, root string) (*Result, error) {
 		return result, fmt.Errorf("sca: osv query failed: %w", err)
 	}
 
+	// 2b. Enrich with full vulnerability details (aliases/CVE IDs).
+	// The batch endpoint returns empty aliases arrays, so we fetch each
+	// vulnerability individually to get CVE IDs.
+	if err := a.OSV.EnrichAliases(ctx, vulnResults); err != nil {
+		// Non-fatal: we still have the vulnerabilities, just without CVE IDs.
+		result.QueryErrors++
+	}
+
 	// 3. Normalize vulnerabilities into findings
 	vulnerableSet := make(map[string]bool)
 	for i, vulns := range vulnResults {

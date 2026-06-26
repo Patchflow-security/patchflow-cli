@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/patchflow/patchflow-cli/internal/analysis"
@@ -23,6 +24,8 @@ const (
 	QueryBatchPath = "/querybatch"
 	// QueryPath is the single query endpoint.
 	QueryPath = "/query"
+	// VulnPath is the single-vulnerability endpoint (fetches full details).
+	VulnPath = "/vulns"
 	// DefaultTimeout for HTTP requests.
 	DefaultTimeout = 60 * time.Second
 )
@@ -325,6 +328,119 @@ func (c *Client) postBatch(ctx context.Context, queries []QueryRequest) ([]Respo
 	}
 
 	return batchResp.Results, nil
+}
+
+// FetchVuln fetches full vulnerability details (including aliases) for a single
+// OSV vulnerability ID. The batch query endpoint omits aliases, so this is
+// needed to map GHSA IDs to CVE IDs.
+func (c *Client) FetchVuln(ctx context.Context, id string) (*Vulnerability, error) {
+	url := c.BaseURL + VulnPath + "/" + id
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("osv vuln fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("osv vuln fetch returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var vuln Vulnerability
+	if err := json.NewDecoder(resp.Body).Decode(&vuln); err != nil {
+		return nil, fmt.Errorf("failed to decode osv vuln response: %w", err)
+	}
+	return &vuln, nil
+}
+
+// EnrichAliases fetches full vulnerability details for each vuln that has no
+// CVE alias in its Aliases field. This is needed because the batch query
+// endpoint returns vulnerabilities with empty aliases arrays. Vulnerabilities
+// are fetched in parallel (up to 20 concurrent requests).
+func (c *Client) EnrichAliases(ctx context.Context, vulns [][]Vulnerability) error {
+	// Collect all vuln IDs that need enrichment.
+	type job struct {
+		i, j int
+		id   string
+	}
+	var jobs []job
+	for i := range vulns {
+		for j := range vulns[i] {
+			v := &vulns[i][j]
+			if hasCVEAlias(v.Aliases) {
+				continue
+			}
+			if v.ID == "" {
+				continue
+			}
+			jobs = append(jobs, job{i: i, j: j, id: v.ID})
+		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	// Fetch in parallel with a concurrency limit.
+	const maxConcurrent = 20
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(jobs))
+
+	for _, jb := range jobs {
+		wg.Add(1)
+		go func(jb job) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			vuln, err := c.FetchVuln(ctx, jb.id)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if vuln != nil {
+				vulns[jb.i][jb.j].Aliases = vuln.Aliases
+				if vuln.Summary != "" && vulns[jb.i][jb.j].Summary == "" {
+					vulns[jb.i][jb.j].Summary = vuln.Summary
+				}
+				if vuln.Details != "" && vulns[jb.i][jb.j].Details == "" {
+					vulns[jb.i][jb.j].Details = vuln.Details
+				}
+				if len(vuln.References) > 0 && len(vulns[jb.i][jb.j].References) == 0 {
+					vulns[jb.i][jb.j].References = vuln.References
+				}
+				if len(vuln.Severity) > 0 && len(vulns[jb.i][jb.j].Severity) == 0 {
+					vulns[jb.i][jb.j].Severity = vuln.Severity
+				}
+			}
+		}(jb)
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasCVEAlias(aliases []string) bool {
+	for _, a := range aliases {
+		if strings.HasPrefix(a, "CVE-") {
+			return true
+		}
+	}
+	return false
 }
 
 // ecosystemToOSV maps our internal ecosystem to OSV.dev ecosystem strings.

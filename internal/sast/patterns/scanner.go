@@ -547,10 +547,11 @@ func (s *Scanner) registerRules() {
 
 		// --- Python XSS: Flask render_template with user input (CWE-79) ---
 
-		// render_template_string with user input
-		{ID: "PY026", Title: "Flask render_template_string with user input", Description: "render_template_string with user-controlled input can lead to XSS. Use render_template with auto-escaping instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template_string\s*\(`), CWEID: "CWE-79"},
+		// render_template_string with a variable (not a string literal) as first arg —
+		// the template source is dynamic, which means it may contain user input.
+		{ID: "PY028", Title: "Flask render_template_string with dynamic template", Description: "render_template_string with a variable template source can lead to XSS if the template contains user input. Use render_template with auto-escaping instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template_string\s*\(\s*[a-zA-Z_]\w*\s*[,)]`), CWEID: "CWE-79"},
 		// render_template with request.* in arguments
-		{ID: "PY027", Title: "Flask render_template with user input", Description: "render_template with user-controlled input from request object may lead to XSS if auto-escaping is disabled. Ensure auto-escaping is enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template\s*\([^)]*request\.`), CWEID: "CWE-79", SkipQuoteFilter: true},
+		{ID: "PY029", Title: "Flask render_template with user input", Description: "render_template with user-controlled input from request object may lead to XSS if auto-escaping is disabled. Ensure auto-escaping is enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template\s*\([^)]*request\.`), CWEID: "CWE-79", SkipQuoteFilter: true},
 
 		// --- JS/TS insecure randomness: Math.random() (CWE-611) ---
 
