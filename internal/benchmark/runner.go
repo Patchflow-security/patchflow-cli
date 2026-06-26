@@ -365,11 +365,17 @@ func buildMetrics(spec RepoSpec, pf *pfJSONOutput, loc LOCStats, coldDur, warmDu
 
 // applyExpected computes recall against the curated ExpectedFindings list by
 // matching rule IDs, CVE IDs, and CWE IDs found in the scan output.
+//
+// Matching logic:
+//   - Exact match on rule ID, CVE ID, or CWE ID
+//   - CWE prefix match: a finding with CWE-79 matches an expected CWE-79-XSS
+//     (the dash-suffix is treated as a subcategory of the base CWE)
 func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 	if len(spec.ExpectedFindings) == 0 || pf == nil {
 		return
 	}
 	found := map[string]bool{}
+	foundCWEs := []string{}
 	for _, f := range pf.Analysis.Findings {
 		if f.RuleID != "" {
 			found[f.RuleID] = true
@@ -379,10 +385,25 @@ func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 		}
 		if f.CWEID != "" {
 			found[f.CWEID] = true
+			foundCWEs = append(foundCWEs, f.CWEID)
 		}
 	}
 	for _, exp := range spec.ExpectedFindings {
 		if found[exp] {
+			m.ExpectedDetected = append(m.ExpectedDetected, exp)
+			continue
+		}
+		// CWE prefix match: if the expected finding is a CWE subcategory
+		// (e.g., "CWE-79-XSS"), check if any found CWE is a prefix of it.
+		// "CWE-79" matches "CWE-79-XSS" but not vice versa.
+		matched := false
+		for _, cwe := range foundCWEs {
+			if strings.HasPrefix(exp, cwe+"-") {
+				matched = true
+				break
+			}
+		}
+		if matched {
 			m.ExpectedDetected = append(m.ExpectedDetected, exp)
 		} else {
 			m.ExpectedMissed = append(m.ExpectedMissed, exp)

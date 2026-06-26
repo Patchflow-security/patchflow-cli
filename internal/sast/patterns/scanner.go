@@ -551,6 +551,27 @@ func (s *Scanner) registerRules() {
 		{ID: "PY026", Title: "Flask render_template_string with user input", Description: "render_template_string with user-controlled input can lead to XSS. Use render_template with auto-escaping instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template_string\s*\(`), CWEID: "CWE-79"},
 		// render_template with request.* in arguments
 		{ID: "PY027", Title: "Flask render_template with user input", Description: "render_template with user-controlled input from request object may lead to XSS if auto-escaping is disabled. Ensure auto-escaping is enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template\s*\([^)]*request\.`), CWEID: "CWE-79", SkipQuoteFilter: true},
+
+		// --- JS/TS insecure randomness: Math.random() (CWE-611) ---
+
+		{ID: "JS028", Title: "Insecure random number generation via Math.random", Description: "Math.random() is not cryptographically secure. Use crypto.randomBytes() or crypto.getRandomValues() for security-sensitive values like tokens, session IDs, or passwords.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`Math\.random\s*\(`), CWEID: "CWE-611"},
+
+		// --- JS/TS Angular XSS: bypassSecurityTrustHtml (CWE-79) ---
+
+		{ID: "JS029", Title: "Angular XSS via bypassSecurityTrustHtml", Description: "bypassSecurityTrustHtml bypasses Angular's built-in XSS protection, allowing injection of untrusted HTML. Avoid using bypassSecurityTrustHtml with user-controlled data.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`bypassSecurityTrust(Html|Script|Style|Url)\s*\(`), CWEID: "CWE-79"},
+
+		// --- JS/TS insufficiently protected credentials (CWE-522) ---
+
+		// MD5 used for password/credential hashing
+		{ID: "JS030", Title: "Weak password hashing with MD5", Description: "MD5 is cryptographically broken and should not be used for password hashing. Use bcrypt, scrypt, or Argon2 for password storage.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)createHash\s*\(\s*['"]md5['"]\s*\)`), CWEID: "CWE-522"},
+		// SHA1 used for password/credential hashing
+		{ID: "JS031", Title: "Weak password hashing with SHA1", Description: "SHA1 is cryptographically broken and should not be used for password hashing. Use bcrypt, scrypt, or Argon2 for password storage.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)createHash\s*\(\s*['"]sha1['"]\s*\)`), CWEID: "CWE-522"},
+		// Auth tokens stored in localStorage
+		{ID: "JS032", Title: "Authentication token stored in localStorage", Description: "Storing authentication tokens in localStorage exposes them to XSS attacks. Use httpOnly cookies for session tokens.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)localStorage\.setItem\s*\(\s*['"]token['"]`), CWEID: "CWE-522"},
+		// Hardcoded HMAC secret
+		{ID: "JS033", Title: "Hardcoded HMAC secret key", Description: "Hardcoding HMAC secret keys in source code exposes credentials. Use environment variables or a secrets manager.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)createHmac\s*\([^,]+,\s*['"][^'"]{4,}['"]\s*\)`), CWEID: "CWE-522"},
+		// Hardcoded RSA private key
+		{ID: "JS034", Title: "Hardcoded RSA private key", Description: "Hardcoding RSA private keys in source code exposes credentials. Use environment variables or a secrets manager.", Severity: analysis.SeverityCritical, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----`), CWEID: "CWE-522"},
 	}
 }
 
