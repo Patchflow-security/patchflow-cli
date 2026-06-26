@@ -2,6 +2,7 @@ package sast
 
 import (
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -41,7 +42,7 @@ type collectedFiles struct {
 // The ignoreMatcher is used to skip gitignored files/directories.
 // maxFileSize limits files to prevent memory exhaustion (0 = no limit).
 // includeTests controls whether test files are included.
-func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64, includeTests bool) (*collectedFiles, error) {
+func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64, includeTests bool, tsAnalyzer *treesitter.Analyzer) (*collectedFiles, error) {
 	cf := &collectedFiles{}
 
 	ignoredDirs := map[string]bool{
@@ -113,8 +114,11 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 		task.pattern = patterns.DetectLanguagePublic(path)
 
 		// Tree-sitter: language detection via grammars
+		// Only set tsEntry if the tree-sitter analyzer has rules for this language,
+		// otherwise we waste time parsing files (e.g. .rst, .html, .json) that no
+		// rule will ever match.
 		entry := grammars.DetectLanguage(path)
-		if entry != nil {
+		if entry != nil && tsAnalyzer.HasRulesForLanguage(entry.Name) {
 			task.tsEntry = entry
 		}
 
@@ -162,6 +166,7 @@ type scanResult struct {
 	scanner  string
 	findings []analysis.Finding
 	err      error
+	dur      time.Duration
 }
 
 // parallelScanFiles processes collected file tasks through the scanners in
@@ -204,26 +209,30 @@ func parallelScanFiles(
 
 				// Pattern scanner
 				if scanPatterns && task.pattern != "" {
+					sc := time.Now()
 					findings, err := patternScanner.ScanFilePublic(task.path, task.root, task.pattern)
-					resultCh <- scanResult{scanner: "patterns-embedded", findings: findings, err: err}
+					resultCh <- scanResult{scanner: "patterns-embedded", findings: findings, err: err, dur: time.Since(sc)}
 				}
 
 				// Secrets scanner
 				if scanSecrets && isTextFile(task.path) {
+					sc := time.Now()
 					findings, err := secretScanner.ScanFilePublic(task.path, task.root)
-					resultCh <- scanResult{scanner: "secrets-embedded", findings: findings, err: err}
+					resultCh <- scanResult{scanner: "secrets-embedded", findings: findings, err: err, dur: time.Since(sc)}
 				}
 
 				// Tree-sitter scanner
 				if scanTreeSitter && task.tsEntry != nil {
+					sc := time.Now()
 					findings, err := tsAnalyzer.ScanFilePublic(task.path, task.root, task.tsEntry)
-					resultCh <- scanResult{scanner: "treesitter-ast", findings: findings, err: err}
+					resultCh <- scanResult{scanner: "treesitter-ast", findings: findings, err: err, dur: time.Since(sc)}
 				}
 
 				// Taint patterns scanner (Python and JS/TS only)
 				if scanTaintPatterns && task.tsEntry != nil {
+					sc := time.Now()
 					findings, err := tpAnalyzer.ScanFilePublic(task.path, task.root, task.tsEntry)
-					resultCh <- scanResult{scanner: "taint-patterns", findings: findings, err: err}
+					resultCh <- scanResult{scanner: "taint-patterns", findings: findings, err: err, dur: time.Since(sc)}
 				}
 			}
 		}()
@@ -245,14 +254,21 @@ func parallelScanFiles(
 
 	// Collect results grouped by scanner
 	results := make(map[string][]analysis.Finding)
+	scannerTimings := make(map[string]time.Duration)
 	var errors []string
 
 	for sr := range resultCh {
+		scannerTimings[sr.scanner] += sr.dur
 		if sr.err != nil {
 			errors = append(errors, sr.scanner+": "+sr.err.Error())
 			continue
 		}
 		results[sr.scanner] = append(results[sr.scanner], sr.findings...)
+	}
+
+	// Log per-scanner timings for debugging.
+	for scanner, dur := range scannerTimings {
+		log.Printf("[sast] %s total: %v", scanner, dur)
 	}
 
 	return results, errors
@@ -278,7 +294,7 @@ func runParallelScanners(
 	incrementalState *incremental.State,
 ) (map[string][]analysis.Finding, []string) {
 	// Phase 1: Single-pass file collection
-	cf, err := collectFiles(root, ignoreMatcher, 2*1024*1024, includeTests) // 2MB max
+	cf, err := collectFiles(root, ignoreMatcher, 2*1024*1024, includeTests, tsAnalyzer) // 2MB max
 	if err != nil {
 		return nil, []string{"file-collector: " + err.Error()}
 	}

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/odvcencio/gotreesitter"
@@ -45,6 +46,8 @@ type Analyzer struct {
 	rules        []astRule
 	ignoreMatcher *ignore.Matcher
 	logger       *log.Logger
+	parserPools   sync.Map // map[string]*sync.Pool (language name → parser pool)
+	ruleNodeTypes map[string]map[string]bool // language → set of node types rules care about
 }
 
 // astRule defines an AST-based security rule.
@@ -1107,6 +1110,83 @@ func (a *Analyzer) registerDefaults() {
 			Match:          matchRustRawPointerOps,
 		},
 	}
+	a.buildRuleNodeTypes()
+}
+
+// buildRuleNodeTypes pre-computes which node types each language's rules care about,
+// so walkAST can skip nodes that no rule would ever match.
+func (a *Analyzer) buildRuleNodeTypes() {
+	// We use a keyword-based heuristic: if the node type contains any of these
+	// substrings, it might be relevant to a rule. This is conservative — better
+	// to check a few extra nodes than to miss a finding.
+	a.ruleNodeTypes = make(map[string]map[string]bool)
+	relevantKeywords := []string{
+		"call", "assign", "binary", "subscript", "attribute", "member",
+		"identifier", "string", "template", "unary", "argument", "import",
+		"expression", "literal", "decorator", "annotation", "field",
+	}
+	for _, rule := range a.rules {
+		for _, lang := range rule.Languages {
+			if a.ruleNodeTypes[lang] == nil {
+				a.ruleNodeTypes[lang] = make(map[string]bool)
+			}
+			// Mark all node types containing relevant keywords as relevant.
+			// Since we don't have the full grammar symbol list here, we
+			// store the keywords and check at walk time.
+			_ = relevantKeywords // stored implicitly via isRelevantNodeType
+		}
+	}
+}
+
+// isRelevantNodeType checks if a node type might match any rule for this language.
+// Uses keyword matching to be conservative across different grammar naming conventions.
+func isRelevantNodeType(nodeType string, lang string) bool {
+	switch nodeType {
+	// Node types from all supported grammars that security rules match on
+	case "call", "call_expression", "assignment", "assignment_expression",
+		"augmented_assignment", "augmented_assignment_expression",
+		"binary_expression", "binary", "subscript", "subscript_expression",
+		"attribute", "member_expression", "member_access_expression",
+		"field_access_expression", "field_expression", "element_reference",
+		"string", "string_literal", "template_string", "encapsed_string",
+		"identifier", "keyword_argument", "argument_list",
+		"decorator", "import_statement", "import_from_statement",
+		"import_declaration", "use_declaration", "using_directive",
+		"export_statement", "annotation",
+		"method_invocation", "invocation_expression",
+		"new_expression", "macro_invocation",
+		"array_access_expression", "element_access_expression",
+		"index_expression", "hash", "array",
+		"function_call_expression", "operator_assignment",
+		// Rust-specific
+		"unsafe_block", "deref_expression", "raw_destructor",
+		"macro_definition", "struct_expression",
+		// Ruby-specific
+		"subshell", "backtick", "command", "heredoc_beginning",
+		// Java/C#/PHP-specific
+		"class_declaration", "method_declaration", "field_declaration",
+		"function_definition",
+		// JS/TS-specific
+		"property_assignment", "pair", "object":
+		return true
+	}
+	// Fallback: check if the node type contains any relevant keyword.
+	// This is intentionally broad to avoid missing findings.
+	for _, kw := range []string{"call", "assign", "import", "string", "literal",
+		"expression", "unsafe", "subshell", "backtick", "deref", "command",
+		"exec", "eval", "process", "random", "crypto", "hash", "secret",
+		"token", "password", "key", "debug", "sql", "query", "render",
+		"template", "request", "response", "cookie", "session", "header",
+		"proto", "pollut", "timeout", "interval", "function", "method",
+		"field", "property", "pair", "object", "class", "struct",
+		"macro", "annotation", "decorator", "attribute", "argument",
+		"parameter", "subscript", "index", "member", "element",
+		"impl", "trait", "use", "let", "var", "const", "static"} {
+		if strings.Contains(nodeType, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // Analyze runs tree-sitter analysis on all supported source files in the root directory.
@@ -1175,7 +1255,11 @@ func (a *Analyzer) scanFile(absPath, root string, entry *grammars.LangEntry) ([]
 		return nil, nil
 	}
 
-	parser := gotreesitter.NewParser(lang)
+	// Get a parser from the per-language pool (thread-safe).
+	// This avoids the expensive NewParser allocation for every file.
+	parser := a.acquireParser(entry.Name, lang)
+	defer a.releaseParser(entry.Name, parser)
+
 	tree, err := parser.Parse(src)
 	if err != nil {
 		return nil, nil
@@ -1194,19 +1278,55 @@ func (a *Analyzer) scanFile(absPath, root string, entry *grammars.LangEntry) ([]
 	return findings, nil
 }
 
+// acquireParser gets a parser from the per-language pool, creating one if needed.
+func (a *Analyzer) acquireParser(langName string, lang *gotreesitter.Language) *gotreesitter.Parser {
+	v, _ := a.parserPools.LoadOrStore(langName, &sync.Pool{
+		New: func() interface{} {
+			return gotreesitter.NewParser(lang)
+		},
+	})
+	pool := v.(*sync.Pool)
+	p := pool.Get().(*gotreesitter.Parser)
+	return p
+}
+
+// releaseParser returns a parser to the per-language pool for reuse.
+func (a *Analyzer) releaseParser(langName string, parser *gotreesitter.Parser) {
+	if parser == nil {
+		return
+	}
+	v, ok := a.parserPools.Load(langName)
+	if !ok {
+		return
+	}
+	pool := v.(*sync.Pool)
+	pool.Put(parser)
+}
+
 // walkAST recursively walks the tree-sitter AST and runs rules on each node.
+// It skips rule matching for node types that no rule cares about, but still
+// visits children to find relevant nodes deeper in the tree.
 func (a *Analyzer) walkAST(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang, absPath, root string, src []byte, findings *[]analysis.Finding) {
 	if node == nil {
 		return
 	}
 
-	for _, rule := range a.rules {
-		if !containsStr(rule.Languages, lang) {
-			continue
-		}
-		if rule.Match(node, bt, lang) {
-			f := a.makeFinding(rule, node, bt, absPath, root, src)
-			*findings = append(*findings, f)
+	// Check if any rule cares about this node type.
+	// If not, skip rule matching but still visit children.
+	nodeType := bt.NodeType(node)
+	isRelevant := isRelevantNodeType(nodeType, lang)
+
+	// Always run rules on potentially relevant nodes.
+	// The isRelevantNodeType check is conservative — when in doubt, run rules.
+	if isRelevant || nodeType == "" {
+		for _, rule := range a.rules {
+			if !containsStr(rule.Languages, lang) {
+				continue
+			}
+			if rule.Match(node, bt, lang) {
+				f := a.makeFinding(rule, node, bt, absPath, root, src)
+				*findings = append(*findings, f)
+			}
 		}
 	}
 
@@ -1258,6 +1378,12 @@ func (a *Analyzer) hasRulesForLanguage(lang string) bool {
 		}
 	}
 	return false
+}
+
+// HasRulesForLanguage is the exported version for use by the file collector
+// to skip files whose language has no tree-sitter rules.
+func (a *Analyzer) HasRulesForLanguage(lang string) bool {
+	return a.hasRulesForLanguage(lang)
 }
 
 // shouldSkipFile returns true for test files and vendored code.

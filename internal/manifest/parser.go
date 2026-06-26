@@ -27,6 +27,11 @@ var KnownManifests = map[string]analysis.Ecosystem{
 	"package.json":      analysis.EcosystemNPM,
 	"requirements.txt":  analysis.EcosystemPyPI,
 	"pyproject.toml":    analysis.EcosystemPyPI,
+	"setup.py":          analysis.EcosystemPyPI,
+	"setup.cfg":         analysis.EcosystemPyPI,
+	"Pipfile.lock":      analysis.EcosystemPyPI,
+	"poetry.lock":       analysis.EcosystemPyPI,
+	"uv.lock":           analysis.EcosystemPyPI,
 	"Cargo.toml":        analysis.EcosystemCargo,
 	"Gemfile":           analysis.EcosystemRubyGems,
 	"Gemfile.lock":      analysis.EcosystemRubyGems,
@@ -114,6 +119,14 @@ func Parse(path string) ([]analysis.Dependency, error) {
 		return ParseRequirementsTxt(path)
 	case "pyproject.toml":
 		return ParsePyProjectToml(path)
+	case "setup.py":
+		return ParseSetupPy(path)
+	case "setup.cfg":
+		return ParseSetupCfg(path)
+	case "Pipfile.lock":
+		return ParsePipfileLock(path)
+	case "poetry.lock":
+		return ParsePoetryLock(path)
 	case "Cargo.toml":
 		return ParseCargoToml(path)
 	case "Gemfile":
@@ -433,6 +446,272 @@ func ParsePyProjectToml(path string) ([]analysis.Dependency, error) {
 		deps = append(deps, *dep)
 	}
 
+	return deps, nil
+}
+
+// --- Python: setup.py ---
+
+// setupPyInstallRequiresRe matches install_requires = ["pkg>=1.0", ...]
+var setupPyInstallRequiresRe = regexp.MustCompile(`(?:install_requires|requires)\s*=\s*\[(.*?)\]`)
+var setupPySingleDepRe = regexp.MustCompile(`["']([^"']+)["']`)
+
+// ParseSetupPy parses a setup.py file for install_requires.
+// Since setup.py is Python code, we use regex to extract the install_requires list.
+func ParseSetupPy(path string) ([]analysis.Dependency, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	src := string(data)
+	var deps []analysis.Dependency
+
+	// Extract install_requires = [...] blocks
+	matches := setupPyInstallRequiresRe.FindAllStringSubmatch(src, -1)
+	for _, m := range matches {
+		listContent := m[1]
+		// Parse each "pkg>=1.0" entry
+		depMatches := setupPySingleDepRe.FindAllStringSubmatch(listContent, -1)
+		for _, dm := range depMatches {
+			spec := dm[1]
+			dep := parsePythonVersionSpec(spec)
+			if dep == nil {
+				// No version constraint — just the package name
+				name := strings.TrimSpace(spec)
+				name = strings.ToLower(name)
+				if name != "" && name != "python" {
+					deps = append(deps, analysis.Dependency{
+						Name:      name,
+						Version:   "",
+						Ecosystem: analysis.EcosystemPyPI,
+						IsDirect:  true,
+					})
+				}
+			} else {
+				deps = append(deps, *dep)
+			}
+		}
+	}
+
+	return deps, nil
+}
+
+// --- Python: setup.cfg ---
+
+var setupCfgInstallRequiresRe = regexp.MustCompile(`(?m)^install_requires\s*=\s*(.*)$`)
+var setupCfgOptionsRe = regexp.MustCompile(`(?m)^\[options\]`)
+
+// ParseSetupCfg parses a setup.cfg file for install_requires.
+func ParseSetupCfg(path string) ([]analysis.Dependency, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	src := string(data)
+	var deps []analysis.Dependency
+
+	// Find [options] section
+	optionsIdx := setupCfgOptionsRe.FindStringIndex(src)
+	if optionsIdx == nil {
+		return deps, nil
+	}
+
+	// Get the section content (from [options] to the next [section] or EOF)
+	sectionStart := optionsIdx[1]
+	nextSection := strings.Index(src[sectionStart:], "\n[")
+	var section string
+	if nextSection > 0 {
+		section = src[sectionStart : sectionStart+nextSection]
+	} else {
+		section = src[sectionStart:]
+	}
+
+	// Parse install_requires (can span multiple lines with continuation)
+	lines := strings.Split(section, "\n")
+	var installRequires string
+	inInstallRequires := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "install_requires") {
+			// Could be inline or start of multi-line
+			idx := strings.Index(trimmed, "=")
+			if idx > 0 {
+				val := strings.TrimSpace(trimmed[idx+1:])
+				if val != "" {
+					installRequires = val
+				}
+				inInstallRequires = val == "" || strings.HasSuffix(val, "\\")
+			}
+			continue
+		}
+		if inInstallRequires {
+			if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+				continue
+			}
+			installRequires += " " + trimmed
+			if !strings.HasSuffix(trimmed, "\\") {
+				inInstallRequires = false
+			}
+		}
+	}
+
+	if installRequires != "" {
+		// Parse space or newline separated requirements
+		for _, spec := range strings.Fields(installRequires) {
+			spec = strings.Trim(spec, ",\\")
+			dep := parsePythonVersionSpec(spec)
+			if dep == nil {
+				name := strings.ToLower(strings.TrimSpace(spec))
+				if name != "" && name != "python" {
+					deps = append(deps, analysis.Dependency{
+						Name:      name,
+						Version:   "",
+						Ecosystem: analysis.EcosystemPyPI,
+						IsDirect:  true,
+					})
+				}
+			} else {
+				deps = append(deps, *dep)
+			}
+		}
+	}
+
+	return deps, nil
+}
+
+// --- Python: Pipfile.lock ---
+
+// pipfileLockJSON represents the relevant parts of a Pipfile.lock.
+type pipfileLockJSON struct {
+	Default map[string]struct {
+		Version string `json:"version"`
+	} `json:"default"`
+	Develop map[string]struct {
+		Version string `json:"version"`
+	} `json:"develop"`
+}
+
+// ParsePipfileLock parses a Pipfile.lock file (JSON format).
+func ParsePipfileLock(path string) ([]analysis.Dependency, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var lock pipfileLockJSON
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil, fmt.Errorf("invalid Pipfile.lock: %w", err)
+	}
+
+	var deps []analysis.Dependency
+	for name, info := range lock.Default {
+		deps = append(deps, analysis.Dependency{
+			Name:      strings.ToLower(name),
+			Version:   cleanPythonVersion(info.Version),
+			Ecosystem: analysis.EcosystemPyPI,
+			IsDirect:  true,
+			IsDev:     false,
+		})
+	}
+	for name, info := range lock.Develop {
+		deps = append(deps, analysis.Dependency{
+			Name:      strings.ToLower(name),
+			Version:   cleanPythonVersion(info.Version),
+			Ecosystem: analysis.EcosystemPyPI,
+			IsDirect:  true,
+			IsDev:     true,
+		})
+	}
+
+	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
+	return deps, nil
+}
+
+// --- Python: poetry.lock ---
+
+// poetryLockJSON represents the relevant parts of a poetry.lock file.
+type poetryLockJSON struct {
+	Packages []struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	} `json:"package"`
+}
+
+// ParsePoetryLock parses a poetry.lock file (TOML/JSON format).
+// poetry.lock v1 is TOML, but we try JSON first (poetry.lock v2).
+func ParsePoetryLock(path string) ([]analysis.Dependency, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try JSON first (some tools output JSON locks)
+	var lock poetryLockJSON
+	if err := json.Unmarshal(data, &lock); err == nil && len(lock.Packages) > 0 {
+		var deps []analysis.Dependency
+		for _, pkg := range lock.Packages {
+			deps = append(deps, analysis.Dependency{
+				Name:      strings.ToLower(pkg.Name),
+				Version:   cleanPythonVersion(pkg.Version),
+				Ecosystem: analysis.EcosystemPyPI,
+				IsDirect:  true,
+			})
+		}
+		sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
+		return deps, nil
+	}
+
+	// Fall back to TOML regex parsing for [[package]] sections
+	src := string(data)
+	var deps []analysis.Dependency
+	inPackage := false
+	var name, version string
+
+	pkgNameRe := regexp.MustCompile(`^name\s*=\s*"(.+)"`)
+	pkgVerRe := regexp.MustCompile(`^version\s*=\s*"(.+)"`)
+
+	for _, line := range strings.Split(src, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[[package]]" {
+			if name != "" && version != "" {
+				deps = append(deps, analysis.Dependency{
+					Name:      strings.ToLower(name),
+					Version:   cleanPythonVersion(version),
+					Ecosystem: analysis.EcosystemPyPI,
+					IsDirect:  true,
+				})
+			}
+			name = ""
+			version = ""
+			inPackage = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && trimmed != "[[package]]" {
+			inPackage = false
+			continue
+		}
+		if !inPackage {
+			continue
+		}
+		if m := pkgNameRe.FindStringSubmatch(trimmed); m != nil {
+			name = m[1]
+		}
+		if m := pkgVerRe.FindStringSubmatch(trimmed); m != nil {
+			version = m[1]
+		}
+	}
+	// Don't forget the last package
+	if name != "" && version != "" {
+		deps = append(deps, analysis.Dependency{
+			Name:      strings.ToLower(name),
+			Version:   cleanPythonVersion(version),
+			Ecosystem: analysis.EcosystemPyPI,
+			IsDirect:  true,
+		})
+	}
+
+	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
 	return deps, nil
 }
 
