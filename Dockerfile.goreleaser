@@ -1,0 +1,4 @@
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY patchflow /usr/local/bin/patchflow
+ENTRYPOINT ["/usr/local/bin/patchflow"]
+CMD ["--help"]

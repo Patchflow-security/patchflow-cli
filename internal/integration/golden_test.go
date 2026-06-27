@@ -85,15 +85,21 @@ func (g *goldenRepo) checkoutNew(branch string) {
 	g.run("git", "checkout", "-b", branch)
 }
 
-// buildPythonGolden creates a Python repo with an eval() finding (PY001).
+// buildPythonGolden creates a Python repo with an eval() finding (PY001)
+// and a pickle.loads() finding (PY005, high severity).
 func buildPythonGolden(t *testing.T) *goldenRepo {
 	g := newGoldenRepo(t)
 	g.write("app.py", `import os
+import pickle
 
 def handler(user_input):
     # vulnerable: eval with user input
     result = eval(user_input)
     return result
+
+def deserialize(data):
+    # vulnerable: pickle deserialization (PY005, high severity)
+    return pickle.loads(data)
 
 def safe():
     return "ok"
@@ -474,7 +480,7 @@ func TestFailOnSeverity(t *testing.T) {
 	g := buildPythonGolden(t)
 	findings := runScan(t, g.root)
 
-	// PY001 is high severity. --fail-on high should block.
+	// PY005 (pickle.loads) is high severity. --fail-on high should block.
 	threshold := severityRankTest(analysis.SeverityHigh)
 	blocking := 0
 	for _, f := range findings {
@@ -486,7 +492,7 @@ func TestFailOnSeverity(t *testing.T) {
 		t.Error("expected at least 1 finding at or above high severity for --fail-on high")
 	}
 
-	// --fail-on critical should NOT block (PY001 is high, not critical).
+	// --fail-on critical should NOT block (PY005 is high, not critical).
 	thresholdCrit := severityRankTest(analysis.SeverityCritical)
 	blockingCrit := 0
 	for _, f := range findings {

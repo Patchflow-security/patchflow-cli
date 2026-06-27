@@ -1,0 +1,166 @@
+version: 2
+
+project_name: patchflow
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: patchflow
+    main: ./
+    binary: patchflow
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/patchflow/patchflow-cli/pkg/version.Version={{.Version}}
+      - -X github.com/patchflow/patchflow-cli/pkg/version.Commit={{.Commit}}
+      - -X github.com/patchflow/patchflow-cli/pkg/version.Date={{.Date}}
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
+      - windows_arm64
+
+archives:
+  - id: default
+    builds: [patchflow]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macos
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - 'Generated with'
+      - 'Co-Authored-By'
+  groups:
+    - title: 'New Features'
+      regexp: '^feat'
+    - title: 'Bug Fixes'
+      regexp: '^fix'
+    - title: 'Security'
+      regexp: '^security|^noise|^sast'
+    - title: 'Other Changes'
+      order: 99
+
+sboms:
+  - id: default
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+    cmd: syft
+    args: ["sbom", "--format", "spdx-json", "--output", "${document}", "${artifact}"]
+
+release:
+  github:
+    owner: patchflow
+    name: patchflow-cli
+  draft: true
+  prerelease: auto
+  name_template: "PatchFlow CLI v{{.Version}}"
+  header: |
+    ## PatchFlow CLI v{{.Version}}
+
+    ### Benchmark Results (v1.0)
+    - 18 intentionally vulnerable repos: 100% recall, 918K LOC, 19 CWE categories
+    - 5 historical CVE repos: 100% recall, 387K LOC
+    - 10 clean repos: 0.094 HC/KLOC, 720K LOC
+
+    See [Benchmark Report v1.0](../patchflow-benchmarks/reports/BENCHMARK_REPORT_v1.0.md) for details.
+
+brews:
+  - id: patchflow
+    repository:
+      owner: patchflow
+      name: homebrew-tap
+      branch: main
+    commit_author:
+      name: patchflow-bot
+      email: bot@patchflow.dev
+    homepage: https://patchflow.dev
+    description: Local-first security scanner for code, dependencies, and secrets
+    license: Apache-2.0
+    test: |
+      system "#{bin}/patchflow", "version"
+    install: |
+      bin.install "patchflow"
+
+scoops:
+  - id: patchflow
+    repository:
+      owner: patchflow
+      name: scoop-bucket
+      branch: main
+    commit_author:
+      name: patchflow-bot
+      email: bot@patchflow.dev
+    homepage: https://patchflow.dev
+    description: Local-first security scanner for code, dependencies, and secrets
+    license: Apache-2.0
+
+dockers:
+  - id: patchflow-linux-amd64
+    ids: [patchflow]
+    use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/patchflow/cli:{{ .Version }}-amd64"
+      - "ghcr.io/patchflow/cli:latest-amd64"
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.revision={{.Commit}}"
+
+  - id: patchflow-linux-arm64
+    ids: [patchflow]
+    use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/patchflow/cli:{{ .Version }}-arm64"
+      - "ghcr.io/patchflow/cli:latest-arm64"
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source={{.GitURL}}"
+      - "--label=org.opencontainers.image.revision={{.Commit}}"
+
+docker_manifests:
+  - id: patchflow
+    image_templates:
+      - "ghcr.io/patchflow/cli:{{ .Version }}"
+      - "ghcr.io/patchflow/cli:latest"
+    create: true
