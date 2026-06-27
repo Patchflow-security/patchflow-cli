@@ -594,6 +594,13 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 		"gitleaks":          1,
 	}
 
+	// proximityWindow is the max line difference for merging two findings
+	// with the same rule ID on the same file. This handles cases where the
+	// tree-sitter scanner reports the start of a multi-line call (e.g.,
+	// subprocess.run on line 88) while the regex scanner reports the
+	// shell=True keyword on a later line (e.g., line 91).
+	const proximityWindow = 5
+
 	for _, f := range findings {
 		// Normalize path for dedup key — different scanners may report
 		// absolute vs relative paths for the same file. Use the last two
@@ -613,22 +620,42 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 		if ruleKey == "" {
 			ruleKey = f.Title
 		}
-		k := key{file: normalizedPath, line: f.LineStart, ruleID: ruleKey}
-		existing, ok := best[k]
-		if !ok {
+
+		// Check for an existing finding on the same file+ruleID within the
+		// proximity window. This merges findings that report the same issue
+		// on slightly different lines (e.g., call start vs keyword line).
+		var existingKey *key
+		for lineOffset := 0; lineOffset <= proximityWindow; lineOffset++ {
+			for _, dir := range []int{1, -1} {
+				probeLine := f.LineStart + dir*lineOffset
+				probeKey := key{file: normalizedPath, line: probeLine, ruleID: ruleKey}
+				if _, ok := best[probeKey]; ok {
+					existingKey = &probeKey
+					break
+				}
+			}
+			if existingKey != nil {
+				break
+			}
+		}
+
+		if existingKey == nil {
+			k := key{file: normalizedPath, line: f.LineStart, ruleID: ruleKey}
 			best[k] = f
 			order = append(order, k)
 			continue
 		}
+
+		existing := best[*existingKey]
 		// Prefer higher confidence (ConfidenceHigh > ConfidenceMedium > ConfidenceLow)
 		if confidenceRank(f.Confidence) > confidenceRank(existing.Confidence) {
-			best[k] = f
+			best[*existingKey] = f
 			continue
 		}
 		// If same confidence, prefer higher-priority analyzer
 		if f.Confidence == existing.Confidence {
 			if prio[f.Analyzer] > prio[existing.Analyzer] {
-				best[k] = f
+				best[*existingKey] = f
 			}
 		}
 	}

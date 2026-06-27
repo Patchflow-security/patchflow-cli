@@ -24,7 +24,7 @@ func builtInRules() []Rule {
 				{FuncName: "request.cookies", IsSubscript: true},
 				{FuncName: "request.headers", IsSubscript: true},
 				{FuncName: "request.json", IsSubscript: true},
-				{FuncName: "input"},
+				// {FuncName: "input"},  // removed: CLI input is operator-controlled
 				{FuncName: "sys.argv", IsSubscript: true},
 			},
 			Sinks: []SinkPattern{
@@ -46,7 +46,7 @@ func builtInRules() []Rule {
 				{FuncName: "request.POST", IsSubscript: true},
 				{FuncName: "request.args", IsSubscript: true},
 				{FuncName: "request.form", IsSubscript: true},
-				{FuncName: "input"},
+				// {FuncName: "input"},  // removed: CLI input is operator-controlled
 				{FuncName: "sys.argv", IsSubscript: true},
 			},
 			Sinks: []SinkPattern{
@@ -71,7 +71,7 @@ func builtInRules() []Rule {
 				{FuncName: "request.POST", IsSubscript: true},
 				{FuncName: "request.args", IsSubscript: true},
 				{FuncName: "request.form", IsSubscript: true},
-				{FuncName: "input"},
+				// {FuncName: "input"},  // removed: CLI input is operator-controlled
 			},
 			Sinks: []SinkPattern{
 				{FuncName: "open", ArgIndex: 0},
@@ -94,7 +94,7 @@ func builtInRules() []Rule {
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
 				{FuncName: "request.args", IsSubscript: true},
-				{FuncName: "input"},
+				// {FuncName: "input"},  // removed: CLI input is operator-controlled
 			},
 			Sinks: []SinkPattern{
 				{FuncName: "requests.get", ArgIndex: 0},
@@ -117,7 +117,6 @@ func builtInRules() []Rule {
 				{FuncName: "request.GET", IsSubscript: true},
 				{FuncName: "request.POST", IsSubscript: true},
 				{FuncName: "request.args", IsSubscript: true},
-				{FuncName: "input"},
 				{FuncName: "sys.argv", IsSubscript: true},
 			},
 			Sinks: []SinkPattern{
@@ -141,7 +140,7 @@ func builtInRules() []Rule {
 				{FuncName: "request.form", IsSubscript: true},
 				{FuncName: "request.values", IsSubscript: true},
 				{FuncName: "request.url", IsSubscript: false},
-				{FuncName: "input"},
+				// {FuncName: "input"},  // removed: CLI input is operator-controlled
 			},
 			Sinks: []SinkPattern{
 				{FuncName: "render_template", ArgIndex: -1},

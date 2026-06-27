@@ -67,6 +67,20 @@ func suppressPY013(line string) bool {
 	return false
 }
 
+// suppressPY019 checks whether a PY019 (path traversal via open) match is a
+// false positive. The regex matches open(...os.path.join...), but many uses
+// are internal file operations (e.g., creating __init__.py files in migration
+// directories) that don't involve user input.
+func suppressPY019(line string) bool {
+	// Internal Python package files — not user input.
+	if strings.Contains(line, "__init__.py") ||
+		strings.Contains(line, "__pycache__") ||
+		strings.Contains(line, "conftest.py") {
+		return true
+	}
+	return false
+}
+
 // extractStringValue extracts the first single- or double-quoted string value
 // from a line like: varname = "value"  or  varname = 'value'
 var stringValueRe = regexp.MustCompile(`['"]([^'"]{4,})['"]`)

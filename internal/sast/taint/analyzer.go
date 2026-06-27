@@ -772,28 +772,42 @@ func (a *Analyzer) isExportedParam(fn *ssa.Function, param *ssa.Parameter) bool 
 		return false
 	}
 
-	// Heuristic: only treat exported function parameters as tainted if
-	// the package could plausibly receive external input. Packages in
-	// doc/internal/cmd/script directories are CLI utilities or code
-	// generators — their exported functions are called internally, not
-	// from HTTP handlers.
-	if fn.Pkg != nil && fn.Pkg.Pkg != nil {
-		pkgPath := fn.Pkg.Pkg.Path()
-		// Skip packages in documentation, CLI, and internal directories.
-		for _, segment := range strings.Split(pkgPath, "/") {
-			switch segment {
-			case "doc", "docs", "internal", "cmd", "script", "scripts",
-				"test", "tests", "example", "examples":
-				return false
-			}
-		}
-		// Only treat params as tainted if the package imports net/http,
-		// indicating it could contain HTTP handlers. This eliminates FPs
-		// in CLI tool libraries (cobra, urfave/cli, etc.) where exported
-		// functions take path/string parameters for internal file ops.
-		if !importsHTTP(fn.Pkg.Pkg) {
+	// Require package info to make taint decisions. If we can't determine
+	// the package, we can't determine if it receives external input —
+	// default to not tainted to avoid FPs.
+	if fn.Pkg == nil || fn.Pkg.Pkg == nil {
+		return false
+	}
+
+	pkgPath := fn.Pkg.Pkg.Path()
+
+	// Skip packages in documentation, CLI, and internal directories.
+	// These are code generators, build scripts, or internal utilities —
+	// their exported functions are called internally, not from HTTP handlers.
+	for _, segment := range strings.Split(pkgPath, "/") {
+		switch segment {
+		case "doc", "docs", "internal", "cmd", "script", "scripts",
+			"test", "tests", "example", "examples":
 			return false
 		}
+	}
+
+	// Only treat params as tainted if the package imports net/http,
+	// indicating it could contain HTTP handlers. This eliminates FPs
+	// in CLI tool libraries (cobra, urfave/cli, etc.) where exported
+	// functions take path/string parameters for internal file ops.
+	if !importsHTTP(fn.Pkg.Pkg) {
+		return false
+	}
+
+	// Even in packages that import net/http, not all exported functions
+	// receive external input. Only treat parameters as tainted if the
+	// function signature includes an *http.Request parameter, indicating
+	// it's an HTTP handler or directly processes HTTP request data.
+	// This eliminates FPs on utility functions like FileLastModified(path string)
+	// that happen to live in an HTTP-handling package.
+	if !takesHTTPRequest(fn) {
+		return false
 	}
 
 	return true
@@ -806,6 +820,39 @@ func importsHTTP(pkg *types.Package) bool {
 	}
 	for _, imp := range pkg.Imports() {
 		if imp.Path() == "net/http" {
+			return true
+		}
+	}
+	return false
+}
+
+// takesHTTPRequest returns true if the function's signature includes a
+// parameter of type *http.Request (or gin.Context, echo.Context, etc.),
+// indicating it directly processes HTTP request data.
+func takesHTTPRequest(fn *ssa.Function) bool {
+	if fn == nil || fn.Signature == nil {
+		return false
+	}
+	sig := fn.Signature
+	params := sig.Params()
+	for i := 0; i < params.Len(); i++ {
+		param := params.At(i)
+		typeStr := param.Type().String()
+		// Check for common HTTP request/context types
+		if strings.Contains(typeStr, "net/http.Request") ||
+			strings.Contains(typeStr, "gin.Context") ||
+			strings.Contains(typeStr, "echo.Context") ||
+			strings.Contains(typeStr, "fiber.Ctx") ||
+			strings.Contains(typeStr, "chi.Router") {
+			return true
+		}
+	}
+	// Also check the receiver type (for methods on HTTP handler structs)
+	if sig.Recv() != nil {
+		recvType := sig.Recv().Type().String()
+		if strings.Contains(recvType, "Handler") ||
+			strings.Contains(recvType, "Server") ||
+			strings.Contains(recvType, "Controller") {
 			return true
 		}
 	}

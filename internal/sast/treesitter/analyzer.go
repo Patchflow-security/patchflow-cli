@@ -121,7 +121,7 @@ func (a *Analyzer) registerDefaults() {
 		{
 			ID:             "TS-PY004",
 			Title:          "subprocess with shell=True (AST-confirmed)",
-			Severity:       analysis.SeverityHigh,
+			Severity:       analysis.SeverityMedium,
 			Confidence:     analysis.ConfidenceHigh,
 			Languages:      []string{"python"},
 			Description:    "subprocess with shell=True is vulnerable to command injection.",
@@ -209,7 +209,7 @@ func (a *Analyzer) registerDefaults() {
 		{
 			ID:             "TS-PY012",
 			Title:          "subprocess.Popen with shell=True (AST-confirmed)",
-			Severity:       analysis.SeverityHigh,
+			Severity:       analysis.SeverityMedium,
 			Confidence:     analysis.ConfidenceHigh,
 			Languages:      []string{"python"},
 			Description:    "subprocess.Popen with shell=True is vulnerable to command injection.",
