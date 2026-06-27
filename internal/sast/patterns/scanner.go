@@ -429,24 +429,32 @@ func (s *Scanner) registerRules() {
 		{ID: "DOCKER010", Title: "sudo in Dockerfile", Description: "Using sudo inside a container is an anti-pattern. Run as the appropriate USER instead.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangDockerfile}, Pattern: regexp.MustCompile(`(?i)^\s*RUN\s+.*\bsudo\b`)},
 
 		// --- Kubernetes / Helm security rules (K8S001-K8S010) ---
-		{ID: "K8S001", Title: "Privileged container in K8s", Description: "securityContext.privileged: true grants full host access.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`(?i)privileged:\s*true`)},
-		{ID: "K8S002", Title: "Container runs as root", Description: "runAsUser: 0 or missing runAsUser means the container runs as root.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`runAsUser:\s*0\b`)},
-		{ID: "K8S004", Title: "allowPrivilegeEscalation not false", Description: "allowPrivilegeEscalation should be set to false.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`allowPrivilegeEscalation:\s*true`)},
+		{ID: "K8S001", Title: "Privileged container in K8s", Description: "securityContext.privileged: true grants full host access.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`(?i)privileged:\s*true`), CWEID: "CWE-269"},
+		{ID: "K8S002", Title: "Container runs as root", Description: "runAsUser: 0 or missing runAsUser means the container runs as root.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`runAsUser:\s*0\b`), CWEID: "CWE-269"},
+		{ID: "K8S004", Title: "allowPrivilegeEscalation not false", Description: "allowPrivilegeEscalation should be set to false.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`allowPrivilegeEscalation:\s*true`), CWEID: "CWE-269"},
 		{ID: "K8S005", Title: "readOnlyRootFilesystem not set", Description: "readOnlyRootFilesystem should be true to prevent writes to the root filesystem.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`readOnlyRootFilesystem:\s*false`)},
-		{ID: "K8S006", Title: "Host network enabled", Description: "hostNetwork: true gives the container access to the host's network interfaces.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`hostNetwork:\s*true`)},
-		{ID: "K8S007", Title: "Host PID enabled", Description: "hostPID: true gives the container access to the host's process namespace.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`hostPID:\s*true`)},
-		{ID: "K8S008", Title: "Host IPC enabled", Description: "hostIPC: true gives the container access to the host's IPC namespace.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`hostIPC:\s*true`)},
-		{ID: "K8S009", Title: "CAP_SYS_ADMIN in securityContext", Description: "CAP_SYS_ADMIN grants broad privileges. Drop all capabilities and add only needed ones.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`(?i)SYS_ADMIN`)},
+		{ID: "K8S006", Title: "Host network enabled", Description: "hostNetwork: true gives the container access to the host's network interfaces.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`hostNetwork:\s*true`), CWEID: "CWE-269"},
+		{ID: "K8S007", Title: "Host PID enabled", Description: "hostPID: true gives the container access to the host's process namespace.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`hostPID:\s*true`), CWEID: "CWE-269"},
+		{ID: "K8S008", Title: "Host IPC enabled", Description: "hostIPC: true gives the container access to the host's IPC namespace.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`hostIPC:\s*true`), CWEID: "CWE-269"},
+		{ID: "K8S009", Title: "CAP_SYS_ADMIN in securityContext", Description: "CAP_SYS_ADMIN grants broad privileges. Drop all capabilities and add only needed ones.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`(?i)SYS_ADMIN`), CWEID: "CWE-269"},
 		{ID: "K8S010", Title: "Image uses latest tag", Description: "Using :latest in Kubernetes manifests leads to non-reproducible deployments.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`image:\s*\S+:latest\b`)},
+		// K8s base64-encoded secret in YAML (CWE-798)
+		{ID: "K8S011", Title: "Base64-encoded secret in Kubernetes YAML", Description: "Base64-encoded secret data in Kubernetes ConfigMap/Secret. Use a secrets manager or encrypted secrets.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`(?i)\b\w*key\b.*:\s*[A-Za-z0-9+/=]{20,}`), CWEID: "CWE-798"},
+		// K8s overly permissive RBAC (CWE-269)
+		{ID: "K8S012", Title: "Overly permissive RBAC wildcard resources", Description: "RBAC rule with resources: [\"*\"] grants access to all resources. Follow least-privilege principle.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangYAML}, Pattern: regexp.MustCompile(`resources:\s*\["\*"\]`), CWEID: "CWE-269"},
 
 		// --- Terraform security rules (TF001-TF010) ---
 		{ID: "TF001", Title: "AWS S3 bucket without versioning", Description: "S3 bucket should have versioning enabled for data recovery.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)aws_s3_bucket\b`)},
 		{ID: "TF002", Title: "AWS S3 bucket public ACL", Description: "S3 bucket has a public-read or public-read-write ACL.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)(public-read|public-read-write|website_endpoint)`)},
 		{ID: "TF003", Title: "Security group allows 0.0.0.0/0", Description: "Security group rule allows traffic from anywhere (0.0.0.0/0).", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`0\.0\.0\.0/0`)},
-		{ID: "TF004", Title: "Hardcoded credentials in Terraform", Description: "Terraform resource contains hardcoded password or secret key.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)(password|secret_key|api_key|access_key)\s*=\s*["'][^"']{8,}["']`)},
+		{ID: "TF004", Title: "Hardcoded credentials in Terraform", Description: "Terraform resource contains hardcoded password or secret key.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)(password|secret_key|api_key|access_key)\s*=\s*["'][^"']{8,}["']`), CWEID: "CWE-798"},
 		{ID: "TF005", Title: "RDS instance publicly accessible", Description: "RDS instance has publicly_accessible = true.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`publicly_accessible\s*=\s*true`)},
 		{ID: "TF006", Title: "S3 bucket without encryption", Description: "S3 bucket should have server-side encryption enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)aws_s3_bucket\b`)},
-		{ID: "TF007", Title: "IAM policy with wildcard action", Description: "IAM policy uses Action: * or Resource: *, granting overly broad permissions.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)(Action|Resource)\s*=\s*["']?\*["']?`)},
+		{ID: "TF007", Title: "IAM policy with wildcard action", Description: "IAM policy uses Action: * or Resource: *, granting overly broad permissions.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)(Action|Resource)\s*=\s*["']?\*["']?`), CWEID: "CWE-284"},
+		// Terraform IAM wildcard in JSON heredoc (CWE-284)
+		{ID: "TF007b", Title: "IAM policy with wildcard action in JSON", Description: "IAM policy JSON with Action: * or Resource: * grants overly broad permissions. Follow least-privilege principle.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)"(Action|Resource)"\s*:\s*["']\*["']`), CWEID: "CWE-284", SkipQuoteFilter: true},
+		// Terraform IAM service-specific wildcard (ec2:*, s3:*, etc.) (CWE-284)
+		{ID: "TF007c", Title: "IAM policy with service wildcard action", Description: "IAM policy with service-level wildcard (e.g. ec2:*, s3:*) grants overly broad permissions. Specify only needed actions.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)"(Action|Resource)"\s*:\s*\[[^\]]*"\w+:\*"`), CWEID: "CWE-284", SkipQuoteFilter: true},
 		{ID: "TF008", Title: "No TLS for database", Description: "RDS or database resource does not enforce TLS/SSL connections.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)require_ssl\s*=\s*false`)},
 		{ID: "TF009", Title: "Lambda with excessive timeout", Description: "Lambda function has timeout > 300 seconds, which can increase cost and complexity.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`timeout\s*=\s*(3[0-9]{2}|[4-9][0-9]{2}|[0-9]{4,})`)},
 		{ID: "TF010", Title: "EKS cluster endpoint public", Description: "EKS cluster has public endpoint access enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)endpoint_public_access\s*=\s*true`)},
@@ -475,6 +483,23 @@ func (s *Scanner) registerRules() {
 		// PHP CSRF: state-changing GET request with database write (CWE-352)
 		{ID: "PHP014", Title: "PHP CSRF via GET request with state change", Description: "State-changing operation (UPDATE/INSERT/DELETE) triggered by $_GET without CSRF token validation. Use POST with CSRF tokens.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)\$_GET\s*\[.*['"]?(Change|Update|Delete|Submit|Action)['"]?\]`), CWEID: "CWE-352"},
 		{ID: "PHP015", Title: "PHP CSRF: password change via GET without token", Description: "Password change operation via GET request without CSRF token. Use POST with CSRF token validation.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)\$_GET\s*\[.*password`), CWEID: "CWE-352"},
+
+		// PHP SSRF via file_get_contents/curl with user input (CWE-918)
+		{ID: "PHP019", Title: "PHP SSRF via file_get_contents with user input", Description: "file_get_contents() with user-controlled input can fetch remote URLs (SSRF) or local files (LFI). Validate and restrict URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)file_get_contents\s*\(\s*\$\w+`), CWEID: "CWE-918"},
+		{ID: "PHP020", Title: "PHP SSRF via curl_exec with user input", Description: "curl_exec() with a user-controlled URL allows SSRF. Validate and restrict destination URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)curl_setopt\s*\([^,]+,\s*CURLOPT_URL\s*,\s*\$\w+`), CWEID: "CWE-918"},
+
+		// PHP LDAP injection (CWE-90)
+		{ID: "PHP021", Title: "PHP LDAP injection via ldap_search with user input", Description: "ldap_search() with user-controlled filter allows LDAP injection. Use ldap_escape() on user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)ldap_search\s*\([^)]*\$\w+`), CWEID: "CWE-90"},
+
+		// PHP XPath injection (CWE-643)
+		{ID: "PHP022", Title: "PHP XPath injection via DOMXPath with user input", Description: "XPath query with user-controlled input allows XPath injection. Use parameterized XPath queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)->(query|xpath)\s*\(\s*["'].*\$\w+`), CWEID: "CWE-643", SkipQuoteFilter: true},
+		{ID: "PHP022b", Title: "PHP XPath injection via DOMXPath with variable", Description: "XPath query with a variable that may contain user input allows XPath injection. Use parameterized XPath queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)->(query|xpath)\s*\(\s*\$\w+\s*\)`), CWEID: "CWE-643"},
+
+		// PHP file inclusion (CWE-98) — include/require with variable
+		{ID: "PHP023", Title: "PHP file inclusion via include/require with variable", Description: "include/require with a variable allows Local/Remote File Inclusion. Use a whitelist of allowed files.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)(include|require)(_once)?\s*\(?\s*\$\w+`), CWEID: "CWE-98"},
+
+		// PHP XPath injection via xpath() method (CWE-643)
+		{ID: "PHP024", Title: "PHP XPath injection via xpath() with user input", Description: "SimpleXMLElement xpath() with user-controlled input allows XPath injection. Use parameterized XPath queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPHP}, Pattern: regexp.MustCompile(`(?i)->xpath\s*\(\s*["'].*\$`), CWEID: "CWE-643", SkipQuoteFilter: true},
 
 		// Java SQL injection via Statement.executeQuery with concatenation (CWE-89)
 		{ID: "JAVA011", Title: "Java SQL injection via executeQuery with concatenation", Description: "Statement.executeQuery() with a query built via string concatenation is vulnerable to SQL injection. Use PreparedStatement with parameter placeholders.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)executeQuery\s*\(\s*["'].*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
@@ -527,6 +552,24 @@ func (s *Scanner) registerRules() {
 		// new File(dir, entry.getName()) — zip-slip via ZipEntry.getName()
 		{ID: "JAVA022", Title: "Java zip-slip via ZipEntry.getName in File constructor", Description: "new File(dir, zipEntry.getName()) without canonical path validation allows zip-slip path traversal. Validate entry names against the target directory.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)new\s+File\s*\([^,]+,\s*\w+\.getName\(\)\)`), CWEID: "CWE-22"},
 
+		// Java SSRF via URL.openConnection / HttpURLConnection (CWE-918)
+		{ID: "JAVA023", Title: "Java SSRF via URL.openConnection", Description: "URL.openConnection() can connect to arbitrary URLs. If the URL is user-controlled, this allows SSRF. Validate and restrict destination URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)\.openConnection\s*\(\s*\)`), CWEID: "CWE-918"},
+		{ID: "JAVA024", Title: "Java SSRF via RestTemplate with variable URL", Description: "RestTemplate exchange/getForObject with a variable URL allows SSRF if the URL is user-controlled. Validate and restrict destination URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)restTemplate\s*\.\s*(exchange|getForObject|getForEntity|postForObject)\s*\(\s*\w+`), CWEID: "CWE-918"},
+
+		// Java weak hash (CWE-328)
+		{ID: "JAVA025", Title: "Java weak hash algorithm MD5/SHA1", Description: "MD5 or SHA1 hash algorithm is cryptographically weak. Use SHA-256 or stronger for security-sensitive operations.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)MessageDigest\.getInstance\s*\(\s*["'](?:MD5|SHA-?1)["']`), CWEID: "CWE-328"},
+
+		// Java weak random (CWE-330)
+		{ID: "JAVA026", Title: "Java weak random number generator", Description: "java.util.Random is not cryptographically secure. Use SecureRandom for security-sensitive tokens, keys, or session IDs.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)\bnew\s+Random\s*\(`), CWEID: "CWE-330"},
+
+		// Java XPath injection (CWE-643)
+		{ID: "JAVA027", Title: "Java XPath injection via XPath.evaluate with user input", Description: "XPath.evaluate() with user-controlled expression allows XPath injection. Use parameterized XPath or validate input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)xpath\s*\.\s*evaluate\s*\(\s*.*\+`), CWEID: "CWE-643", SkipQuoteFilter: true},
+
+		// Java LDAP injection (CWE-90)
+		{ID: "JAVA028", Title: "Java LDAP injection via DirContext.search with user input", Description: "DirContext.search() with user-controlled filter allows LDAP injection. Use proper escaping of user input in LDAP filters.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)DirContext.*\.search\s*\(`), CWEID: "CWE-90"},
+		// Java unsigned JWT (PlainJWT) — CWE-287
+		{ID: "JAVA029", Title: "Java unsigned JWT (PlainJWT)", Description: "Using PlainJWT creates unsigned tokens that can be forged. Use SignedJWT with a strong algorithm (RS256) and proper key management.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJava}, Pattern: regexp.MustCompile(`(?i)PlainJWT`), CWEID: "CWE-287"},
+
 		// --- Ruby SQL injection: where/select with string interpolation (CWE-89) ---
 
 		// where("... #{params[...]} ...") — string interpolation in where clause
@@ -553,6 +596,35 @@ func (s *Scanner) registerRules() {
 		// render_template with request.* in arguments
 		{ID: "PY029", Title: "Flask render_template with user input", Description: "render_template with user-controlled input from request object may lead to XSS if auto-escaping is disabled. Ensure auto-escaping is enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)render_template\s*\([^)]*request\.`), CWEID: "CWE-79", SkipQuoteFilter: true},
 
+		// Python SSRF via requests with user input (CWE-918)
+		{ID: "PY041", Title: "Python SSRF via requests with request data", Description: "requests.get/post/put/delete with user-controlled input from request.data/request.json/request.form allows SSRF. Validate and restrict destination URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)requests\.(get|post|put|delete|head|patch)\s*\([^)]*request\.(data|json|form|GET|POST|args)`), CWEID: "CWE-918", SkipQuoteFilter: true},
+		{ID: "PY042", Title: "Python SSRF via os.popen/subprocess with curl", Description: "os.popen or subprocess with curl command and user-controlled URL allows SSRF. Use requests library with URL validation instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(os\.popen|subprocess\.(call|run|Popen|check_output))\s*\([^)]*curl`), CWEID: "CWE-918", SkipQuoteFilter: true},
+		// Python command execution via os.popen with variable (CWE-78)
+		{ID: "PY042b", Title: "Python command injection via os.popen with variable", Description: "os.popen() with a variable argument allows command injection if the variable contains user input. Use subprocess with shell=False and argument arrays.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`os\.popen\s*\(\s*[a-zA-Z_]\w*\s*\)`), CWEID: "CWE-78"},
+		// Python SSRF via helper function with curl (CWE-918)
+		{ID: "PY042c", Title: "Python SSRF via curl command with user input", Description: "Executing curl with user-controlled URL allows SSRF. Validate and restrict destination URLs before making requests.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(run_cmd|popen|system|subprocess)\s*\([^)]*curl\s+[^)]*\{`), CWEID: "CWE-918", SkipQuoteFilter: true},
+
+		// Python weak hash MD5/SHA1 (CWE-328)
+		{ID: "PY043", Title: "Python weak hash algorithm MD5/SHA1", Description: "MD5 or SHA1 hash algorithm is cryptographically weak. Use hashlib.sha256() or stronger for security-sensitive operations.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)hashlib\.(md5|sha1)\s*\(`), CWEID: "CWE-328"},
+
+		// Python weak random (CWE-330)
+		{ID: "PY044", Title: "Python weak random for security context", Description: "random module is not cryptographically secure. Use secrets module for tokens, session IDs, or passwords.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\brandom\.(choice|randint|random)\s*\(`), CWEID: "CWE-330"},
+
+		// Python hardcoded credentials (CWE-798)
+		{ID: "PY045", Title: "Python hardcoded password/secret", Description: "Hardcoded password or secret key detected. Use environment variables or a secret manager.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(password|passwd|secret|api_key|apikey|token)\s*=\s*['"][^'"]{4,}['"]`), CWEID: "CWE-798"},
+
+		// Python SQL injection via SQLAlchemy text() with string formatting (CWE-89)
+		{ID: "PY046", Title: "SQL injection via SQLAlchemy text() with formatting", Description: "SQLAlchemy text() with string formatting (% or f-string) allows SQL injection. Use parameterized queries with text() and bind parameters.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\btext\s*\(\s*["'].*%s.*["']\s*%`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// Python auth bypass: plaintext password comparison (CWE-287)
+		{ID: "PY047", Title: "Authentication with plaintext password comparison", Description: "filter_by(password=...) or filter(password == ...) suggests plaintext password comparison. Use password hashing (bcrypt, argon2).", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)filter_by\s*\([^)]*password\s*=`), CWEID: "CWE-287"},
+
+		// Python JWT verification disabled (CWE-287)
+		{ID: "PY048", Title: "JWT verification disabled", Description: "JWT verification with verify_signature:False disables signature validation, allowing token forgery. Always verify JWT signatures.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)verify_signature\s*:\s*False`), CWEID: "CWE-287"},
+
+		// Python access control via cookie value (CWE-284)
+		{ID: "PY049", Title: "Access control via client-controlled cookie", Description: "Authorization check based on cookie value is client-controllable and can be bypassed. Use server-side session validation.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`request\.cookies\.get\s*\([^)]+\)\s*==\s*["']`), CWEID: "CWE-284"},
+
 		// --- JS/TS insecure randomness: Math.random() (CWE-611) ---
 
 		{ID: "JS028", Title: "Insecure random number generation via Math.random", Description: "Math.random() is not cryptographically secure. Use crypto.randomBytes() or crypto.getRandomValues() for security-sensitive values like tokens, session IDs, or passwords.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`Math\.random\s*\(`), CWEID: "CWE-611"},
@@ -573,6 +645,28 @@ func (s *Scanner) registerRules() {
 		{ID: "JS033", Title: "Hardcoded HMAC secret key", Description: "Hardcoding HMAC secret keys in source code exposes credentials. Use environment variables or a secrets manager.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)createHmac\s*\([^,]+,\s*['"][^'"]{4,}['"]\s*\)`), CWEID: "CWE-522"},
 		// Hardcoded RSA private key
 		{ID: "JS034", Title: "Hardcoded RSA private key", Description: "Hardcoding RSA private keys in source code exposes credentials. Use environment variables or a secrets manager.", Severity: analysis.SeverityCritical, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----`), CWEID: "CWE-522"},
+
+		// JS/TS command injection via exec/spawn with user input (CWE-78)
+		{ID: "JS035", Title: "Command injection via exec with user input", Description: "child_process.exec with user-controlled input from req.query/req.body/req.params allows command injection. Validate and sanitize input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(exec|execSync)\s*\(\s*.*\breq\.(query|body|params)`), CWEID: "CWE-78"},
+		{ID: "JS036", Title: "Command injection via exec with template literal", Description: "child_process.exec with template literal containing variables allows command injection if variables are user-controlled. Use execFile with argument arrays.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(exec|execSync)\s*\(\s*` + "`" + `[^` + "`" + `]*\$\{`), CWEID: "CWE-78", SkipQuoteFilter: true},
+
+		// JS/TS SSRF via fetch/axios/http with request body (CWE-918)
+		{ID: "JS037", Title: "SSRF via fetch with user-controlled URL", Description: "fetch() with user-controlled URL from req.body/req.query allows SSRF. Validate and restrict destination URLs.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)\bfetch\s*\(\s*.*\breq\.(body|query|params)`), CWEID: "CWE-918"},
+
+		// JS/TS hardcoded credentials (CWE-798)
+		{ID: "JS038", Title: "Hardcoded password/secret in source", Description: "Hardcoded password, secret, or API key detected. Use environment variables or a secrets manager.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)(password|passwd|secret|api_key|apikey|apiKey)\s*[:=]\s*['"][^'"]{4,}['"]`), CWEID: "CWE-798"},
+
+		// JS/TS weak hash MD5/SHA1 (CWE-328)
+		{ID: "JS039", Title: "Weak hash algorithm MD5/SHA1", Description: "MD5 or SHA1 hash algorithm is cryptographically weak. Use SHA-256 or stronger for security-sensitive operations.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)createHash\s*\(\s*['"](md5|sha1)['"]\s*\)`), CWEID: "CWE-328"},
+
+		// JS/TS NoSQL injection via where with string (CWE-89)
+		{ID: "JS040", Title: "NoSQL injection via $where with string concatenation", Description: "MongoDB $where with string concatenation allows JavaScript injection in the database. Use proper query operators.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`\$where\s*:\s*["'].*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
+
+		// JS/TS command injection via exec with string concatenation (CWE-78)
+		{ID: "JS041", Title: "Command injection via exec with string concatenation", Description: "child_process.exec with string concatenation (+) allows command injection if variables are user-controlled. Use execFile with argument arrays.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)\bexec\s*\(\s*["'].*\+\s*\w+`), CWEID: "CWE-78", SkipQuoteFilter: true},
+
+		// JS/TS SQL injection via string concatenation (CWE-89)
+		{ID: "JS042", Title: "SQL injection via string concatenation in query", Description: "SQL query built with string concatenation (+) is vulnerable to SQL injection. Use parameterized queries with placeholders.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangJavaScript, LangTypeScript}, Pattern: regexp.MustCompile(`(?i)["'].*\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\b.*["'].*\+\s*\w+`), CWEID: "CWE-89", SkipQuoteFilter: true},
 	}
 }
 

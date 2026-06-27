@@ -31,6 +31,7 @@ var ignoredDirNames = map[string]bool{
 	"bin": true, "obj": true, ".cache": true, ".pytest_cache": true,
 	".mypy_cache": true, ".ruff_cache": true, "coverage": true,
 	".turbo": true, ".svelte-kit": true, "out": true,
+	"results": true, "reports": true,
 }
 
 // LOCStats holds line-of-code counts for a repository.
@@ -78,16 +79,18 @@ func countFile(path string, stats *LOCStats) error {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	// Allow long lines up to 1MiB.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+	// Use bufio.Reader.ReadString instead of bufio.Scanner to avoid
+	// any line-length limits (some generated XML/JSON files have 20MB+ lines).
+	reader := bufio.NewReader(f)
+	for {
+		line, err := reader.ReadString('\n')
+		if strings.TrimSpace(line) != "" {
+			stats.LOC++
 		}
-		stats.LOC++
+		if err != nil {
+			break // EOF or error
+		}
 	}
 	stats.FilesScanned++
-	return scanner.Err()
+	return nil
 }
