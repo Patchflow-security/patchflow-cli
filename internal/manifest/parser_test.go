@@ -99,14 +99,18 @@ func TestParsePackageJSON(t *testing.T) {
 		t.Fatalf("ParsePackageJSON failed: %v", err)
 	}
 
-	if len(deps) != 3 {
-		t.Fatalf("expected 3 deps, got %d", len(deps))
+	if len(deps) != 4 {
+		t.Fatalf("expected 4 deps (root + 3 deps), got %d", len(deps))
 	}
 
 	// Check express
 	foundExpress := false
 	foundJest := false
+	foundRoot := false
 	for _, dep := range deps {
+		if dep.Name == "test-pkg" && dep.Version == "1.0.0" && dep.IsRoot {
+			foundRoot = true
+		}
 		if dep.Name == "express" {
 			foundExpress = true
 			if dep.Version != "4.18.0" {
@@ -123,8 +127,8 @@ func TestParsePackageJSON(t *testing.T) {
 			}
 		}
 	}
-	if !foundExpress || !foundJest {
-		t.Errorf("missing deps: express=%v jest=%v", foundExpress, foundJest)
+	if !foundExpress || !foundJest || !foundRoot {
+		t.Errorf("missing deps: express=%v jest=%v root=%v", foundExpress, foundJest, foundRoot)
 	}
 }
 
@@ -193,13 +197,17 @@ criterion = "0.5"
 		t.Fatalf("ParseCargoToml failed: %v", err)
 	}
 
-	if len(deps) != 2 {
-		t.Fatalf("expected 2 deps (serde + criterion), got %d: %+v", len(deps), deps)
+	if len(deps) != 3 {
+		t.Fatalf("expected 3 deps (root + serde + criterion), got %d: %+v", len(deps), deps)
 	}
 
 	foundSerde := false
 	foundCriterion := false
+	foundRoot := false
 	for _, dep := range deps {
+		if dep.Name == "test" && dep.Version == "0.1.0" && dep.IsRoot {
+			foundRoot = true
+		}
 		if dep.Name == "serde" {
 			foundSerde = true
 			if dep.Version != "1.0" {
@@ -216,8 +224,8 @@ criterion = "0.5"
 			}
 		}
 	}
-	if !foundSerde || !foundCriterion {
-		t.Errorf("missing deps: serde=%v criterion=%v", foundSerde, foundCriterion)
+	if !foundSerde || !foundCriterion || !foundRoot {
+		t.Errorf("missing deps: serde=%v criterion=%v root=%v", foundSerde, foundCriterion, foundRoot)
 	}
 }
 

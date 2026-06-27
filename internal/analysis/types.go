@@ -113,6 +113,7 @@ type Dependency struct {
 	ManifestPath string   `json:"manifest_path"`
 	IsDirect    bool      `json:"is_direct"`
 	IsDev       bool      `json:"is_dev,omitempty"`
+	IsRoot      bool      `json:"is_root,omitempty"`
 	License     string    `json:"license,omitempty"`
 }
 

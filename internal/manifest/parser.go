@@ -258,6 +258,18 @@ func ParsePackageJSON(path string) ([]analysis.Dependency, error) {
 
 	var deps []analysis.Dependency
 
+	// Include the package itself so OSV can detect vulnerabilities in the
+	// root package (e.g. CVE-2024-29041 affects express itself, not its deps).
+	if pkg.Name != "" && pkg.Version != "" {
+		deps = append(deps, analysis.Dependency{
+			Name:      pkg.Name,
+			Version:   cleanNPMVersion(pkg.Version),
+			Ecosystem: analysis.EcosystemNPM,
+			IsDirect:  true,
+			IsRoot:    true,
+		})
+	}
+
 	for name, version := range pkg.Dependencies {
 		deps = append(deps, analysis.Dependency{
 			Name:      name,
@@ -360,9 +372,11 @@ func ParseRequirementsTxt(path string) ([]analysis.Dependency, error) {
 
 var tomlDependencyRe = regexp.MustCompile(`^"?([A-Za-z0-9_.-]+)"?\s*=\s*"?(.+?)"?\s*$`)
 var tomlArrayDepRe = regexp.MustCompile(`^"?([A-Za-z0-9_.-]+)"?\s*=\s*\[`)
+var tomlKeyValueRe = regexp.MustCompile(`^([A-Za-z0-9_.-]+)\s*=\s*"?(.+?)"?\s*$`)
 
 // ParsePyProjectToml parses a pyproject.toml file for [project.dependencies] and
-// [tool.poetry.dependencies] sections.
+// [tool.poetry.dependencies] sections. Also extracts the root package from
+// [project] name/version or [tool.poetry] name/version.
 func ParsePyProjectToml(path string) ([]analysis.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -374,6 +388,8 @@ func ParsePyProjectToml(path string) ([]analysis.Dependency, error) {
 
 	section := ""
 	inArray := false
+	rootName := ""
+	rootVersion := ""
 
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
@@ -386,6 +402,22 @@ func ParsePyProjectToml(path string) ([]analysis.Dependency, error) {
 			section = line
 			inArray = false
 			continue
+		}
+
+		// Extract root package name/version from [project] or [tool.poetry]
+		if section == "[project]" || section == "[tool.poetry]" {
+			if strings.HasPrefix(line, "name") {
+				m := tomlKeyValueRe.FindStringSubmatch(line)
+				if m != nil {
+					rootName = strings.Trim(m[2], `"'`)
+				}
+			}
+			if strings.HasPrefix(line, "version") {
+				m := tomlKeyValueRe.FindStringSubmatch(line)
+				if m != nil {
+					rootVersion = strings.Trim(m[2], `"'`)
+				}
+			}
 		}
 
 		isDepSection := strings.Contains(section, "dependencies") ||
@@ -446,6 +478,17 @@ func ParsePyProjectToml(path string) ([]analysis.Dependency, error) {
 		deps = append(deps, *dep)
 	}
 
+	// Add root package if we found name and version
+	if rootName != "" && rootVersion != "" {
+		deps = append(deps, analysis.Dependency{
+			Name:      strings.ToLower(rootName),
+			Version:   cleanPythonVersion(rootVersion),
+			Ecosystem: analysis.EcosystemPyPI,
+			IsDirect:  true,
+			IsRoot:    true,
+		})
+	}
+
 	return deps, nil
 }
 
@@ -454,9 +497,14 @@ func ParsePyProjectToml(path string) ([]analysis.Dependency, error) {
 // setupPyInstallRequiresRe matches install_requires = ["pkg>=1.0", ...]
 var setupPyInstallRequiresRe = regexp.MustCompile(`(?:install_requires|requires)\s*=\s*\[(.*?)\]`)
 var setupPySingleDepRe = regexp.MustCompile(`["']([^"']+)["']`)
+var setupPyNameRe = regexp.MustCompile(`setup\s*\([^)]*name\s*=\s*['"]([^'"]+)['"]`)
+var setupPyVersionRe = regexp.MustCompile(`setup\s*\([^)]*version\s*=\s*['"]([^'"]+)['"]`)
+var initVersionRe = regexp.MustCompile(`__version__\s*=\s*['"]([^'"]+)['"]`)
 
-// ParseSetupPy parses a setup.py file for install_requires.
+// ParseSetupPy parses a setup.py file for install_requires and the root package.
 // Since setup.py is Python code, we use regex to extract the install_requires list.
+// The root package name is extracted from setup(name=...). The version is extracted
+// from setup(version=...) or, if it's a variable, from __init__.py in the same dir.
 func ParseSetupPy(path string) ([]analysis.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -465,6 +513,33 @@ func ParseSetupPy(path string) ([]analysis.Dependency, error) {
 
 	src := string(data)
 	var deps []analysis.Dependency
+
+	// Extract root package name and version
+	if m := setupPyNameRe.FindStringSubmatch(src); m != nil {
+		pkgName := strings.ToLower(strings.TrimSpace(m[1]))
+		pkgVersion := ""
+
+		// Try to get version from setup(version='...')
+		if vm := setupPyVersionRe.FindStringSubmatch(src); vm != nil {
+			pkgVersion = vm[1]
+		}
+
+		// If version is not a literal, try __init__.py
+		if pkgVersion == "" {
+			dir := filepath.Dir(path)
+			pkgVersion = findVersionInInitFiles(dir, pkgName)
+		}
+
+		if pkgVersion != "" {
+			deps = append(deps, analysis.Dependency{
+				Name:      pkgName,
+				Version:   pkgVersion,
+				Ecosystem: analysis.EcosystemPyPI,
+				IsDirect:  true,
+				IsRoot:    true,
+			})
+		}
+	}
 
 	// Extract install_requires = [...] blocks
 	matches := setupPyInstallRequiresRe.FindAllStringSubmatch(src, -1)
@@ -494,6 +569,26 @@ func ParseSetupPy(path string) ([]analysis.Dependency, error) {
 	}
 
 	return deps, nil
+}
+
+// findVersionInInitFiles searches for __version__ = 'x.y.z' in __init__.py
+// files near the setup.py. It checks src/<pkg>/__init__.py and <pkg>/__init__.py.
+func findVersionInInitFiles(dir, pkgName string) string {
+	candidates := []string{
+		filepath.Join(dir, "src", pkgName, "__init__.py"),
+		filepath.Join(dir, pkgName, "__init__.py"),
+		filepath.Join(dir, "src", "__init__.py"),
+	}
+	for _, c := range candidates {
+		data, err := os.ReadFile(c)
+		if err != nil {
+			continue
+		}
+		if m := initVersionRe.FindStringSubmatch(string(data)); m != nil {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 // --- Python: setup.cfg ---
@@ -746,6 +841,7 @@ func cleanPythonVersion(v string) string {
 var cargoDepRe = regexp.MustCompile(`^([A-Za-z0-9_-]+)\s*=\s*"(.+?)"`)
 
 // ParseCargoToml parses a Cargo.toml file for [dependencies] and [dev-dependencies].
+// Also extracts the root package from [package] name/version.
 func ParseCargoToml(path string) ([]analysis.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -755,6 +851,8 @@ func ParseCargoToml(path string) ([]analysis.Dependency, error) {
 	var deps []analysis.Dependency
 	lines := strings.Split(string(data), "\n")
 	section := ""
+	rootName := ""
+	rootVersion := ""
 
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
@@ -764,6 +862,22 @@ func ParseCargoToml(path string) ([]analysis.Dependency, error) {
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section = line
 			continue
+		}
+
+		// Extract root package from [package] section
+		if section == "[package]" {
+			if strings.HasPrefix(line, "name") {
+				m := tomlKeyValueRe.FindStringSubmatch(line)
+				if m != nil {
+					rootName = strings.Trim(m[2], `"'`)
+				}
+			}
+			if strings.HasPrefix(line, "version") {
+				m := tomlKeyValueRe.FindStringSubmatch(line)
+				if m != nil {
+					rootVersion = strings.Trim(m[2], `"'`)
+				}
+			}
 		}
 
 		isDep := section == "[dependencies]" || section == "[dev-dependencies]"
@@ -786,6 +900,17 @@ func ParseCargoToml(path string) ([]analysis.Dependency, error) {
 			Ecosystem: analysis.EcosystemCargo,
 			IsDirect:  true,
 			IsDev:     section == "[dev-dependencies]",
+		})
+	}
+
+	// Add root package
+	if rootName != "" && rootVersion != "" {
+		deps = append(deps, analysis.Dependency{
+			Name:      rootName,
+			Version:   rootVersion,
+			Ecosystem: analysis.EcosystemCargo,
+			IsDirect:  true,
+			IsRoot:    true,
 		})
 	}
 
@@ -926,27 +1051,172 @@ func ParseComposerJSON(path string) ([]analysis.Dependency, error) {
 	return deps, nil
 }
 
-// --- Java: pom.xml (basic) ---
+// --- Java: pom.xml ---
 
 var pomDependencyRe = regexp.MustCompile(`<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>\s*(?:<version>([^<]+)</version>)?`)
+var pomPropertyRe = regexp.MustCompile(`<([a-zA-Z0-9_.-]+)>([^<]+)</([a-zA-Z0-9_.-]+)>`)
+var pomProjectVersionRe = regexp.MustCompile(`<project[^>]*>[\s\S]*?<version>([^<]+)</version>`)
+var pomPropertyRefRe = regexp.MustCompile(`\$\{([^}]+)\}`)
 
-// ParsePomXML parses a Maven pom.xml file for dependencies.
+// pomContext holds parsed properties and dependencyManagement from a pom.xml
+// for resolving property references and inherited versions.
+type pomContext struct {
+	properties      map[string]string
+	managedVersions map[string]string // groupId:artifactId -> version
+	projectVersion  string
+}
+
+// parsePomProperties extracts <properties> from a pom.xml.
+// Finds the project-level <properties> block (indented with 2 spaces, not
+// inside a <developer> or <contributor> subsection).
+func parsePomProperties(src string) map[string]string {
+	props := make(map[string]string)
+	// Find all <properties> blocks and pick the one with the most entries
+	// (the project-level properties block typically has 20+ entries, while
+	// developer/contributor properties have 1-2).
+	var bestBlock string
+	var bestCount int
+	remaining := src
+	for {
+		idx := strings.Index(remaining, "<properties>")
+		if idx < 0 {
+			break
+		}
+		end := strings.Index(remaining[idx:], "</properties>")
+		if end < 0 {
+			break
+		}
+		block := remaining[idx : idx+end]
+		matches := pomPropertyRe.FindAllStringSubmatch(block, -1)
+		count := 0
+		for _, m := range matches {
+			if m[1] == m[3] {
+				count++
+			}
+		}
+		if count > bestCount {
+			bestCount = count
+			bestBlock = block
+		}
+		remaining = remaining[idx+end:]
+	}
+	if bestBlock == "" {
+		return props
+	}
+	matches := pomPropertyRe.FindAllStringSubmatch(bestBlock, -1)
+	for _, m := range matches {
+		if m[1] == m[3] {
+			props[m[1]] = m[2]
+		}
+	}
+	return props
+}
+
+// parsePomProjectVersion extracts the project's own version.
+func parsePomProjectVersion(src string) string {
+	m := pomProjectVersionRe.FindStringSubmatch(src)
+	if m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// parsePomDependencyManagement extracts managed versions from
+// <dependencyManagement><dependencies> sections.
+func parsePomDependencyManagement(src string) map[string]string {
+	managed := make(map[string]string)
+	idx := strings.Index(src, "<dependencyManagement>")
+	if idx < 0 {
+		return managed
+	}
+	end := strings.Index(src[idx:], "</dependencyManagement>")
+	if end < 0 {
+		return managed
+	}
+	block := src[idx : idx+end]
+	matches := pomDependencyRe.FindAllStringSubmatch(block, -1)
+	for _, m := range matches {
+		groupID := m[1]
+		artifactID := m[2]
+		version := m[3]
+		if version != "" {
+			managed[groupID+":"+artifactID] = version
+		}
+	}
+	return managed
+}
+
+// resolveProperty resolves a ${propertyName} reference against the pom context.
+// Supports ${project.version}, ${project.parent.version}, and custom properties.
+// Handles nested references and unknown refs (returns as-is).
+func (ctx *pomContext) resolveProperty(value string) string {
+	if !strings.Contains(value, "${") {
+		return value
+	}
+	result := pomPropertyRefRe.ReplaceAllStringFunc(value, func(ref string) string {
+		name := ref[2 : len(ref)-1]
+		switch name {
+		case "project.version":
+			return ctx.projectVersion
+		case "project.parent.version":
+			return ctx.projectVersion
+		}
+		if val, ok := ctx.properties[name]; ok {
+			return ctx.resolveProperty(val)
+		}
+		return ref
+	})
+	return result
+}
+
+// ParsePomXML parses a Maven pom.xml file for dependencies with property interpolation.
+// It extracts <properties>, <dependencyManagement>, and the project version,
+// then resolves ${...} references in dependency versions.
 func ParsePomXML(path string) ([]analysis.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	src := string(data)
+
+	ctx := &pomContext{
+		properties:      parsePomProperties(src),
+		managedVersions: parsePomDependencyManagement(src),
+		projectVersion:  parsePomProjectVersion(src),
+	}
 
 	var deps []analysis.Dependency
-	matches := pomDependencyRe.FindAllStringSubmatch(string(data), -1)
+	seen := make(map[string]bool)
+	matches := pomDependencyRe.FindAllStringSubmatch(src, -1)
 	for _, m := range matches {
 		groupID := m[1]
 		artifactID := m[2]
 		version := m[3]
+
+		// If no version in the dependency, try dependencyManagement
+		if version == "" {
+			if v, ok := ctx.managedVersions[groupID+":"+artifactID]; ok {
+				version = v
+			}
+		}
+
+		// Resolve property references
+		version = ctx.resolveProperty(version)
+
+		// Skip if version is still empty or contains unresolved ${...}
 		if version == "" {
 			version = "unknown"
 		}
-		// Skip test-scope detection is basic; we mark all as direct
+		if strings.Contains(version, "${") {
+			version = "unknown"
+		}
+
+		key := groupID + ":" + artifactID + ":" + version
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
 		deps = append(deps, analysis.Dependency{
 			Name:      groupID + ":" + artifactID,
 			Version:   version,
