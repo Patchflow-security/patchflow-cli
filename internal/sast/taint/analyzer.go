@@ -133,9 +133,8 @@ func (a *Analyzer) registerDefaults() {
 		{"*net/http.Request.PathValue", "HTTP path parameter"},
 		// URL.Query() returns tainted values
 		{"*net/url.URL.Query", "URL query parameters"},
-		// Environment and CLI
-		{"os.Getenv", "environment variable"},
-		{"os.LookupEnv", "environment variable"},
+		// CLI arguments — operator-controlled, but still untrusted in
+		// server contexts. Kept for command injection detection.
 		{"os.Args", "command-line arguments"},
 		{"flag.Arg", "command-line flag"},
 		{"flag.Args", "command-line arguments"},
@@ -772,9 +771,45 @@ func (a *Analyzer) isExportedParam(fn *ssa.Function, param *ssa.Parameter) bool 
 	if name == "" || !ast.IsExported(name) {
 		return false
 	}
-	// Check if the function takes an *http.Request parameter — if so,
-	// parameters derived from the request are tainted
-	return true // conservative: treat all exported function params as potentially tainted
+
+	// Heuristic: only treat exported function parameters as tainted if
+	// the package could plausibly receive external input. Packages in
+	// doc/internal/cmd/script directories are CLI utilities or code
+	// generators — their exported functions are called internally, not
+	// from HTTP handlers.
+	if fn.Pkg != nil && fn.Pkg.Pkg != nil {
+		pkgPath := fn.Pkg.Pkg.Path()
+		// Skip packages in documentation, CLI, and internal directories.
+		for _, segment := range strings.Split(pkgPath, "/") {
+			switch segment {
+			case "doc", "docs", "internal", "cmd", "script", "scripts",
+				"test", "tests", "example", "examples":
+				return false
+			}
+		}
+		// Only treat params as tainted if the package imports net/http,
+		// indicating it could contain HTTP handlers. This eliminates FPs
+		// in CLI tool libraries (cobra, urfave/cli, etc.) where exported
+		// functions take path/string parameters for internal file ops.
+		if !importsHTTP(fn.Pkg.Pkg) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// importsHTTP returns true if the given package imports "net/http".
+func importsHTTP(pkg *types.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	for _, imp := range pkg.Imports() {
+		if imp.Path() == "net/http" {
+			return true
+		}
+	}
+	return false
 }
 
 // makeFinding creates a normalized finding from a taint flow.

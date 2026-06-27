@@ -490,11 +490,6 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		}
 	}
 
-	// Deduplicate cross-scanner findings: when two scanners detect the same
-	// issue at the same file+line, keep only the one with higher confidence
-	// (preferring AST-confirmed tree-sitter findings over regex patterns).
-	result.Findings = dedupFindings(result.Findings)
-
 	// --- Phase 2: External tools (supplement embedded scanners) ---
 
 	for _, tool := range r.Tools {
@@ -521,15 +516,31 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			findings = filterFindingsToNonTests(findings)
 		}
 
+		// Drop external gosec findings for rule IDs that the embedded
+		// gosast scanner already implements. The embedded scanner has
+		// better precision (value-based checks, mock-file detection, etc.)
+		// so its suppressions should be respected — if the embedded scanner
+		// suppresses a finding, the external gosec finding for the same
+		// rule at the same location should also be dropped.
+		if tool.Name == "gosec" {
+			findings = filterGosecOverlaps(findings)
+		}
+
 		result.Findings = append(result.Findings, findings...)
 		result.ToolsRun = append(result.ToolsRun, tool.Name)
+	}
 
 	// --- Phase 2b: Apply severity overrides for external tool findings ---
 	// External tools (gosec, bandit) may report high severity for rules we
 	// intentionally demoted in our embedded scanners. Apply our severity
 	// policy to their findings to keep noise consistent.
 	result.Findings = applySeverityFindings(result.Findings)
-	}
+
+	// --- Phase 2c: Deduplicate cross-scanner findings ---
+	// Run AFTER external tools are merged so that embedded and external
+	// findings on the same file+line+rule are deduplicated (preferring
+	// the embedded scanner's finding via the priority map).
+	result.Findings = dedupFindings(result.Findings)
 
 	// --- Phase 3: Apply suppression directives (//patchflow:ignore) ---
 	if !r.ShowSuppressed {
@@ -641,6 +652,60 @@ func normalizeRuleID(ruleID string) string {
 		return ruleID[3:]
 	}
 	return ruleID
+}
+
+// embeddedGosastRules is the set of rule IDs implemented by the embedded
+// gosast scanner. External gosec findings for these rules are dropped
+// because the embedded scanner has better precision (value-based checks,
+// mock-file detection, severity tuning) and already covers them.
+var embeddedGosastRules = map[string]bool{
+	"G101": true, // hardcoded credentials (value-based suppression)
+	"G102": true, // bind to all interfaces
+	"G103": true, // unsafe calls
+	"G106": true, // SSH insecure host key
+	"G107": true, // SSRF
+	"G108": true, // pprof exposure
+	"G114": true, // HTTP server without timeouts
+	"G115": true, // integer overflow
+	"G116": true, // implicit aliasing
+	"G201": true, // SQL format string
+	"G202": true, // SQL concatenation
+	"G203": true, // unescaped HTML template
+	"G204": true, // subprocess with variable
+	"G301": true, // bad file permissions
+	"G302": true, // bad file permissions (chmod)
+	"G303": true, // predictable tempfile
+	"G304": true, // file path as taint input
+	"G305": true, // zip path traversal
+	"G306": true, // weak file permissions on write
+	"G401": true, // weak crypto
+	"G402": true, // TLS InsecureSkipVerify
+	"G404": true, // weak random (severity-tuned)
+	"G405": true, // weak crypto (blocklist)
+	"G501": true, // blocklisted import
+	// Taint analysis rules — covered by the embedded SSA taint analyzer
+	// with smarter source filtering (os.Getenv removal, HTTP import check).
+	"G701": true, // SQL injection
+	"G702": true, // command injection
+	"G703": true, // path traversal
+	"G704": true, // SSRF
+	"G705": true, // open redirect
+	"G706": true, // log injection
+	"G708": true, // SSTI
+}
+
+// filterGosecOverlaps drops external gosec findings for rule IDs that the
+// embedded gosast scanner already handles. This prevents FPs that the
+// embedded scanner suppressed from reappearing via the external tool.
+func filterGosecOverlaps(findings []analysis.Finding) []analysis.Finding {
+	var filtered []analysis.Finding
+	for _, f := range findings {
+		if embeddedGosastRules[f.RuleID] {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
 }
 
 // severityOverrides maps rule IDs to the severity that PatchFlow assigns

@@ -21,8 +21,10 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // --- Base rule types ---
@@ -418,7 +420,7 @@ func newWeakCryptoEncryption() Rule {
 // --- G404: Insecure random number source ---
 
 func newWeakRand() Rule {
-	r := newCallListRule("G404", "Use of weak random number generator (math/rand instead of crypto/rand)", SeverityHigh, ConfidenceMedium)
+	r := newCallListRule("G404", "Use of weak random number generator (math/rand instead of crypto/rand)", SeverityMedium, ConfidenceMedium)
 	r.AddAll("math/rand", "New", "Read", "Float32", "Float64", "Int", "Int31", "Int31n",
 		"Int63", "Int63n", "Intn", "NormFloat64", "Uint32", "Uint64")
 	r.AddAll("math/rand/v2", "New", "Float32", "Float64", "Int", "Int32", "Int32N",
@@ -528,6 +530,9 @@ func (r *hardcodedCredentialsRule) Match(n ast.Node, ctx *Context) (*Finding, er
 				if credentialPattern.MatchString(ident.Name) {
 					for _, rhs := range node.Rhs {
 						if val, err := GetString(rhs); err == nil && val != "" && len(val) > 3 {
+							if isConfigKeyValue(val) || isMockContext(ctx) {
+								continue
+							}
 							return makeFinding(r.id, fmt.Sprintf("%s: hardcoded credential in variable '%s'", r.what, ident.Name), r.sev, r.conf, n, ctx), nil
 						}
 					}
@@ -539,6 +544,9 @@ func (r *hardcodedCredentialsRule) Match(n ast.Node, ctx *Context) (*Finding, er
 			if credentialPattern.MatchString(ident.Name) {
 				for _, val := range node.Values {
 					if str, err := GetString(val); err == nil && str != "" && len(str) > 3 {
+						if isConfigKeyValue(str) || isMockContext(ctx) {
+							continue
+						}
 						return makeFinding(r.id, fmt.Sprintf("%s: hardcoded credential in variable '%s'", r.what, ident.Name), r.sev, r.conf, n, ctx), nil
 					}
 				}
@@ -546,6 +554,44 @@ func (r *hardcodedCredentialsRule) Match(n ast.Node, ctx *Context) (*Finding, er
 		}
 	}
 	return nil, nil
+}
+
+// configKeyRe matches strings that look like configuration key names rather
+// than real secrets: purely lowercase letters, underscores, dashes, and
+// spaces, with no digits and no dots.
+var configKeyRe = regexp.MustCompile(`^[a-z_][a-z_\- ]*$`)
+
+// isConfigKeyValue returns true if the string value looks like a config key
+// name (e.g., "oauth_token", "x-access-token") rather than a real secret.
+// This suppresses FPs where a variable named "tokenKey" is assigned the
+// string "oauth_token" — the value is a key name, not a credential.
+func isConfigKeyValue(val string) bool {
+	if len(val) < 4 || len(val) > 40 {
+		return false
+	}
+	// Contains digits → likely a real secret (hex, API key, etc.)
+	if strings.ContainsAny(val, "0123456789") {
+		return false
+	}
+	// Contains dots → likely a filename or URL, not a config key.
+	if strings.Contains(val, ".") {
+		return false
+	}
+	return configKeyRe.MatchString(val)
+}
+
+// isMockContext returns true if the file being analyzed is a mock or test
+// fixture file (e.g., tunnels_api_server_mock.go).
+func isMockContext(ctx *Context) bool {
+	if ctx == nil || ctx.Root == nil || ctx.FileSet == nil {
+		return false
+	}
+	pos := ctx.FileSet.Position(ctx.Root.Pos())
+	if !pos.IsValid() {
+		return false
+	}
+	name := filepath.Base(pos.Filename)
+	return strings.Contains(name, "mock") || strings.Contains(name, "fake") || strings.Contains(name, "stub")
 }
 
 func newHardcodedCredentials() Rule {
