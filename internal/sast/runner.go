@@ -83,6 +83,11 @@ type Runner struct {
 	// Go SAST and taint analysis always run fully (they use go/packages).
 	IncrementalScan bool
 
+	// GitChangedFiles is the list of files changed according to git diff.
+	// When set, the incremental scanner uses this as a pre-filter instead of
+	// walking the entire tree. This gives the fastest incremental scans.
+	GitChangedFiles []string
+
 	// RespectGitignore controls whether .gitignore patterns are loaded and
 	// used to skip files during scanning. When true, a .gitignore matcher is
 	// initialized on first use and shared across all embedded scanners.
@@ -368,8 +373,27 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// Go SAST (1) + Taint SSA (1) + up to 4 parallel scanners + errors
 	resultCh := make(chan scannerResult, 16)
 
+	// Build the git changed file set early — used for Go SAST skip logic
+	// and for the file-based scanner pre-filter.
+	gitChangedSet := map[string]bool{}
+	for _, f := range r.GitChangedFiles {
+		gitChangedSet[filepath.Join(root, f)] = true
+	}
+
 	// 1a. Embedded Go SAST (gosec rules ported to library)
-	if !r.NoEmbeddedGo {
+	// In changed-only mode, skip Go SAST if no .go files changed — it
+	// always loads the full module graph via go/packages, so running it
+	// when only non-Go files changed is pure waste.
+	goFilesChanged := false
+	for p := range gitChangedSet {
+		if strings.HasSuffix(p, ".go") {
+			goFilesChanged = true
+			break
+		}
+	}
+	skipGoSAST := r.NoEmbeddedGo || (r.ChangedOnly && len(gitChangedSet) > 0 && !goFilesChanged)
+
+	if !skipGoSAST {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -381,7 +405,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	}
 
 	// 1b. Embedded SSA-based taint analysis (Go only)
-	if !r.NoEmbeddedTaint && !r.NoEmbeddedGo {
+	if !r.NoEmbeddedTaint && !skipGoSAST {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -407,6 +431,12 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		incState = incremental.LoadState(root)
 	}
 
+	// Build the set of files to scan. Three modes:
+	// 1. GitChangedFiles pre-filter (fastest): only scan files from git diff.
+	// 2. Incremental hash-based: walk tree, hash-check each file.
+	// 3. Full scan: walk tree, scan everything.
+	// (gitChangedSet was built above before the Go SAST section.)
+
 	if scanPatterns || scanSecrets || scanTreeSitter {
 		wg.Add(1)
 		go func() {
@@ -418,7 +448,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 				scanCtx, root, ignoreMatcher,
 				r.patternScanner, r.secretScanner, r.treesitterAnalyzer, r.taintPatternAnalyzer,
 				scanPatterns, scanSecrets, scanTreeSitter, scanTaintPatterns,
-				r.IncludeTests, r.Timeout, incState,
+				r.IncludeTests, r.Timeout, incState, gitChangedSet,
 			)
 
 			for _, e := range errors {

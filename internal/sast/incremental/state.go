@@ -30,14 +30,23 @@ var skipDirs = map[string]bool{
 // stateFile is the on-disk JSON representation of State.
 type stateFile struct {
 	Files     map[string]string `json:"files"`
+	Meta      map[string]fileMeta `json:"meta,omitempty"`
 	UpdatedAt string            `json:"updated_at"`
+}
+
+// fileMeta stores size and mod-time for a fast-path check that avoids
+// hashing when both are unchanged.
+type fileMeta struct {
+	Size  int64  `json:"size"`
+	Mtime int64  `json:"mtime"` // Unix nanoseconds
 }
 
 // State records SHA256 hashes for files between scans. The zero value is a
 // valid empty state in which every file is considered changed.
 type State struct {
 	root   string
-	files  map[string]string // relative path -> hex sha256
+	files  map[string]string    // relative path -> hex sha256
+	meta   map[string]fileMeta  // relative path -> size+mtime (fast-path)
 }
 
 // statePath returns the absolute path to the persisted state file for rootDir.
@@ -49,7 +58,7 @@ func statePath(rootDir string) string {
 // missing or corrupted, an empty State is returned so that the first run (or
 // a run after corruption) treats every file as changed.
 func LoadState(rootDir string) *State {
-	s := &State{root: rootDir, files: map[string]string{}}
+	s := &State{root: rootDir, files: map[string]string{}, meta: map[string]fileMeta{}}
 
 	data, err := os.ReadFile(statePath(rootDir))
 	if err != nil {
@@ -65,7 +74,11 @@ func LoadState(rootDir string) *State {
 	if sf.Files == nil {
 		sf.Files = map[string]string{}
 	}
+	if sf.Meta == nil {
+		sf.Meta = map[string]fileMeta{}
+	}
 	s.files = sf.Files
+	s.meta = sf.Meta
 	return s
 }
 
@@ -79,6 +92,7 @@ func (s *State) SaveState(rootDir string) error {
 
 	sf := stateFile{
 		Files:     s.files,
+		Meta:      s.meta,
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.MarshalIndent(sf, "", "  ")
@@ -107,8 +121,8 @@ func hashFile(path string) (string, error) {
 }
 
 // HasChanged returns true if the file at path is new or its recorded hash
-// differs from the current content. The os.FileInfo is used to short-circuit
-// unchanged files by size before hashing when no prior hash exists.
+// differs from the current content. Uses a mtime+size fast-path to avoid
+// hashing files that haven't been modified.
 func (s *State) HasChanged(path string, info os.FileInfo) bool {
 	rel, err := filepath.Rel(s.root, path)
 	if err != nil {
@@ -117,11 +131,23 @@ func (s *State) HasChanged(path string, info os.FileInfo) bool {
 	rel = filepath.ToSlash(rel)
 
 	if info.Size() > maxFileSize {
-		// Large files are skipped by scanners; treat as unchanged so they
-		// don't force re-scans, but they won't be in the changed set either.
 		return false
 	}
 
+	// Fast path: if size and mtime match the recorded values, the file is
+	// unchanged. This avoids the expensive SHA256 hash for the vast majority
+	// of files on incremental runs.
+	if prev, ok := s.meta[rel]; ok {
+		if prev.Size == info.Size() && prev.Mtime == info.ModTime().UnixNano() {
+			// File is unchanged by mtime+size — still need to check if we
+			// have a hash for it. If we do, it's definitely unchanged.
+			if _, hasHash := s.files[rel]; hasHash {
+				return false
+			}
+		}
+	}
+
+	// Slow path: hash the file to determine if content changed.
 	hash, err := hashFile(path)
 	if err != nil {
 		return true
@@ -144,8 +170,8 @@ func (s *State) UpdateHash(path, hash string) {
 	s.files[rel] = hash
 }
 
-// UpdateHashFromInfo computes the SHA256 hash of the file and records it.
-// This is used after scanning to update the incremental state.
+// UpdateHashFromInfo computes the SHA256 hash of the file and records it
+// along with its size and mtime for fast-path checking on the next run.
 func (s *State) UpdateHashFromInfo(path string, info os.FileInfo) {
 	if info.Size() > maxFileSize {
 		return
@@ -155,6 +181,17 @@ func (s *State) UpdateHashFromInfo(path string, info os.FileInfo) {
 		return
 	}
 	s.UpdateHash(path, hash)
+
+	// Record meta for fast-path on next run.
+	rel, err := filepath.Rel(s.root, path)
+	if err != nil {
+		return
+	}
+	rel = filepath.ToSlash(rel)
+	s.meta[rel] = fileMeta{
+		Size:  info.Size(),
+		Mtime: info.ModTime().UnixNano(),
+	}
 }
 
 // shouldSkip reports whether a directory or file should be skipped during

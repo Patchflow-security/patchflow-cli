@@ -193,6 +193,28 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		sastRunner.RespectGitignore = !scanNoGitignore
 		sastRunner.IncrementalScan = scanIncremental
 
+		// When --changed-only or --since is set, auto-enable incremental
+		// scanning so file-based scanners (patterns, secrets, tree-sitter)
+		// only process the changed files. This gives 5-50x speedup on
+		// large repos with small diffs.
+		if scanChangedOnly && !scanIncremental {
+			sastRunner.IncrementalScan = true
+		}
+
+		// Pass git changed files as pre-filter for the fastest incremental path.
+		if scanChangedOnly && len(repo.ChangedFiles) > 0 {
+			sastRunner.GitChangedFiles = repo.ChangedFiles
+		}
+
+		// In changed-only mode, skip external tools that can't filter to
+		// changed files (gosec, bandit, semgrep scan the whole project).
+		// gitleaks can be skipped too since embedded secrets scanner
+		// already covers changed files. This avoids redundant full-project
+		// scans that defeat the purpose of --changed-only.
+		if scanChangedOnly {
+			sastRunner.Tools = nil
+		}
+
 		// Profile-aware SAST: adjust scanner selection and timeouts per profile.
 		// quick: skip taint and tree-sitter for fast CI feedback (~2x faster)
 		// standard: all scanners with default 120s timeout

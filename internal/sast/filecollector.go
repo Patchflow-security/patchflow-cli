@@ -292,6 +292,7 @@ func runParallelScanners(
 	includeTests bool,
 	timeout time.Duration,
 	incrementalState *incremental.State,
+	gitChangedSet map[string]bool,
 ) (map[string][]analysis.Finding, []string) {
 	// Phase 1: Single-pass file collection
 	cf, err := collectFiles(root, ignoreMatcher, 2*1024*1024, includeTests, tsAnalyzer) // 2MB max
@@ -299,15 +300,24 @@ func runParallelScanners(
 		return nil, []string{"file-collector: " + err.Error()}
 	}
 
-	// If incremental scanning is enabled, filter to only changed files
-	if incrementalState != nil {
+	// Filter to changed files. Two strategies:
+	// a) GitChangedFiles pre-filter (fastest): skip the hash check entirely
+	//    and only scan files that git says changed.
+	// b) Incremental hash-based: use mtime+size fast-path, fall back to SHA256.
+	if len(gitChangedSet) > 0 {
 		var filtered []fileTask
 		for _, task := range cf.tasks {
-			relPath, _ := filepath.Rel(root, task.path)
+			if gitChangedSet[task.path] {
+				filtered = append(filtered, task)
+			}
+		}
+		cf.tasks = filtered
+		cf.total = len(filtered)
+	} else if incrementalState != nil {
+		var filtered []fileTask
+		for _, task := range cf.tasks {
 			if incrementalState.HasChanged(task.path, task.info) {
 				filtered = append(filtered, task)
-			} else {
-				_ = relPath // unchanged file — skip
 			}
 		}
 		cf.tasks = filtered
