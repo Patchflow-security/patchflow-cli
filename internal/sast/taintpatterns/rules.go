@@ -26,7 +26,6 @@ func builtInRules() []Rule {
 				{FuncName: "request.json", IsSubscript: true},
 				{FuncName: "input"},
 				{FuncName: "sys.argv", IsSubscript: true},
-				{FuncName: "os.environ", IsSubscript: true},
 			},
 			Sinks: []SinkPattern{
 				{FuncName: "execute", ArgIndex: 0},

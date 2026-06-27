@@ -127,12 +127,23 @@ func (r *Runner) runRepo(ctx context.Context, spec RepoSpec, resultsDir string) 
 
 	// Convert to absolute paths because patchflow runs with cmd.Dir = repoPath,
 	// so relative paths would resolve against the clone dir, not the CWD.
+	// However, patchflow validates that --output stays within the project dir.
+	// So we write to a temp dir inside the repo, then copy to results after.
 	sarifPath, _ := filepath.Abs(filepath.Join(resultsDir, "sarif", spec.Name+".sarif"))
 	jsonPath, _ := filepath.Abs(filepath.Join(resultsDir, "raw", spec.Name+".json"))
 	mdPath, _ := filepath.Abs(filepath.Join(resultsDir, "markdown", spec.Name+".md"))
 
+	// Temp output paths inside the repo (will be copied to final locations after scan).
+	// Must be absolute because patchflow runs with cmd.Dir = repoPath.
+	absRepo, _ := filepath.Abs(repoPath)
+	tmpDir := filepath.Join(absRepo, ".patchflow", "bench-out")
+	_ = os.MkdirAll(tmpDir, 0755)
+	tmpSarif := filepath.Join(tmpDir, "out.sarif")
+	tmpJSON := filepath.Join(tmpDir, "out.json")
+	tmpMD := filepath.Join(tmpDir, "out.md")
+
 	// Cold run: clear the patchflow cache so OSV/SAST caches start empty.
-	coldOut, coldDur, coldExit, coldMem, scanErr := r.runPatchFlow(ctx, repoPath, sarifPath, jsonPath, mdPath, true)
+	coldOut, coldDur, coldExit, coldMem, scanErr := r.runPatchFlow(ctx, repoPath, tmpSarif, tmpJSON, tmpMD, true)
 	if scanErr != nil {
 		// Record the error but still produce a result with 0 findings so the
 		// repo appears in the report with its error noted. This handles cases
@@ -155,6 +166,12 @@ func (r *Runner) runRepo(ctx context.Context, spec RepoSpec, resultsDir string) 
 	}
 
 	m := buildMetrics(spec, coldOut, loc, coldDur, warmDur, coldExit, coldMem)
+
+	// Copy temp output files to their final destinations in the results dir.
+	copyFileIfExists(tmpSarif, sarifPath)
+	copyFileIfExists(tmpJSON, jsonPath)
+	copyFileIfExists(tmpMD, mdPath)
+	_ = os.RemoveAll(tmpDir)
 
 	// SARIF validation.
 	if _, statErr := os.Stat(sarifPath); statErr == nil {
@@ -247,7 +264,7 @@ func (r *Runner) runPatchFlow(ctx context.Context, repoPath, sarifPath, jsonPath
 
 	// Persist the raw JSON output for archival/audit.
 	if jsonPath != "" && len(out) > 0 {
-		_ = os.WriteFile(jsonPath, out, 0644)
+		_ = os.WriteFile(jsonPath, out, 0600)
 	}
 	// Persist a markdown report via a second lightweight invocation only when a
 	// path is requested AND we did not already produce one. The scan run command
@@ -461,6 +478,16 @@ func truncate(b []byte, n int) string {
 	return string(b[:n]) + "..."
 }
 
+// copyFileIfExists copies src to dst if src exists. Silent no-op if src is missing.
+func copyFileIfExists(src, dst string) {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(dst), 0755)
+	_ = os.WriteFile(dst, data, 0644)
+}
+
 func copyAutoMarkdown(repoPath, dest string) error {
 	src := filepath.Join(repoPath, ".patchflow", "reports")
 	entries, err := os.ReadDir(src)
@@ -490,5 +517,5 @@ func copyAutoMarkdown(repoPath, dest string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dest, data, 0644)
+	return os.WriteFile(dest, data, 0600)
 }

@@ -1825,6 +1825,8 @@ func matchCryptoHash(hashName string) func(*gotreesitter.Node, *gotreesitter.Bou
 }
 
 // matchPropertyAssignment detects assignment to a property (e.g., el.innerHTML = ...).
+// It suppresses findings where the RHS is an empty string literal (e.g.,
+// el.innerHTML = '' is clearing content, not injecting untrusted data).
 func matchPropertyAssignment(propName string) func(*gotreesitter.Node, *gotreesitter.BoundTree, string) bool {
 	return func(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string) bool {
 		if !isJSFamily(lang) {
@@ -1842,7 +1844,20 @@ func matchPropertyAssignment(propName string) func(*gotreesitter.Node, *gotreesi
 		if propNode == nil {
 			return false
 		}
-		return nodeText(propNode, bt) == propName
+		if nodeText(propNode, bt) != propName {
+			return false
+		}
+		// Suppress if RHS is an empty string literal — clearing, not injection.
+		// e.g., box.innerHTML = '' is not XSS.
+		rightNode := childByField(node, bt, "right")
+		if rightNode != nil {
+			rhsType := nodeType(rightNode, bt)
+			rhsText := strings.TrimSpace(nodeText(rightNode, bt))
+			if rhsType == "string" && (rhsText == "''" || rhsText == `""` || rhsText == "``") {
+				return false
+			}
+		}
+		return true
 	}
 }
 

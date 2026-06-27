@@ -25,6 +25,7 @@ type ComparisonTool interface {
 func allTools() map[string]ComparisonTool {
 	tools := []ComparisonTool{
 		&semgrepTool{},
+		&banditTool{},
 		&trivyTool{},
 		&gitleaksTool{},
 		&osvScannerTool{},
@@ -76,7 +77,12 @@ func (s *semgrepTool) Available() bool { _, err := exec.LookPath("semgrep"); ret
 
 func (s *semgrepTool) Run(ctx context.Context, repoPath, outDir string) (ToolResult, error) {
 	outFile := filepath.Join(outDir, "semgrep-"+filepath.Base(repoPath)+".json")
-	args := []string{"--json", "--quiet", "--config", "auto", "--output", outFile, repoPath}
+	// --config auto requires --metrics=on; use curated packs as a fallback
+	// that doesn't phone home, matching what a security-conscious user would run.
+	args := []string{"scan", "--json", "--quiet", "--metrics=on",
+		"--config", "p/default", "--config", "p/security-audit",
+		"--config", "p/secrets", "--config", "p/owasp-top-ten",
+		"--output", outFile, repoPath}
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "semgrep", args...)
 	var stderr strings.Builder
@@ -93,6 +99,46 @@ func (s *semgrepTool) Run(ctx context.Context, repoPath, outDir string) (ToolRes
 }
 
 func countSemgrepResults(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var rep struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if json.Unmarshal(data, &rep) != nil {
+		return 0
+	}
+	return len(rep.Results)
+}
+
+// --- Bandit ---
+
+type banditTool struct{}
+
+func (b *banditTool) Name() string    { return "bandit" }
+func (b *banditTool) Available() bool { _, err := exec.LookPath("bandit"); return err == nil }
+
+func (b *banditTool) Run(ctx context.Context, repoPath, outDir string) (ToolResult, error) {
+	outFile := filepath.Join(outDir, "bandit-"+filepath.Base(repoPath)+".json")
+	args := []string{"-r", repoPath, "-f", "json", "--exit-zero", "--quiet", "-o", outFile}
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, "bandit", args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	dur := time.Since(start)
+	exit := exitCodeFromErr(runErr)
+	if runErr != nil && exit != 0 {
+		// Bandit returns non-zero on findings by default, but --exit-zero suppresses that.
+		// A non-zero here is a real error.
+		return ToolResult{Tool: "bandit", Duration: dur, ExitCode: exit, Error: fmt.Sprintf("%s: %s", runErr, stderr.String())}, runErr
+	}
+	count := countBanditResults(outFile)
+	return ToolResult{Tool: "bandit", Findings: count, Duration: dur, ExitCode: exit, OutputPath: outFile, Available: true}, nil
+}
+
+func countBanditResults(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0

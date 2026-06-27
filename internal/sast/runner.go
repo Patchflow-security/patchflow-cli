@@ -598,7 +598,7 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 		// same line are both kept. Also normalize equivalent rule IDs across
 		// scanners (e.g., a tree-sitter rule and pattern rule detecting the
 		// same issue may have different IDs — match on title as a fallback).
-		ruleKey := f.RuleID
+		ruleKey := normalizeRuleID(f.RuleID)
 		if ruleKey == "" {
 			ruleKey = f.Title
 		}
@@ -628,6 +628,19 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 		result = append(result, best[k])
 	}
 	return result
+}
+
+// normalizeRuleID maps equivalent rule IDs from different scanners to a
+// canonical form so that dedupFindings merges them. For example, the regex
+// scanner's "PY005" and the tree-sitter scanner's "TS-PY005" both detect
+// pickle.loads() — they should be deduplicated, not reported twice.
+func normalizeRuleID(ruleID string) string {
+	// Strip "TS-" prefix from tree-sitter rule IDs to match their regex
+	// equivalents (TS-PY005 → PY005, TS-JS009 → JS009, etc.)
+	if strings.HasPrefix(ruleID, "TS-") {
+		return ruleID[3:]
+	}
+	return ruleID
 }
 
 // severityOverrides maps rule IDs to the severity that PatchFlow assigns

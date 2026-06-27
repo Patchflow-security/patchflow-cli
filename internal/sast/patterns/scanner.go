@@ -59,6 +59,11 @@ type PatternRule struct {
 	// true for injection rules that specifically detect patterns inside string
 	// literals (e.g., SQL injection via "$var" interpolation in PHP).
 	SkipQuoteFilter bool
+	// SuppressFunc, if non-nil, is called after a pattern match. If it returns
+	// true, the finding is suppressed (not reported). This allows post-match
+	// validation that requires inspecting the full line content beyond what
+	// the regex alone can express.
+	SuppressFunc func(line string) bool
 }
 
 // IgnoreMatcher is the interface implemented by the gitignore matcher.
@@ -131,7 +136,7 @@ func (s *Scanner) registerRules() {
 		{ID: "PY003", Title: "Use of os.system()", Description: "os.system() is vulnerable to command injection. Use subprocess with shell=False instead.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bos\.system\s*\(`)},
 		{ID: "PY004", Title: "subprocess with shell=True", Description: "subprocess with shell=True is vulnerable to command injection. Use shell=False and pass args as a list.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)shell\s*=\s*True`)},
 		{ID: "PY005", Title: "Use of pickle.loads()", Description: "pickle.loads() can execute arbitrary code during deserialization. Avoid unpickling untrusted data.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bpickle\.loads?\s*\(`)},
-		{ID: "PY006", Title: "Use of yaml.load() without SafeLoader", Description: "yaml.load() without SafeLoader can execute arbitrary code. Use yaml.safe_load() instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\byaml\.load\s*\(`)},
+		{ID: "PY006", Title: "Use of yaml.load() without SafeLoader", Description: "yaml.load() without SafeLoader can execute arbitrary code. Use yaml.safe_load() instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\byaml\.load\s*\(`), SuppressFunc: suppressPY006},
 
 		// SQL injection
 		{ID: "PY007", Title: "SQL query with string formatting", Description: "SQL query constructed with string formatting is vulnerable to SQL injection. Use parameterized queries.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(execute|cursor\.execute)\s*\(\s*(f["']\s*(SELECT|INSERT|UPDATE|DELETE)|["'].*%s.*["']\s*%(.*SELECT|INSERT|UPDATE|DELETE))`), CWEID: "CWE-89", SkipQuoteFilter: true},
@@ -141,10 +146,10 @@ func (s *Scanner) registerRules() {
 		{ID: "PY009", Title: "Use of MD5 hash", Description: "MD5 is a weak hash algorithm. Use SHA-256 or stronger.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bhashlib\.md5\s*\(`)},
 		{ID: "PY010", Title: "Use of SHA1 hash", Description: "SHA1 is a weak hash algorithm. Use SHA-256 or stronger.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bhashlib\.sha1\s*\(`)},
 		{ID: "PY011", Title: "Use of random module for security", Description: "random module is not cryptographically secure. Use secrets module instead.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\brandom\.(choice|randint|random|uniform)\s*\(`)},
-		{ID: "PY012", Title: "Hardcoded password", Description: "Hardcoded password detected. Use environment variables or a secret manager.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(password|passwd|pwd)\s*=\s*["'][^"']{4,}["']`)},
+		{ID: "PY012", Title: "Hardcoded password", Description: "Hardcoded password detected. Use environment variables or a secret manager.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\b(password|passwd|pwd)\b\s*=\s*["'][^"']{4,}["']`), SuppressFunc: suppressPY045},
 
 		// Network/TLS
-		{ID: "PY013", Title: "SSL verification disabled", Description: "SSL certificate verification is disabled. This makes the connection vulnerable to MITM attacks.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(verify|ssl_verify|insecure)\s*=\s*False\b`)},
+		{ID: "PY013", Title: "SSL verification disabled", Description: "SSL certificate verification is disabled. This makes the connection vulnerable to MITM attacks.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(verify|ssl_verify|insecure)\s*=\s*False\b`), SuppressFunc: suppressPY013},
 		{ID: "PY014", Title: "Requests with verify=False", Description: "Disabling SSL verification in requests is dangerous.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)requests\.(get|post|put|delete|patch|head)\s*\(.*verify\s*=\s*False`)},
 
 		// Debug/dev mode
@@ -459,6 +464,22 @@ func (s *Scanner) registerRules() {
 		{ID: "TF008", Title: "No TLS for database", Description: "RDS or database resource does not enforce TLS/SSL connections.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)require_ssl\s*=\s*false`)},
 		{ID: "TF009", Title: "Lambda with excessive timeout", Description: "Lambda function has timeout > 300 seconds, which can increase cost and complexity.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`timeout\s*=\s*(3[0-9]{2}|[4-9][0-9]{2}|[0-9]{4,})`)},
 		{ID: "TF010", Title: "EKS cluster endpoint public", Description: "EKS cluster has public endpoint access enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)endpoint_public_access\s*=\s*true`)},
+		// Additional Terraform/IaC rules (TF011-TF025)
+		{ID: "TF011", Title: "S3 bucket logging disabled", Description: "S3 bucket does not have access logging enabled for audit trail.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)aws_s3_bucket\b`), CWEID: "CWE-778"},
+		{ID: "TF012", Title: "CloudTrail disabled", Description: "AWS CloudTrail is not enabled, missing API call audit logging.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)enable_logging\s*=\s*false`)},
+		{ID: "TF013", Title: "RDS without deletion protection", Description: "RDS instance lacks deletion protection, risking accidental data loss.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)deletion_protection\s*=\s*false`)},
+		{ID: "TF014", Title: "RDS storage unencrypted", Description: "RDS instance has storage encryption disabled.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)storage_encrypted\s*=\s*false`)},
+		{ID: "TF015", Title: "EBS volume unencrypted", Description: "EBS volume has encryption disabled.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)encrypted\s*=\s*false`)},
+		{ID: "TF016", Title: "Security group allows all ports", Description: "Security group rule allows all ports (0-65535), exposing services unnecessarily.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)(from_port|to_port)\s*=\s*0\b`)},
+		{ID: "TF017", Title: "IAM access key without expiry", Description: "IAM access key created without an expiry policy.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceLow, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)aws_iam_access_key\b`)},
+		{ID: "TF018", Title: "Azure storage account public blob", Description: "Azure storage account allows public blob access.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)allow_blob_public_access\s*=\s*true`)},
+		{ID: "TF019", Title: "Azure network security group open RDP", Description: "Azure NSG allows RDP (port 3389) from internet.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)destination_port_range\s*=\s*["']?3389["']?`)},
+		{ID: "TF020", Title: "GCP firewall rule allows all", Description: "GCP firewall rule allows traffic from 0.0.0.0/0 on all ports.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)source_ranges\s*=\s*\[.*0\.0\.0\.0/0`)},
+		{ID: "TF021", Title: "KMS key rotation disabled", Description: "KMS key does not have automatic rotation enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)enable_key_rotation\s*=\s*false`)},
+		{ID: "TF022", Title: "DynamoDB table without PITR", Description: "DynamoDB table does not have point-in-time recovery enabled.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)point_in_time_recovery\s*=\s*false`)},
+		{ID: "TF023", Title: "Lambda function without VPC", Description: "Lambda function is not configured within a VPC, limiting network security controls.", Severity: analysis.SeverityLow, Confidence: analysis.ConfidenceLow, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)aws_lambda_function\b`)},
+		{ID: "TF024", Title: "SNS topic public access", Description: "SNS topic policy allows access from all principals (*).", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)"Principal"\s*:\s*["']\*["']`), SkipQuoteFilter: true},
+		{ID: "TF025", Title: "Container with privileged mode", Description: "Container definition runs in privileged mode, granting host access.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangTerraform}, Pattern: regexp.MustCompile(`(?i)privileged\s*=\s*true`)},
 
 		// --- API security rules (API001-API010) ---
 		{ID: "API001", Title: "GraphQL introspection enabled in production", Description: "GraphQL introspection can expose the entire schema to attackers.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangJavaScript, LangTypeScript, LangPython}, Pattern: regexp.MustCompile(`(?i)introspection:\s*true`)},
@@ -616,7 +637,7 @@ func (s *Scanner) registerRules() {
 		{ID: "PY044", Title: "Python weak random for security context", Description: "random module is not cryptographically secure. Use secrets module for tokens, session IDs, or passwords.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\brandom\.(choice|randint|random)\s*\(`), CWEID: "CWE-330"},
 
 		// Python hardcoded credentials (CWE-798)
-		{ID: "PY045", Title: "Python hardcoded password/secret", Description: "Hardcoded password or secret key detected. Use environment variables or a secret manager.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)(password|passwd|secret|api_key|apikey|token)\s*=\s*['"][^'"]{4,}['"]`), CWEID: "CWE-798"},
+		{ID: "PY045", Title: "Python hardcoded password/secret", Description: "Hardcoded password or secret key detected. Use environment variables or a secret manager.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\b(password|passwd|secret|api_key|apikey|token)\b\s*=\s*['"][^'"]{4,}['"]`), CWEID: "CWE-798", SuppressFunc: suppressPY045},
 
 		// Python SQL injection via SQLAlchemy text() with string formatting (CWE-89)
 		{ID: "PY046", Title: "SQL injection via SQLAlchemy text() with formatting", Description: "SQLAlchemy text() with string formatting (% or f-string) allows SQL injection. Use parameterized queries with text() and bind parameters.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)\btext\s*\(\s*["'].*%s.*["']\s*%`), CWEID: "CWE-89", SkipQuoteFilter: true},
@@ -778,6 +799,12 @@ func matchesRule(rule PatternRule, line string, lang Language) bool {
 
 	matches := rule.Pattern.FindAllStringIndex(line, -1)
 	if len(matches) == 0 {
+		return false
+	}
+
+	// Post-match suppression: if the rule has a SuppressFunc, call it on the
+	// full line to allow context-aware false positive filtering.
+	if rule.SuppressFunc != nil && rule.SuppressFunc(line) {
 		return false
 	}
 

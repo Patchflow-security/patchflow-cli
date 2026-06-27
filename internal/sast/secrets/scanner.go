@@ -94,6 +94,10 @@ func NewScanner() *Scanner {
 			".tox": true, ".pytest_cache": true, ".mypy_cache": true,
 			"site-packages": true, "__pycache__": true, ".eggs": true,
 			".eggs-info": true, ".ruff_cache": true,
+			// Test fixtures and documentation dirs contain example secrets
+			// that are not real credentials.
+			"testdata": true, "test_data": true, "fixtures": true,
+			"docs": true, "doc": true, "examples": true, "example": true,
 		},
 	}
 	s.registerPatterns()
@@ -224,6 +228,11 @@ func (s *Scanner) Analyze(ctx context.Context, root string) ([]analysis.Finding,
 // parallel file scanner. It scans a single file for secrets.
 // It applies the same example-file and binary-file filtering as Analyze.
 func (s *Scanner) ScanFilePublic(absPath, root string) ([]analysis.Finding, error) {
+	// Skip files in documentation/example directories — these contain
+	// example secrets that are not real credentials.
+	if isDocOrExamplePath(absPath) {
+		return nil, nil
+	}
 	baseName := filepath.Base(absPath)
 	if isExampleFile(baseName) {
 		return nil, nil
@@ -236,6 +245,20 @@ func (s *Scanner) ScanFilePublic(absPath, root string) ([]analysis.Finding, erro
 		return nil, nil
 	}
 	return s.scanFile(absPath, root)
+}
+
+// isDocOrExamplePath returns true if the file path contains a documentation
+// or examples directory component. These directories contain example secrets
+// that are not real credentials.
+func isDocOrExamplePath(absPath string) bool {
+	parts := strings.Split(filepath.ToSlash(absPath), "/")
+	for _, part := range parts {
+		switch part {
+		case "docs", "doc", "examples", "example":
+			return true
+		}
+	}
+	return false
 }
 
 // scanFile scans a single file for secrets.

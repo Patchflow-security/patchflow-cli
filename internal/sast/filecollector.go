@@ -67,6 +67,12 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 		"coverage":      true,
 		".turbo":        true,
 		".svelte-kit":   true,
+		// Test fixture directories — skip all scanners for these.
+		"testdata":    true,
+		"test_data":   true,
+		"fixtures":    true,
+		"__fixtures__": true,
+		"__mocks__":   true,
 	}
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
