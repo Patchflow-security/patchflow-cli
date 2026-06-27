@@ -124,10 +124,11 @@ func (s *Scanner) registerRules() {
 	s.rules = []PatternRule{
 		// --- Python rules (replaces key bandit rules) ---
 
-		// Code injection
-		{ID: "PY001", Title: "Use of eval() with potential user input", Description: "eval() can execute arbitrary code. Avoid using it, especially with user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\beval\s*\(`)},
-		{ID: "PY002", Title: "Use of exec() with potential user input", Description: "exec() can execute arbitrary code. Avoid using it, especially with user input.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bexec\s*\(`)},
-		{ID: "PY003", Title: "Use of os.system()", Description: "os.system() is vulnerable to command injection. Use subprocess with shell=False instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bos\.system\s*\(`)},
+		// Code injection — pattern-based (regex) findings are Medium confidence;
+		// taint-confirmed findings (TP-PY*) remain High.
+		{ID: "PY001", Title: "Use of eval() with potential user input", Description: "eval() can execute arbitrary code. Avoid using it, especially with user input.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\beval\s*\(`)},
+		{ID: "PY002", Title: "Use of exec() with potential user input", Description: "exec() can execute arbitrary code. Avoid using it, especially with user input.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bexec\s*\(`)},
+		{ID: "PY003", Title: "Use of os.system()", Description: "os.system() is vulnerable to command injection. Use subprocess with shell=False instead.", Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bos\.system\s*\(`)},
 		{ID: "PY004", Title: "subprocess with shell=True", Description: "subprocess with shell=True is vulnerable to command injection. Use shell=False and pass args as a list.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`(?i)shell\s*=\s*True`)},
 		{ID: "PY005", Title: "Use of pickle.loads()", Description: "pickle.loads() can execute arbitrary code during deserialization. Avoid unpickling untrusted data.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\bpickle\.loads?\s*\(`)},
 		{ID: "PY006", Title: "Use of yaml.load() without SafeLoader", Description: "yaml.load() without SafeLoader can execute arbitrary code. Use yaml.safe_load() instead.", Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh, Languages: []Language{LangPython}, Pattern: regexp.MustCompile(`\byaml\.load\s*\(`)},

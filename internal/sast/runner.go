@@ -493,6 +493,12 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 
 		result.Findings = append(result.Findings, findings...)
 		result.ToolsRun = append(result.ToolsRun, tool.Name)
+
+	// --- Phase 2b: Apply severity overrides for external tool findings ---
+	// External tools (gosec, bandit) may report high severity for rules we
+	// intentionally demoted in our embedded scanners. Apply our severity
+	// policy to their findings to keep noise consistent.
+	result.Findings = applySeverityFindings(result.Findings)
 	}
 
 	// --- Phase 3: Apply suppression directives (//patchflow:ignore) ---
@@ -538,10 +544,13 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 		"treesitter-ast":    3, // AST-confirmed findings have highest priority
 		"taint-ssa":         3, // SSA-based taint analysis is also high-confidence
 		"taint-patterns":    3, // Source-sink taint analysis is high-confidence
-		"gosast-embedded":   2,
-		"gosec":             2,
+		"gosast-embedded":   2, // embedded rules take precedence over external
 		"secrets-embedded":  2,
-		"patterns-embedded": 1, // regex-based findings have lowest priority
+		"patterns-embedded": 2, // embedded patterns are tuned for low noise
+		"gosec":             1, // external gosec is noisy, prefer embedded
+		"bandit":            1,
+		"semgrep":           1,
+		"gitleaks":          1,
 	}
 
 	for _, f := range findings {
@@ -589,6 +598,45 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 		result = append(result, best[k])
 	}
 	return result
+}
+
+// severityOverrides maps rule IDs to the severity that PatchFlow assigns
+// intentionally (lower than the external tool's default). This keeps noise
+// consistent between embedded and external scanners.
+var severityOverrides = map[string]analysis.Severity{
+	"G104": analysis.SeverityInfo, // unchecked errors: audit-only
+	"G115": analysis.SeverityLow,  // integer overflow: most conversions are safe
+}
+
+// applySeverityOverrides adjusts the severity of external tool findings to
+// match PatchFlow's intentional severity policy for noisy rules.
+func applySeverityFindings(findings []analysis.Finding) []analysis.Finding {
+	for i := range findings {
+		override, ok := severityOverrides[findings[i].RuleID]
+		if !ok {
+			continue
+		}
+		// Only downgrade, never upgrade.
+		if severityRank(findings[i].Severity) > severityRank(override) {
+			findings[i].Severity = override
+		}
+	}
+	return findings
+}
+
+func severityRank(s analysis.Severity) int {
+	switch s {
+	case analysis.SeverityCritical:
+		return 4
+	case analysis.SeverityHigh:
+		return 3
+	case analysis.SeverityMedium:
+		return 2
+	case analysis.SeverityLow:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // confidenceRank converts a Confidence string to a numeric rank for comparison.
@@ -644,6 +692,12 @@ func isTestPath(path string) bool {
 		strings.Contains(lower, "/__tests__/") ||
 		strings.Contains(lower, "/spec/") ||
 		strings.Contains(lower, "/specs/") {
+		return true
+	}
+
+	// Build scripts: setup.py commonly uses exec()/os.system() for build steps
+	// and is not application code. conftest.py is pytest configuration.
+	if base == "setup.py" || base == "conftest.py" || base == "setup.cfg" {
 		return true
 	}
 

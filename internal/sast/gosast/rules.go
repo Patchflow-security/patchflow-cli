@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"regexp"
 	"strconv"
 )
@@ -345,11 +346,37 @@ func (r *readFileRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 		return nil, nil
 	}
 	if len(callExpr.Args) > 0 {
-		if !TryResolve(callExpr.Args[0], ctx) {
+		arg := callExpr.Args[0]
+		if TryResolve(arg, ctx) {
+			return nil, nil // constant path — safe
+		}
+		// High confidence: argument is a function parameter (taint source).
+		if isFunctionParam(arg, ctx) {
 			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
 		}
+		// Non-constant, non-parameter path — demote to Low (audit-only).
+		return makeFinding(r.id, r.what, SeverityLow, ConfidenceLow, n, ctx), nil
 	}
 	return nil, nil
+}
+
+// isFunctionParam returns true if the expression is an identifier that
+// refers to a function parameter of the enclosing function.
+func isFunctionParam(expr ast.Expr, ctx *Context) bool {
+	id, ok := expr.(*ast.Ident)
+	if !ok || ctx.Info == nil {
+		return false
+	}
+	obj := ctx.Info.ObjectOf(id)
+	if obj == nil {
+		return false
+	}
+	v, ok := obj.(*types.Var)
+	if !ok {
+		return false
+	}
+	// Function parameters have Kind() == ParamVar in Go 1.25+.
+	return v.Kind() == types.ParamVar
 }
 
 func newReadFile() Rule {

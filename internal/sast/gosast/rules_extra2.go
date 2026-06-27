@@ -100,7 +100,7 @@ func newIntegerConversion() Rule {
 	return &integerConversionRule{
 		id:   "G115",
 		what: "Potential integer overflow when converting between integer types",
-		sev:  SeverityMedium,
+		sev:  SeverityLow, // demoted: most conversions are safe in practice
 		conf: ConfidenceMedium,
 	}
 }

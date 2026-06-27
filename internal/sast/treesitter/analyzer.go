@@ -83,10 +83,12 @@ func (a *Analyzer) SetIgnoreMatcher(m *ignore.Matcher) {
 func (a *Analyzer) registerDefaults() {
 	a.rules = []astRule{
 		// --- Python AST rules ---
+		// AST-confirmed but not taint-confirmed: Medium severity.
+		// Taint-confirmed findings (TP-PY*) remain High.
 		{
 			ID:             "TS-PY001",
 			Title:          "Use of eval() (AST-confirmed)",
-			Severity:       analysis.SeverityHigh,
+			Severity:       analysis.SeverityMedium,
 			Confidence:     analysis.ConfidenceHigh,
 			Languages:      []string{"python"},
 			Description:    "eval() can execute arbitrary code. Confirmed via AST — the call is in actual code, not a string literal.",
@@ -97,7 +99,7 @@ func (a *Analyzer) registerDefaults() {
 		{
 			ID:             "TS-PY002",
 			Title:          "Use of exec() (AST-confirmed)",
-			Severity:       analysis.SeverityHigh,
+			Severity:       analysis.SeverityMedium,
 			Confidence:     analysis.ConfidenceHigh,
 			Languages:      []string{"python"},
 			Description:    "exec() can execute arbitrary code. Confirmed via AST analysis.",
@@ -108,7 +110,7 @@ func (a *Analyzer) registerDefaults() {
 		{
 			ID:             "TS-PY003",
 			Title:          "Use of os.system() (AST-confirmed)",
-			Severity:       analysis.SeverityHigh,
+			Severity:       analysis.SeverityMedium,
 			Confidence:     analysis.ConfidenceHigh,
 			Languages:      []string{"python"},
 			Description:    "os.system() is vulnerable to command injection.",
@@ -273,7 +275,7 @@ func (a *Analyzer) registerDefaults() {
 		{
 			ID:             "TS-PY018",
 			Title:          "input() in Python 2 — eval-like behavior (AST-confirmed)",
-			Severity:       analysis.SeverityHigh,
+			Severity:       analysis.SeverityMedium,
 			Confidence:     analysis.ConfidenceMedium,
 			Languages:      []string{"python"},
 			Description:    "In Python 2, input() calls eval() on the user input, allowing arbitrary code execution.",

@@ -29,6 +29,7 @@ import (
 type Severity int
 
 const (
+	SeverityInfo   Severity = 0 // audit-only, excluded from high/critical counts
 	SeverityLow    Severity = 1
 	SeverityMedium Severity = 2
 	SeverityHigh   Severity = 3

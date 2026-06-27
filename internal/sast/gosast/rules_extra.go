@@ -104,7 +104,7 @@ func newNoErrorCheck() Rule {
 	return &noErrorCheckRule{
 		id:        "G104",
 		what:      "Errors unhandled",
-		sev:       SeverityLow,
+		sev:       SeverityInfo, // audit-only: unchecked errors are too noisy for default scan
 		conf:      ConfidenceHigh,
 		whitelist: whitelist,
 	}
