@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/project"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/project"
 	"github.com/spf13/cobra"
 )
 

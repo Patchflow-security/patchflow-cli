@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
 )
 
 // GitHubUploadConfig holds the parameters required to upload a SARIF report

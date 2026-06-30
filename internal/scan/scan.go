@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
 )
 
 var manifestTypes = map[string]string{

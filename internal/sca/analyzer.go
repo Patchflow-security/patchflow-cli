@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/manifest"
-	osvclient "github.com/patchflow/patchflow-cli/internal/osv"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/manifest"
+	"github.com/Patchflow-security/patchflow-cli/internal/mavenres"
+	osvclient "github.com/Patchflow-security/patchflow-cli/internal/osv"
 )
 
 // Analyzer runs SCA analysis on a repository.
@@ -19,6 +20,10 @@ type Analyzer struct {
 	MaxDepth   int
 	ChangedOnly bool
 	ChangedFiles []string
+	// ResolveMavenTransitives enables transitive dependency resolution for
+	// Maven projects by fetching POM files from Maven Central. This closes
+	// the gap with Trivy's Java DB, which resolves full Maven dependency trees.
+	ResolveMavenTransitives bool
 }
 
 // NewAnalyzer creates an SCA analyzer with default settings.
@@ -54,6 +59,31 @@ func (a *Analyzer) Analyze(ctx context.Context, root string) (*Result, error) {
 	if a.ChangedOnly && len(a.ChangedFiles) > 0 {
 		deps = filterToChanged(deps, a.ChangedFiles)
 		manifests = filterManifestsToChanged(manifests, a.ChangedFiles)
+	}
+
+	// 1b. Resolve Maven transitive dependencies by fetching POM files from
+	//     Maven Central. This adds transitive deps that aren't declared
+	//     directly in pom.xml but are pulled in at build time. Without this,
+	//     PatchFlow misses vulnerabilities in transitive Java deps (e.g.,
+	//     jackson-databind pulled in via another library).
+	if a.ResolveMavenTransitives {
+		hasMaven := false
+		for _, d := range deps {
+			if d.Ecosystem == analysis.EcosystemMaven {
+				hasMaven = true
+				break
+			}
+		}
+		if hasMaven {
+			resolver := mavenres.NewResolver()
+			resolver.SetCache(mavenres.NewCache(root))
+			resolver.SetRoot(root)
+			resolved, err := resolver.Resolve(ctx, deps)
+			if err == nil && len(resolved) > len(deps) {
+				deps = resolved
+			}
+			// Non-fatal: if resolution fails, continue with direct deps only
+		}
 	}
 
 	result := &Result{

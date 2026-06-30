@@ -3,7 +3,7 @@ package scan
 import (
 	"encoding/json"
 
-	"github.com/patchflow/patchflow-cli/pkg/version"
+	"github.com/Patchflow-security/patchflow-cli/pkg/version"
 )
 
 // Report represents a minimal SARIF 2.1.0 report.

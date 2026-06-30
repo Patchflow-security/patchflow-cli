@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/container"
-	"github.com/patchflow/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/container"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

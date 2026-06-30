@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func TestSecretScanner_DetectsAWSKey(t *testing.T) {
@@ -236,13 +236,13 @@ func TestSecretScannerAllPatterns(t *testing.T) {
 		file    string
 		content string
 	}{
-		// Cloud provider keys
+		// Cloud provider keys — test fixtures use all-zeros to avoid triggering GitHub Push Protection
 		{"AWS Secret Access Key", "SECRET-AWS-Secret-Access-Key", "config.py",
-			`aws_secret'abcdefghijklmnopqrstuvwxyz0123456789ABCD'`},
+			`aws_secret'0000000000000000000000000000000000000000'`},
 		{"Google API Key", "SECRET-Google-API-Key", "config.py",
-			`google_key = "AIzaSyA1234567890abcdefghijklmnopqrstuv"`},
+			`google_key = "AIza00000000000000000000000000000000000"`},
 		{"Google OAuth Access Token", "SECRET-Google-OAuth-Access-Token", "config.py",
-			`token = "ya29.ABcdEFGhIJKlmNoPQRsTUVwxyZ0123456789abcdef"`},
+			`token = "ya29.0000000000000000000000000000000000000000"`},
 		{"Google Cloud Service Account", "SECRET-Google-Cloud-Service-Account", "config.json",
 			`{"type": "service_account", "project_id": "my-project"}`},
 		{"Azure Storage Key", "SECRET-Azure-Storage-Key", "config.py",
@@ -250,37 +250,37 @@ func TestSecretScannerAllPatterns(t *testing.T) {
 
 		// Version control tokens
 		{"GitHub Fine-grained Token", "SECRET-GitHub-Fine-grained-Token", "app.js",
-			`const token = "github_pat_1234567890abcdefghijkl_12345678901234567890123456789012345678901234567890123456789";`},
+			`const token = "github_pat_0000000000000000000000_000000000000000000000000000000000000000000000000000000000000";`},
 		{"GitHub Action Token", "SECRET-GitHub-Action-Token", "app.js",
-			`const token = "ghs_1234567890abcdefghijklmnopqrstuvwxyz1234";`},
+			`const token = "ghs_000000000000000000000000000000000000";`},
 		{"GitHub OAuth Token", "SECRET-GitHub-OAuth-Token", "app.js",
-			`const token = "gho_1234567890abcdefghijklmnopqrstuvwxyz1234";`},
+			`const token = "gho_000000000000000000000000000000000000";`},
 		{"GitHub Refresh Token", "SECRET-GitHub-Refresh-Token", "app.js",
-			`const token = "ghr_1234567890123456789012345678901234567890123456789012345678901234567890123456";`},
+			`const token = "ghr_0000000000000000000000000000000000000000000000000000000000000000000000000000";`},
 		{"GitLab Personal Access Token", "SECRET-GitLab-Personal-Access-Token", "app.js",
-			`const token = "glpat-1234567890abcdefghij";`},
+			`const token = "glpat-00000000000000000000";`},
 
 		// SaaS tokens
 		{"Slack Token", "SECRET-Slack-Token", "app.js",
-			`const token = "xoxp-123456789012-123456789012-123456789012-abcdefghijklmnopqrstuvwxyz123456";`},
+			`const token = "xoxp-000000000000-000000000000-000000000000-0000000000000000000000000000000000";`},
 		{"Slack Webhook", "SECRET-Slack-Webhook", "app.js",
-			`const url = "https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnopqrstuvwx";`},
+			`const url = "https://hooks.slack.com/services/T00000000/B00000000/000000000000000000000000";`},
 		{"Stripe Restricted Key", "SECRET-Stripe-Restricted-Key", "config.py",
-			`stripe_key = "rk_live_1234567890abcdefghijklmn"`},
+			`stripe_key = "rk_live_000000000000000000000000"`},
 		{"Twilio API Key", "SECRET-Twilio-API-Key", "config.py",
-			`twilio_key = "SK1234567890abcdef0123456789abcdef"`},
+			`twilio_key = "SK00000000000000000000000000000000"`},
 		{"Square Access Token", "SECRET-Square-Access-Token", "config.py",
-			`square_token = "sq0atp-1234567890abcdefghijkl"`},
+			`square_token = "sq0atp-0000000000000000000000"`},
 		{"Square OAuth Secret", "SECRET-Square-OAuth-Secret", "config.py",
-			`square_secret = "sq0csp-1234567890abcdefghijklmnopqrstuvwxyz12345678"`},
+			`square_secret = "sq0csp-0000000000000000000000000000000000000000000"`},
 		{"Heroku API Key", "SECRET-Heroku-API-Key", "config.py",
-			`heroku_key = "12345678-1234-1234-1234-123456789012"`},
+			`heroku_key = "00000000-0000-0000-0000-000000000000"`},
 		{"Mailgun API Key", "SECRET-Mailgun-API-Key", "config.py",
-			`mailgun_key = "key-1234567890abcdefghijklmnopqrstuvwxyz1234"`},
+			`mailgun_key = "key-00000000000000000000000000000000"`},
 		{"MailChimp API Key", "SECRET-MailChimp-API-Key", "config.py",
-			`mailchimp_key = "1234567890abcdef0123456789abcdef-us12"`},
+			`mailchimp_key = "00000000000000000000000000000000-us12"`},
 		{"Telegram Bot Token", "SECRET-Telegram-Bot-Token", "config.py",
-			`telegram_token = "123456789:AAabcdefghijklmnopqrstuvwxyz123456789"`},
+			`telegram_token = "000000000:AA000000000000000000000000000000000"`},
 
 		// Private keys
 		{"EC Private Key", "SECRET-EC-Private-Key", "id_ec", "-----BEGIN EC PRIVATE KEY-----\nMHQCAQEE..."},
@@ -329,6 +329,64 @@ func TestSecretScannerAllPatterns(t *testing.T) {
 				t.Errorf("expected %s, got %d findings: %v", tc.ruleID, len(findings), secretFindingIDs(findings))
 			}
 		})
+	}
+}
+
+func TestSecretFindingsUseSecretType(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "config.sh", `PASSWORD="supersecret123"`)
+
+	s := NewScanner()
+	findings, err := s.Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+	if len(findings) == 0 {
+		t.Fatal("expected a secret finding")
+	}
+	for _, finding := range findings {
+		if finding.Type != analysis.TypeSecret {
+			t.Fatalf("expected TypeSecret, got %s", finding.Type)
+		}
+	}
+}
+
+func TestVariableBackedPasswordAssignmentSuppressed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "setup.sh", `kubectl create secret generic grafana-admin-credentials --from-literal=admin-password="$GRAFANA_PASSWORD"`)
+
+	s := NewScanner()
+	findings, err := s.Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+	for _, finding := range findings {
+		if finding.RuleID == "SECRET-Generic-Password-assignment" {
+			t.Fatalf("expected variable-backed password assignment to be suppressed, got %+v", finding)
+		}
+	}
+}
+
+func TestUISecretLabelsSuppressed(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "common.ts", `
+export default {
+  password: 'New password',
+  confirmPassword: '••••••••',
+  frPassword: 'Au moins 8 caractères',
+  arPassword: 'كلمة مرور جديدة',
+}
+`)
+
+	s := NewScanner()
+	findings, err := s.Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+	for _, finding := range findings {
+		if finding.RuleID == "SECRET-Generic-Password-assignment" {
+			t.Fatalf("expected UI password labels to be suppressed, got %+v", finding)
+		}
 	}
 }
 

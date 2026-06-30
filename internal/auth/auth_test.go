@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/config"
+	"github.com/Patchflow-security/patchflow-cli/internal/config"
 )
 
 func setupTempFileStorage(t *testing.T) (*config.Config, *FileStorage) {

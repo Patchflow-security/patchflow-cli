@@ -3,8 +3,9 @@ package cmd
 import (
 	"context"
 
-	"github.com/patchflow/patchflow-cli/internal/config"
-	"github.com/patchflow/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/config"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -15,6 +16,7 @@ const (
 	formatterKey contextKey = "formatter"
 	configKey    contextKey = "config"
 	loggerKey    contextKey = "logger"
+	quietKey     contextKey = "quiet"
 )
 
 var rootCmd = &cobra.Command{
@@ -32,6 +34,14 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	jsonMode, _ := cmd.Flags().GetBool("json")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	noColor, _ := cmd.Flags().GetBool("no-color")
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	cacheDir, _ := cmd.Flags().GetString("cache-dir")
+
+	// Wire the global cache directory override (from --cache-dir flag).
+	// This is used by cacheutil.ResolveCacheDir across all cache operations.
+	if cacheDir != "" {
+		cacheutil.SetGlobalCacheDir(cacheDir)
+	}
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -55,6 +65,7 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	ctx = context.WithValue(ctx, formatterKey, formatter)
 	ctx = context.WithValue(ctx, configKey, cfg)
 	ctx = context.WithValue(ctx, loggerKey, logger)
+	ctx = context.WithValue(ctx, quietKey, quiet)
 	cmd.SetContext(ctx)
 
 	return nil
@@ -63,9 +74,11 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config file path")
 	rootCmd.PersistentFlags().String("api-url", "", "PatchFlow API URL")
+	rootCmd.PersistentFlags().String("cache-dir", "", "Override cache directory (default: ~/.cache/patchflow/ or $XDG_CACHE_HOME/patchflow/)")
 	rootCmd.PersistentFlags().Bool("json", false, "output in JSON format")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "enable verbose logging")
 	rootCmd.PersistentFlags().Bool("no-color", false, "disable colored output")
+	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "suppress non-essential output (for CI scripting)")
 }
 
 // Execute runs the root command.
@@ -123,4 +136,10 @@ func LoggerFromContext(ctx context.Context) *zap.Logger {
 		return logger
 	}
 	return l
+}
+
+// QuietFromContext returns true if --quiet flag is set.
+func QuietFromContext(ctx context.Context) bool {
+	q, ok := ctx.Value(quietKey).(bool)
+	return ok && q
 }

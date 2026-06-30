@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/pkg/version"
+	"github.com/Patchflow-security/patchflow-cli/pkg/version"
 )
 
 func TestExportSARIF(t *testing.T) {

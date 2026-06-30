@@ -15,9 +15,9 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/patchflow/patchflow-cli/pkg/version.Version={{.Version}}
-      - -X github.com/patchflow/patchflow-cli/pkg/version.Commit={{.Commit}}
-      - -X github.com/patchflow/patchflow-cli/pkg/version.Date={{.Date}}
+      - -X github.com/Patchflow-security/patchflow-cli/pkg/version.Version={{.Version}}
+      - -X github.com/Patchflow-security/patchflow-cli/pkg/version.Commit={{.Commit}}
+      - -X github.com/Patchflow-security/patchflow-cli/pkg/version.Date={{.Date}}
     targets:
       - linux_amd64
       - linux_arm64
@@ -28,7 +28,7 @@ builds:
 
 archives:
   - id: default
-    builds: [patchflow]
+    ids: [patchflow]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_
       {{- if eq .Os "darwin" }}macos
@@ -80,7 +80,7 @@ sboms:
 
 release:
   github:
-    owner: patchflow
+    owner: Patchflow-security
     name: patchflow-cli
   draft: true
   prerelease: auto
@@ -93,12 +93,12 @@ release:
     - 5 historical CVE repos: 100% recall, 387K LOC
     - 10 clean repos: 0.094 HC/KLOC, 720K LOC
 
-    See [Benchmark Report v1.0](../patchflow-benchmarks/reports/BENCHMARK_REPORT_v1.0.md) for details.
+    See [Benchmark Report v1.0](https://github.com/Patchflow-security/patchflow-benchmarks/blob/main/reports/BENCHMARK_REPORT_v1.0.md) for details.
 
 brews:
-  - id: patchflow
+  - name: patchflow
     repository:
-      owner: patchflow
+      owner: Patchflow-security
       name: homebrew-tap
       branch: main
     commit_author:
@@ -113,9 +113,9 @@ brews:
       bin.install "patchflow"
 
 scoops:
-  - id: patchflow
+  - name: patchflow
     repository:
-      owner: patchflow
+      owner: Patchflow-security
       name: scoop-bucket
       branch: main
     commit_author:
@@ -125,42 +125,20 @@ scoops:
     description: Local-first security scanner for code, dependencies, and secrets
     license: Apache-2.0
 
-dockers:
-  - id: patchflow-linux-amd64
-    ids: [patchflow]
-    use: buildx
-    goos: linux
-    goarch: amd64
-    image_templates:
-      - "ghcr.io/patchflow/cli:{{ .Version }}-amd64"
-      - "ghcr.io/patchflow/cli:latest-amd64"
-    dockerfile: Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
-      - "--label=org.opencontainers.image.revision={{.Commit}}"
-
-  - id: patchflow-linux-arm64
-    ids: [patchflow]
-    use: buildx
-    goos: linux
-    goarch: arm64
-    image_templates:
-      - "ghcr.io/patchflow/cli:{{ .Version }}-arm64"
-      - "ghcr.io/patchflow/cli:latest-arm64"
-    dockerfile: Dockerfile.goreleaser
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-      - "--label=org.opencontainers.image.source={{.GitURL}}"
-      - "--label=org.opencontainers.image.revision={{.Commit}}"
-
-docker_manifests:
+dockers_v2:
   - id: patchflow
-    image_templates:
-      - "ghcr.io/patchflow/cli:{{ .Version }}"
-      - "ghcr.io/patchflow/cli:latest"
-    create: true
+    ids: [patchflow]
+    images:
+      - "ghcr.io/patchflow-security/cli"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    platforms:
+      - "linux/amd64"
+      - "linux/arm64"
+    dockerfile: Dockerfile.goreleaser
+    labels:
+      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.version: "{{.Version}}"
+      org.opencontainers.image.source: "{{.GitURL}}"
+      org.opencontainers.image.revision: "{{.Commit}}"

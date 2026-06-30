@@ -5,8 +5,8 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/sast/customrules"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/customrules"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -45,10 +45,11 @@ type ruleValidationError struct {
 
 // rulesValidateResult is the JSON-serializable result of 'rules validate'.
 type rulesValidateResult struct {
-	Valid   bool                 `json:"valid"`
-	Path    string               `json:"path"`
-	Rules   int                  `json:"rules"`
-	Errors  []ruleValidationError `json:"errors,omitempty"`
+	Valid              bool                  `json:"valid"`
+	Path               string                `json:"path"`
+	Rules              int                   `json:"rules"`
+	FrameworkOverrides int                   `json:"framework_overrides,omitempty"`
+	Errors             []ruleValidationError `json:"errors,omitempty"`
 }
 
 // idPattern enforces the rule ID naming convention: uppercase alphanumeric
@@ -97,13 +98,26 @@ func runRulesValidate(cmd *cobra.Command, args []string) error {
 		})
 		return printValidateResult(formatter, result)
 	}
-
-	result.Rules = len(ruleFile.Rules)
-
-	if len(ruleFile.Rules) == 0 {
+	if policy, err := customrules.LoadPolicyFromBytes(data); err != nil {
 		result.Valid = false
 		result.Errors = append(result.Errors, ruleValidationError{
-			Error: "no rules defined",
+			Error: err.Error(),
+		})
+		return printValidateResult(formatter, result)
+	} else {
+		result.FrameworkOverrides = len(policy.FrameworkOverrides)
+	}
+
+	result.Rules = len(ruleFile.Rules)
+	hasFrameworkConfig := ruleFile.Frameworks.AutoDetect != nil ||
+		len(ruleFile.Frameworks.Enabled) > 0 ||
+		len(ruleFile.Frameworks.Disabled) > 0
+	hasFrameworkOverrides := len(ruleFile.FrameworkOverrides) > 0
+
+	if len(ruleFile.Rules) == 0 && !hasFrameworkConfig && !hasFrameworkOverrides {
+		result.Valid = false
+		result.Errors = append(result.Errors, ruleValidationError{
+			Error: "no rules, framework config, or framework overrides defined",
 		})
 		return printValidateResult(formatter, result)
 	}
@@ -199,7 +213,7 @@ func printValidateResult(formatter output.Formatter, result rulesValidateResult)
 	}
 
 	if result.Valid {
-		_ = formatter.PrintSuccess(fmt.Sprintf("%d rules validated successfully", result.Rules))
+		_ = formatter.PrintSuccess(fmt.Sprintf("%d rules and %d framework override blocks validated successfully", result.Rules, result.FrameworkOverrides))
 		_ = formatter.Print("  File: " + result.Path)
 		return nil
 	}

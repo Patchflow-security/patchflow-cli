@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/odvcencio/gotreesitter/grammars"
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/ignore"
-	"github.com/patchflow/patchflow-cli/internal/sast/incremental"
-	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
-	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
-	"github.com/patchflow/patchflow-cli/internal/sast/taintpatterns"
-	"github.com/patchflow/patchflow-cli/internal/sast/treesitter"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
+	fwpatterns "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/incremental"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/patterns"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/secrets"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/taintpatterns"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/treesitter"
 )
 
 // fileTask represents a single file to be scanned by one or more scanners.
@@ -27,6 +28,10 @@ type fileTask struct {
 	info    os.FileInfo
 	pattern patterns.Language
 	tsEntry *grammars.LangEntry
+	// templateExt preserves explicit template-engine suffixes such as
+	// .blade.php and .thymeleaf.html so template rules can target them
+	// precisely instead of relying on plain text fallback behavior.
+	templateExt string
 }
 
 // collectedFiles holds the result of a single-pass file tree walk.
@@ -42,7 +47,7 @@ type collectedFiles struct {
 // The ignoreMatcher is used to skip gitignored files/directories.
 // maxFileSize limits files to prevent memory exhaustion (0 = no limit).
 // includeTests controls whether test files are included.
-func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64, includeTests bool, tsAnalyzer *treesitter.Analyzer) (*collectedFiles, error) {
+func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64, includeTests bool, tsAnalyzer *treesitter.Analyzer, tpAnalyzer *taintpatterns.Analyzer) (*collectedFiles, error) {
 	cf := &collectedFiles{}
 
 	ignoredDirs := map[string]bool{
@@ -67,12 +72,27 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 		"coverage":      true,
 		".turbo":        true,
 		".svelte-kit":   true,
+		// Third-party library directories — these contain vendored
+		// dependencies that should not be scanned for vulnerabilities.
+		"lib":              true,
+		"libs":             true,
+		"wwwroot":          true, // ASP.NET static files (lib/ is under wwwroot)
+		"third_party":      true,
+		"thirdparty":       true,
+		"external":         true,
+		"deps":             true,
+		"bower_components": true,
+		"jspm_packages":    true,
+		"webjars":          true,
+		"packages":         true, // NuGet packages dir
+		"Content":          true, // ASP.NET MVC Content dir (static assets)
+		"Scripts":          true, // ASP.NET MVC Scripts dir (jQuery, bootstrap, etc.)
 		// Test fixture directories — skip all scanners for these.
-		"testdata":    true,
-		"test_data":   true,
-		"fixtures":    true,
+		"testdata":     true,
+		"test_data":    true,
+		"fixtures":     true,
 		"__fixtures__": true,
-		"__mocks__":   true,
+		"__mocks__":    true,
 	}
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -104,6 +124,12 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 			return nil
 		}
 
+		// Skip third-party/minified library files — they are vendored
+		// dependencies, not application code, and generate false positives.
+		if isThirdPartyFile(path) {
+			return nil
+		}
+
 		// Skip test files if not included
 		if !includeTests && isTestPath(path) {
 			return nil
@@ -120,19 +146,20 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 		task.pattern = patterns.DetectLanguagePublic(path)
 
 		// Tree-sitter: language detection via grammars
-		// Only set tsEntry if the tree-sitter analyzer has rules for this language,
-		// otherwise we waste time parsing files (e.g. .rst, .html, .json) that no
-		// rule will ever match.
+		// Only set tsEntry if the tree-sitter analyzer OR the taint patterns
+		// analyzer has rules for this language, otherwise we waste time parsing
+		// files (e.g. .rst, .html, .json) that no rule will ever match.
 		entry := grammars.DetectLanguage(path)
-		if entry != nil && tsAnalyzer.HasRulesForLanguage(entry.Name) {
+		if entry != nil && (tsAnalyzer.HasRulesForLanguage(entry.Name) || tpAnalyzer.HasRulesForLanguage(entry.Name)) {
 			task.tsEntry = entry
 		}
+		task.templateExt = fwpatterns.DetectTemplateExtension(path)
 
 		// Secrets scanner: processes all text files (not just specific extensions)
 		// — it has its own internal filtering for binary/lockfile/example files
 
 		// Only add tasks for files that at least one scanner can process
-		if task.pattern != "" || task.tsEntry != nil || isTextFile(path) {
+		if task.pattern != "" || task.tsEntry != nil || task.templateExt != "" || isTextFile(path) {
 			cf.tasks = append(cf.tasks, task)
 			cf.total++
 		}
@@ -167,6 +194,48 @@ func isTextFile(path string) bool {
 	return true
 }
 
+// thirdPartyLibPrefixes lists filename prefixes of common third-party
+// JavaScript libraries that are vendored (not application code). Files
+// matching these prefixes generate false positives and should be skipped.
+var thirdPartyLibPrefixes = []string{
+	"jquery", "bootstrap", "angular", "react", "vue", "backbone",
+	"underscore", "lodash", "moment", "prototype", "mootools",
+	"select2", "selectWoo", "codemirror", "tinymce", "ace",
+	"ember", "d3", "three", "chart", "raphael", "yui",
+	"dojo", "ext-all", "kendo", "syncfusion",
+	"popper", "sweetalert", "lightbox", "slick",
+	"modernizr", "html5shiv", "respond",
+	"fontawesome", "glyphicons",
+}
+
+// isThirdPartyFile returns true for minified files and common third-party
+// library filenames that should not be scanned for vulnerabilities.
+// These are vendored dependencies, not application code.
+func isThirdPartyFile(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+
+	// Minified JS/CSS files: *.min.js, *.min.css, *_min.js, *.production.min.js
+	if strings.Contains(base, ".min.") || strings.HasSuffix(base, "_min.js") {
+		return true
+	}
+
+	// Common third-party library filenames (jquery.js, bootstrap.min.js, etc.)
+	for _, prefix := range thirdPartyLibPrefixes {
+		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
+
+	// Bundled/compiled output files
+	if strings.HasPrefix(base, "bundle.") || strings.HasPrefix(base, "vendor.") ||
+		strings.HasPrefix(base, "commons.") || strings.HasPrefix(base, "main.chunk.") ||
+		strings.HasPrefix(base, "runtime-main.") {
+		return true
+	}
+
+	return false
+}
+
 // scanResult holds findings from a single scanner for a single file.
 type scanResult struct {
 	scanner  string
@@ -188,6 +257,7 @@ func parallelScanFiles(
 	secretScanner *secrets.Scanner,
 	tsAnalyzer *treesitter.Analyzer,
 	tpAnalyzer *taintpatterns.Analyzer,
+	frameworkMatcher *fwpatterns.Matcher,
 	scanPatterns, scanSecrets, scanTreeSitter, scanTaintPatterns bool,
 ) (map[string][]analysis.Finding, []string) {
 	numWorkers := runtime.NumCPU()
@@ -234,11 +304,21 @@ func parallelScanFiles(
 					resultCh <- scanResult{scanner: "treesitter-ast", findings: findings, err: err, dur: time.Since(sc)}
 				}
 
-				// Taint patterns scanner (Python and JS/TS only)
+				// Taint patterns scanner (Python, JS/TS, Ruby, PHP, Java, C#)
 				if scanTaintPatterns && task.tsEntry != nil {
 					sc := time.Now()
 					findings, err := tpAnalyzer.ScanFilePublic(task.path, task.root, task.tsEntry)
 					resultCh <- scanResult{scanner: "taint-patterns", findings: findings, err: err, dur: time.Since(sc)}
+				}
+
+				// Framework rule packs (pattern + template rules). Only runs
+				// when framework detection selected packs. Taint-mode
+				// framework rules are handled by the taint-patterns scanner
+				// above (registered into the analyzer by the runner).
+				if frameworkMatcher != nil {
+					sc := time.Now()
+					findings, err := frameworkMatcher.ScanFile(task.path, task.root)
+					resultCh <- scanResult{scanner: "framework-packs", findings: findings, err: err, dur: time.Since(sc)}
 				}
 			}
 		}()
@@ -294,6 +374,7 @@ func runParallelScanners(
 	secretScanner *secrets.Scanner,
 	tsAnalyzer *treesitter.Analyzer,
 	tpAnalyzer *taintpatterns.Analyzer,
+	frameworkMatcher *fwpatterns.Matcher,
 	scanPatterns, scanSecrets, scanTreeSitter, scanTaintPatterns bool,
 	includeTests bool,
 	timeout time.Duration,
@@ -301,7 +382,7 @@ func runParallelScanners(
 	gitChangedSet map[string]bool,
 ) (map[string][]analysis.Finding, []string) {
 	// Phase 1: Single-pass file collection
-	cf, err := collectFiles(root, ignoreMatcher, 2*1024*1024, includeTests, tsAnalyzer) // 2MB max
+	cf, err := collectFiles(root, ignoreMatcher, 2*1024*1024, includeTests, tsAnalyzer, tpAnalyzer) // 2MB max
 	if err != nil {
 		return nil, []string{"file-collector: " + err.Error()}
 	}
@@ -337,6 +418,7 @@ func runParallelScanners(
 	results, errors := parallelScanFiles(
 		scanCtx, cf,
 		patternScanner, secretScanner, tsAnalyzer, tpAnalyzer,
+		frameworkMatcher,
 		scanPatterns, scanSecrets, scanTreeSitter, scanTaintPatterns,
 	)
 

@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/pathutil"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +55,10 @@ func runSuppress(cmd *cobra.Command, args []string) error {
 
 	absPath := suppressFile
 	if !filepath.IsAbs(absPath) {
+		// Validate the suppress file path to prevent path traversal
+		if err := pathutil.ValidateSuppressPath(repo.Root, suppressFile); err != nil {
+			return formatter.PrintError(fmt.Errorf("invalid file path: %w", err))
+		}
 		absPath = filepath.Join(repo.Root, suppressFile)
 	}
 
@@ -97,7 +102,7 @@ func runSuppress(cmd *cobra.Command, args []string) error {
 
 	// Write the file
 	output := strings.Join(newLines, "\n")
-	if err := os.WriteFile(absPath, []byte(output), 0644); err != nil {
+	if err := os.WriteFile(absPath, []byte(output), 0600); err != nil {
 		return formatter.PrintError(fmt.Errorf("failed to write file: %w", err))
 	}
 

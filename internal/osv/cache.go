@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
 )
 
 // DefaultCacheTTL is the default time-to-live for cached OSV responses.
@@ -28,10 +29,11 @@ type cacheEntry struct {
 	Vulns    []Vulnerability  `json:"vulns"`
 }
 
-// NewCache creates a new disk-backed cache rooted at rootDir/.patchflow/cache/osv.
+// NewCache creates a new disk-backed cache. The cache directory is resolved
+// via cacheutil (XDG-compliant global location, not project-local).
 func NewCache(rootDir string) *Cache {
 	return &Cache{
-		dir: filepath.Join(rootDir, ".patchflow", "cache", "osv"),
+		dir: cacheutil.ResolveSubdir(rootDir, "osv"),
 		ttl: DefaultCacheTTL,
 	}
 }

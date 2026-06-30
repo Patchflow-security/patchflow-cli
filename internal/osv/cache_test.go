@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func newTestCache(t *testing.T, ttl time.Duration) *Cache {
@@ -133,7 +133,7 @@ func TestCacheNilSafe(t *testing.T) {
 func TestCacheSetCreatesDirLazily(t *testing.T) {
 	dir := t.TempDir()
 	c := NewCache(dir)
-	cacheDir := filepath.Join(dir, ".patchflow", "cache", "osv")
+	cacheDir := c.dir // resolved via cacheutil (global XDG location)
 
 	// Directory should not exist before first Set.
 	if _, err := os.Stat(cacheDir); !os.IsNotExist(err) {

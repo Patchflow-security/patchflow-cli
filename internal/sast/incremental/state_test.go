@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/ignore"
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
 )
 
 // writeFile writes content to relPath under dir, creating parent directories.
@@ -85,8 +86,8 @@ func TestCorruptedStateAllChanged(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", "package main\n")
 
-	// Write a corrupted state file.
-	cacheDir := filepath.Join(dir, ".patchflow", "cache")
+	// Write a corrupted state file at the new global cache location.
+	cacheDir := cacheutil.ResolveCacheDir(dir)
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

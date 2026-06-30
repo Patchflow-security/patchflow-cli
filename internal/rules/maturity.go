@@ -116,12 +116,13 @@ func (p Profile) IncludesMaturity(m Maturity) bool {
 type Engine string
 
 const (
-	EnginePatterns     Engine = "patterns-embedded"
-	EngineTreeSitter   Engine = "treesitter-ast"
-	EngineGoSAST       Engine = "gosast-embedded"
-	EngineSecrets      Engine = "secrets-embedded"
-	EngineTaintSSA     Engine = "taint-ssa"
+	EnginePatterns      Engine = "patterns-embedded"
+	EngineTreeSitter    Engine = "treesitter-ast"
+	EngineGoSAST        Engine = "gosast-embedded"
+	EngineSecrets       Engine = "secrets-embedded"
+	EngineTaintSSA      Engine = "taint-ssa"
 	EngineTaintPatterns Engine = "taint-patterns"
+	EngineFrameworks    Engine = "framework-packs"
 )
 
 // String returns the engine name.
@@ -154,6 +155,10 @@ func DefaultMaturityForEngine(e Engine) Maturity {
 		// false positives. Upgraded from experimental to beta after the
 		// SkipQuoteFilter mechanism was added for injection rules.
 		return MaturityBeta
+	case EngineFrameworks:
+		// Framework packs default to experimental until their fixtures pass.
+		// Individual rules override this via their typed Maturity field.
+		return MaturityExperimental
 	default:
 		return MaturityExperimental
 	}
@@ -171,6 +176,25 @@ func DefaultProfilesForEngine(e Engine) []Profile {
 		return []Profile{ProfilePR, ProfileCI, ProfileAudit}
 	case EnginePatterns:
 		// Regex patterns: included in CI and audit (beta maturity, non-blocking).
+		return []Profile{ProfileCI, ProfileAudit}
+	case EngineFrameworks:
+		// Framework packs: included in audit by default. As packs mature to
+		// beta/stable, their rules are promoted into PR/CI profiles via
+		// per-rule maturity overrides in the registry.
+		return []Profile{ProfileAudit}
+	default:
+		return []Profile{ProfileAudit}
+	}
+}
+
+// ProfilesForMaturity returns the governance profiles that should include a
+// rule with explicit maturity. Framework packs use this because individual
+// pack rules mature independently from the framework engine default.
+func ProfilesForMaturity(m Maturity) []Profile {
+	switch {
+	case m >= MaturityStable:
+		return []Profile{ProfileDev, ProfilePR, ProfileCI, ProfileAudit}
+	case m == MaturityBeta:
 		return []Profile{ProfileCI, ProfileAudit}
 	default:
 		return []Profile{ProfileAudit}

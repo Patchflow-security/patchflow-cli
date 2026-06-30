@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/risk"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/cwe"
+	"github.com/Patchflow-security/patchflow-cli/internal/fixsnippet"
+	"github.com/Patchflow-security/patchflow-cli/internal/risk"
 )
 
 // Generator produces reports from analysis results.
@@ -109,6 +111,15 @@ func (g *Generator) TerminalSummary() string {
 			}
 			sb.WriteString("\n")
 		}
+
+		// Vulnerability class summary (CWE → OWASP grouping)
+		if g.Result != nil && len(g.Result.Findings) > 0 {
+			if summary := VulnerabilityClassSummary(g.Result.Findings); summary != "" {
+				sb.WriteString("Vulnerability classes:\n")
+				sb.WriteString(summary)
+				sb.WriteString("\n")
+			}
+		}
 	}
 
 	// Top findings
@@ -124,12 +135,21 @@ func (g *Generator) TerminalSummary() string {
 	if len(topFindings) > 0 {
 		sb.WriteString("Top findings:\n")
 		for i, f := range topFindings {
-			sb.WriteString(fmt.Sprintf("  %d. [%s] %s\n", i+1, strings.ToUpper(string(f.Severity)), f.Title))
+			// Confidence indicator: [TAINT], [AST], [REGEX], [SCA], [SECRET]
+			indicator := confidenceIndicator(f)
+			sb.WriteString(fmt.Sprintf("  %d. [%s] %s %s\n", i+1, strings.ToUpper(string(f.Severity)), indicator, f.Title))
 			if f.PackageName != "" {
 				sb.WriteString(fmt.Sprintf("     Package: %s@%s\n", f.PackageName, f.PackageVersion))
 			}
 			if f.FilePath != "" {
 				sb.WriteString(fmt.Sprintf("     File:    %s:%d\n", f.FilePath, f.LineStart))
+			}
+			if f.CWEID != "" {
+				if owaspLabel := cwe.OWASPCategoryLabel(f.CWEID); owaspLabel != "" {
+					sb.WriteString(fmt.Sprintf("     Class:   %s (%s)\n", f.CWEID, owaspLabel))
+				} else {
+					sb.WriteString(fmt.Sprintf("     CWE:     %s\n", f.CWEID))
+				}
 			}
 			if f.Recommendation != "" {
 				sb.WriteString(fmt.Sprintf("     Fix:     %s\n", f.Recommendation))
@@ -261,25 +281,25 @@ func isSecretFinding(f analysis.Finding) bool {
 // single, more readable report entry. The raw findings are still emitted in
 // JSON/SARIF; grouping is applied only to terminal and markdown output.
 type PackageGroup struct {
-	PackageName          string
-	PackageVersion       string
-	FilePath             string
-	Severity             analysis.Severity
-	Reachability         analysis.ReachabilityStatus
+	PackageName            string
+	PackageVersion         string
+	FilePath               string
+	Severity               analysis.Severity
+	Reachability           analysis.ReachabilityStatus
 	ReachabilityConfidence analysis.Confidence
-	Advisories           []AdvisoryEntry
-	ReachabilityEvidence []string
+	Advisories             []AdvisoryEntry
+	ReachabilityEvidence   []string
 }
 
 // AdvisoryEntry captures the details of a single advisory within a package group.
 type AdvisoryEntry struct {
-	ID          string
-	Title       string
-	Severity    analysis.Severity
+	ID           string
+	Title        string
+	Severity     analysis.Severity
 	FixedVersion string
-	AdvisoryURL string
-	CVEID       string
-	Aliases     []string
+	AdvisoryURL  string
+	CVEID        string
+	Aliases      []string
 }
 
 // GroupSCAFindings folds SCA findings by (package, version). Non-SCA findings
@@ -298,12 +318,12 @@ func GroupSCAFindings(findings []analysis.Finding) ([]analysis.Finding, []Packag
 		g, ok := groups[key]
 		if !ok {
 			g = &PackageGroup{
-				PackageName:          f.PackageName,
-				PackageVersion:       f.PackageVersion,
-				FilePath:             f.FilePath,
-				Reachability:         f.Reachability,
+				PackageName:            f.PackageName,
+				PackageVersion:         f.PackageVersion,
+				FilePath:               f.FilePath,
+				Reachability:           f.Reachability,
 				ReachabilityConfidence: f.ReachabilityConfidence,
-				ReachabilityEvidence: f.ReachabilityEvidence,
+				ReachabilityEvidence:   f.ReachabilityEvidence,
 			}
 			groups[key] = g
 		}
@@ -397,7 +417,7 @@ func (g PackageGroup) toFinding() analysis.Finding {
 			ReachabilityConfidence: g.ReachabilityConfidence,
 			ReachabilityEvidence:   g.ReachabilityEvidence,
 			Recommendation:         recommendation,
-			DetectedAt:           time.Now(),
+			DetectedAt:             time.Now(),
 		}
 	}
 
@@ -419,7 +439,7 @@ func (g PackageGroup) toFinding() analysis.Finding {
 		ReachabilityConfidence: g.ReachabilityConfidence,
 		ReachabilityEvidence:   g.ReachabilityEvidence,
 		Recommendation:         recommendation,
-		DetectedAt:           time.Now(),
+		DetectedAt:             time.Now(),
 	}
 }
 
@@ -571,6 +591,72 @@ func (g *Generator) Markdown() string {
 			}
 			sb.WriteString("\n")
 		}
+
+		// Vulnerability class summary (CWE → OWASP grouping)
+		if g.Result != nil && len(g.Result.Findings) > 0 {
+			if summary := VulnerabilityClassSummary(g.Result.Findings); summary != "" {
+				sb.WriteString("### Vulnerability Classes\n\n")
+				sb.WriteString("| OWASP | Category | Findings | Breakdown |\n|-------|----------|----------|-----------|\n")
+				// Re-parse the summary for markdown table format
+				for _, line := range strings.Split(strings.TrimSuffix(summary, "\n"), "\n") {
+					// Parse "  A03: Injection — 12 finding(s) (3 high, 6 medium, 3 low)"
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					// Extract OWASP ID, name, count, breakdown
+					parts := strings.SplitN(line, " — ", 2)
+					if len(parts) != 2 {
+						continue
+					}
+					owaspPart := strings.SplitN(parts[0], ": ", 2)
+					if len(owaspPart) != 2 {
+						continue
+					}
+					owaspID := owaspPart[0]
+					owaspName := owaspPart[1]
+					rest := parts[1]
+					// Split "12 finding(s) (3 high, 6 medium, 3 low)"
+					countAndBreak := strings.SplitN(rest, " (", 2)
+					countStr := strings.TrimSuffix(countAndBreak[0], " finding(s)")
+					breakdown := ""
+					if len(countAndBreak) == 2 {
+						breakdown = strings.TrimSuffix(countAndBreak[1], ")")
+					}
+					sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", owaspID, owaspName, countStr, breakdown))
+				}
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	if g.Result != nil && g.Result.LicenseSummary != nil {
+		ls := g.Result.LicenseSummary
+		sb.WriteString("## License Summary\n\n")
+		sb.WriteString("| Field | Value |\n|-------|-------|\n")
+		sb.WriteString(fmt.Sprintf("| Dependencies checked | %d |\n", ls.Total))
+		sb.WriteString(fmt.Sprintf("| With license | %d |\n", ls.WithLicense))
+		sb.WriteString(fmt.Sprintf("| Missing license | %d |\n", ls.NoLicense))
+		if len(ls.ByRisk) > 0 {
+			sb.WriteString("\n### Licenses by Risk\n\n")
+			sb.WriteString("| Risk | Count |\n|------|-------|\n")
+			for _, risk := range []string{"critical", "high", "medium", "low"} {
+				if count := ls.ByRisk[risk]; count > 0 {
+					sb.WriteString(fmt.Sprintf("| %s | %d |\n", risk, count))
+				}
+			}
+			sb.WriteString("\n")
+		}
+		if len(ls.ByCategory) > 0 {
+			sb.WriteString("### Licenses by Category\n\n")
+			sb.WriteString("| Category | Count |\n|----------|-------|\n")
+			for _, category := range []string{"proprietary", "unknown", "copyleft", "weak_copyleft", "permissive"} {
+				if count := ls.ByCategory[category]; count > 0 {
+					sb.WriteString(fmt.Sprintf("| %s | %d |\n", category, count))
+				}
+			}
+			sb.WriteString("\n")
+		}
 	}
 
 	// Package summary table (grouped SCA view)
@@ -623,6 +709,18 @@ func (g *Generator) Markdown() string {
 			}
 			if f.Description != "" {
 				sb.WriteString(fmt.Sprintf("\n%s\n", truncateForMarkdown(f.Description, 500)))
+			}
+			// OWASP category mapping
+			if f.CWEID != "" {
+				if owaspLabel := cwe.OWASPCategoryLabel(f.CWEID); owaspLabel != "" {
+					sb.WriteString(fmt.Sprintf("\n**OWASP:** %s\n", owaspLabel))
+				}
+			}
+			// Fix snippet for known rules
+			if f.RuleID != "" {
+				if snippet := fixsnippet.ForRule(f.RuleID); snippet != nil {
+					sb.WriteString("\n" + snippet.FormatMarkdown() + "\n")
+				}
 			}
 			if f.Recommendation != "" {
 				sb.WriteString(fmt.Sprintf("\n**Recommendation:** %s\n", f.Recommendation))
@@ -735,17 +833,17 @@ type SARIFReport struct {
 
 // SARIFRun is a single run in a SARIF report.
 type SARIFRun struct {
-	Tool        SARIFTool          `json:"tool"`
-	Results     []SARIFResult      `json:"results"`
-	Invocations []SARIFInvocation  `json:"invocations,omitempty"`
+	Tool        SARIFTool         `json:"tool"`
+	Results     []SARIFResult     `json:"results"`
+	Invocations []SARIFInvocation `json:"invocations,omitempty"`
 }
 
 // SARIFInvocation describes a single invocation of the tool, carrying scan
 // metadata as properties for CI traceability.
 type SARIFInvocation struct {
-	StartTimeUTC string           `json:"startTimeUtc,omitempty"`
-	EndTimeUTC   string           `json:"endTimeUtc,omitempty"`
-	Properties   *SARIFScanMeta   `json:"properties,omitempty"`
+	StartTimeUTC string         `json:"startTimeUtc,omitempty"`
+	EndTimeUTC   string         `json:"endTimeUtc,omitempty"`
+	Properties   *SARIFScanMeta `json:"properties,omitempty"`
 }
 
 // SARIFScanMeta is the scan metadata embedded in a SARIF invocation.
@@ -773,27 +871,27 @@ type SARIFDriver struct {
 
 // SARIFResult is a single finding in SARIF format.
 type SARIFResult struct {
-	RuleID     string             `json:"ruleId"`
-	Level      string             `json:"level"`
-	Message    SARIFMessage       `json:"message"`
-	Locations  []SARIFLocation    `json:"locations,omitempty"`
-	Properties *SARIFProperties   `json:"properties,omitempty"`
+	RuleID     string           `json:"ruleId"`
+	Level      string           `json:"level"`
+	Message    SARIFMessage     `json:"message"`
+	Locations  []SARIFLocation  `json:"locations,omitempty"`
+	Properties *SARIFProperties `json:"properties,omitempty"`
 }
 
 // SARIFProperties carries finding fingerprints and scan metadata as SARIF
 // result properties. This lets downstream tools (GitHub Code Scanning, Azure
 // DevOps) deduplicate findings across runs using stable fingerprints.
 type SARIFProperties struct {
-	SemanticFingerprint  string `json:"semantic_fingerprint,omitempty"`
-	LocationFingerprint  string `json:"location_fingerprint,omitempty"`
-	Analyzer             string `json:"analyzer,omitempty"`
-	Severity             string `json:"severity,omitempty"`
-	Confidence           string `json:"confidence,omitempty"`
-	CWEID                string `json:"cwe_id,omitempty"`
-	PackageName          string `json:"package_name,omitempty"`
-	PackageVersion       string `json:"package_version,omitempty"`
-	FixedVersion         string `json:"fixed_version,omitempty"`
-	Reachability         string `json:"reachability,omitempty"`
+	SemanticFingerprint string `json:"semantic_fingerprint,omitempty"`
+	LocationFingerprint string `json:"location_fingerprint,omitempty"`
+	Analyzer            string `json:"analyzer,omitempty"`
+	Severity            string `json:"severity,omitempty"`
+	Confidence          string `json:"confidence,omitempty"`
+	CWEID               string `json:"cwe_id,omitempty"`
+	PackageName         string `json:"package_name,omitempty"`
+	PackageVersion      string `json:"package_version,omitempty"`
+	FixedVersion        string `json:"fixed_version,omitempty"`
+	Reachability        string `json:"reachability,omitempty"`
 }
 
 // SARIFMessage is a SARIF message.
@@ -921,22 +1019,28 @@ func (g *Generator) WriteFile(format, outputPath string) error {
 	switch format {
 	case "markdown", "md":
 		content := g.Markdown()
-		return os.WriteFile(outputPath, []byte(content), 0644)
+		return os.WriteFile(outputPath, []byte(content), 0600)
 	case "json":
 		data, err := g.JSON()
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(outputPath, data, 0644)
+		return os.WriteFile(outputPath, data, 0600)
 	case "sarif":
 		report := g.SARIF("0.1.0")
 		data, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(outputPath, data, 0644)
+		return os.WriteFile(outputPath, data, 0600)
+	case "gitlab", "codequality":
+		data, err := g.GitLabCodeQuality()
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(outputPath, data, 0600)
 	default:
-		return fmt.Errorf("unsupported format: %s (supported: markdown, json, sarif)", format)
+		return fmt.Errorf("unsupported format: %s (supported: markdown, json, sarif, gitlab)", format)
 	}
 }
 
@@ -961,20 +1065,140 @@ func severityToSARIFLevel(s analysis.Severity) string {
 }
 
 // SortFindings sorts findings by severity and reachability, highest first.
+// SortFindings sorts findings by severity (desc) → confidence (desc) → file path.
 func SortFindings(findings []analysis.Finding) []analysis.Finding {
 	sorted := make([]analysis.Finding, len(findings))
 	copy(sorted, findings)
-	sort.Slice(sorted, func(i, j int) bool {
+	sort.SliceStable(sorted, func(i, j int) bool {
+		// 1. Severity (critical first)
 		si := analysis.SeverityOrder(sorted[i].Severity)
 		sj := analysis.SeverityOrder(sorted[j].Severity)
 		if si != sj {
 			return si > sj
 		}
+		// 2. Confidence (high first)
+		ci := confidenceOrder(sorted[i].Confidence)
+		cj := confidenceOrder(sorted[j].Confidence)
+		if ci != cj {
+			return ci > cj
+		}
+		// 3. Reachability
 		ri := analysis.ReachabilityWeight(sorted[i].Reachability)
 		rj := analysis.ReachabilityWeight(sorted[j].Reachability)
-		return ri > rj
+		if ri != rj {
+			return ri > rj
+		}
+		// 4. File path (alphabetical)
+		return sorted[i].FilePath < sorted[j].FilePath
 	})
 	return sorted
+}
+
+// confidenceOrder returns a comparable rank for confidence sorting.
+func confidenceOrder(c analysis.Confidence) int {
+	switch c {
+	case analysis.ConfidenceHigh:
+		return 3
+	case analysis.ConfidenceMedium:
+		return 2
+	case analysis.ConfidenceLow:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// VulnClassGroup represents a group of findings mapped to the same OWASP category.
+type VulnClassGroup struct {
+	OWASPID    string
+	OWASPName  string
+	Count      int
+	BySeverity map[string]int
+}
+
+// VulnerabilityClassSummary groups findings by CWE → OWASP category and returns
+// a formatted summary like:
+//
+//	A03: Injection — 12 findings (3 high, 6 medium, 3 low)
+//	A02: Cryptographic Failures — 4 findings (1 high, 3 medium)
+func VulnerabilityClassSummary(findings []analysis.Finding) string {
+	groups := map[string]*VulnClassGroup{}
+
+	for _, f := range findings {
+		cweID := f.CWEID
+		if cweID == "" {
+			continue
+		}
+		cat := cwe.OWASPForCWE(cweID)
+		if cat.ID == "" {
+			continue
+		}
+		g, ok := groups[cat.ID]
+		if !ok {
+			g = &VulnClassGroup{
+				OWASPID:    cat.ID,
+				OWASPName:  cat.Name,
+				BySeverity: map[string]int{},
+			}
+			groups[cat.ID] = g
+		}
+		g.Count++
+		g.BySeverity[string(f.Severity)]++
+	}
+
+	if len(groups) == 0 {
+		return ""
+	}
+
+	// Sort by count (desc), then by OWASP ID
+	var sorted []*VulnClassGroup
+	for _, g := range groups {
+		sorted = append(sorted, g)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Count != sorted[j].Count {
+			return sorted[i].Count > sorted[j].Count
+		}
+		return sorted[i].OWASPID < sorted[j].OWASPID
+	})
+
+	var sb strings.Builder
+	for _, g := range sorted {
+		var sevParts []string
+		for _, sev := range []string{"critical", "high", "medium", "low", "info"} {
+			if c := g.BySeverity[sev]; c > 0 {
+				sevParts = append(sevParts, fmt.Sprintf("%d %s", c, sev))
+			}
+		}
+		sevStr := strings.Join(sevParts, ", ")
+		sb.WriteString(fmt.Sprintf("  %s: %s — %d finding(s) (%s)\n", g.OWASPID, g.OWASPName, g.Count, sevStr))
+	}
+	return sb.String()
+}
+
+// confidenceIndicator returns a bracketed tag indicating the detection method:
+// [TAINT] for taint analysis (highest confidence), [AST] for tree-sitter AST
+// confirmation, [REGEX] for regex-based pattern matching, [SCA] for dependency
+// scanning, [SECRET] for secret detection.
+func confidenceIndicator(f analysis.Finding) string {
+	switch {
+	case f.Analyzer == "taint-patterns" || f.Analyzer == "taint-ssa":
+		return "[TAINT]"
+	case f.Analyzer == "treesitter-ast" || f.Analyzer == "gosast-embedded":
+		return "[AST]"
+	case f.Analyzer == "patterns-embedded":
+		return "[REGEX]"
+	case f.Type == analysis.TypeSCA:
+		return "[SCA]"
+	case f.Type == analysis.TypeSecret:
+		return "[SECRET]"
+	case f.Analyzer == "semgrep" || f.Analyzer == "gosec" || f.Analyzer == "bandit":
+		return "[LINTER]"
+	case f.Analyzer == "checkov":
+		return "[IAC]"
+	default:
+		return ""
+	}
 }
 
 func shortenSHA(sha string) string {

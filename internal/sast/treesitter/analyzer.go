@@ -22,8 +22,8 @@ import (
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/ignore"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
 )
 
 // Finding represents a raw taint finding before normalization.
@@ -544,14 +544,14 @@ func (a *Analyzer) registerDefaults() {
 		},
 		{
 			ID:             "TS-RB002",
-			Title:          "Use of system() (AST-confirmed)",
+			Title:          "Use of system() with interpolation (AST-confirmed)",
 			Severity:       analysis.SeverityHigh,
 			Confidence:     analysis.ConfidenceHigh,
 			Languages:      []string{"ruby"},
-			Description:    "system() is vulnerable to command injection.",
+			Description:    "system() with string interpolation is vulnerable to command injection.",
 			CWE:            "CWE-78",
 			Recommendation: "Use Open3.capture3 with array arguments.",
-			Match:          matchCallByName("system"),
+			Match:          matchRubySystemWithInterpolation,
 		},
 		{
 			ID:             "TS-RB003",
@@ -617,7 +617,7 @@ func (a *Analyzer) registerDefaults() {
 			Description:    "send() can call arbitrary methods, which may lead to security bypasses if the method name is user-controlled.",
 			CWE:            "CWE-913",
 			Recommendation: "Avoid send() with user-controlled method names. Use public_send with an allowlist.",
-			Match:          matchCallByName("send"),
+			Match:          matchRubySend,
 		},
 		{
 			ID:             "TS-RB009",
@@ -1391,6 +1391,25 @@ func (a *Analyzer) HasRulesForLanguage(lang string) bool {
 // shouldSkipFile returns true for test files and vendored code.
 func shouldSkipFile(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
+	// Minified files and common third-party library filenames
+	if strings.Contains(base, ".min.") || strings.HasSuffix(base, "_min.js") {
+		return true
+	}
+	thirdPartyPrefixes := []string{
+		"jquery", "bootstrap", "angular", "react", "vue", "backbone",
+		"underscore", "lodash", "moment", "prototype", "mootools",
+		"select2", "selectWoo", "codemirror", "tinymce", "ace",
+		"ember", "d3", "three", "chart", "raphael", "yui",
+		"dojo", "ext-all", "kendo", "syncfusion",
+		"popper", "sweetalert", "lightbox", "slick",
+		"modernizr", "html5shiv", "respond",
+		"fontawesome", "glyphicons",
+	}
+	for _, prefix := range thirdPartyPrefixes {
+		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
 	if strings.Contains(base, "_test.") || strings.Contains(base, ".test.") ||
 		strings.Contains(base, ".spec.") || strings.HasSuffix(base, ".test.js") ||
 		strings.HasSuffix(base, ".spec.ts") {
@@ -1399,7 +1418,10 @@ func shouldSkipFile(path string) bool {
 	parts := strings.Split(filepath.ToSlash(path), "/")
 	for _, part := range parts {
 		switch part {
-		case "node_modules", "vendor", "venv", ".venv", "dist", "build", "__pycache__":
+		case "node_modules", "vendor", "venv", ".venv", "dist", "build", "__pycache__",
+			"lib", "libs", "wwwroot", "third_party", "thirdparty",
+			"external", "deps", "bower_components", "jspm_packages",
+			"webjars", "packages", "Content", "Scripts":
 			return true
 		}
 	}
@@ -1463,6 +1485,74 @@ func matchCallByName(name string) func(*gotreesitter.Node, *gotreesitter.BoundTr
 		}
 		return false
 	}
+}
+
+// matchRubySend matches Ruby send() calls but suppresses when the first
+// argument is a symbol literal (e.g., send(:include, ...)) — this is a
+// legitimate metaprogramming pattern, not a security issue.
+func matchRubySend(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string) bool {
+	if lang != "ruby" || nodeType(node, bt) != "call" {
+		return false
+	}
+	fn := childByField(node, bt, "method")
+	if fn == nil || nodeType(fn, bt) != "identifier" || nodeText(fn, bt) != "send" {
+		return false
+	}
+	// Check if first argument is a symbol literal — if so, suppress
+	argsNode := childByField(node, bt, "arguments")
+	if argsNode != nil {
+		firstArg := bt.ChildByField(argsNode, "0")
+		// Try named child 0 as fallback
+		if firstArg == nil {
+			firstArg = argsNode.NamedChild(0)
+		}
+		if firstArg != nil {
+			argType := nodeType(firstArg, bt)
+			if argType == "symbol" || argType == "simple_symbol" {
+				return false // Symbol literal — legitimate metaprogramming
+			}
+		}
+	}
+	return true
+}
+
+// matchRubySystemWithInterpolation matches Ruby system() calls but only
+// when the argument contains string interpolation (#{...}), string
+// concatenation (+), or a bare variable — all of which indicate potential
+// command injection. Static string arguments are suppressed.
+func matchRubySystemWithInterpolation(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string) bool {
+	if lang != "ruby" || nodeType(node, bt) != "call" {
+		return false
+	}
+	fn := childByField(node, bt, "method")
+	if fn == nil || nodeType(fn, bt) != "identifier" || nodeText(fn, bt) != "system" {
+		return false
+	}
+	// Check the argument text for interpolation or concatenation
+	argsNode := childByField(node, bt, "arguments")
+	if argsNode != nil {
+		argsText := nodeText(argsNode, bt)
+		// Interpolation: #{...}
+		if strings.Contains(argsText, "#{") {
+			return true
+		}
+		// String concatenation: "..." + var
+		if strings.Contains(argsText, "+") {
+			return true
+		}
+		// Check if first argument is a bare variable (may be user-controlled)
+		firstArg := bt.ChildByField(argsNode, "0")
+		if firstArg == nil {
+			firstArg = argsNode.NamedChild(0)
+		}
+		if firstArg != nil {
+			argType := nodeType(firstArg, bt)
+			if argType == "identifier" {
+				return true // Variable argument — may be user-controlled
+			}
+		}
+	}
+	return false // Static string — not vulnerable
 }
 
 // matchAttributeCall matches calls like os.system(), pickle.loads(), etc.

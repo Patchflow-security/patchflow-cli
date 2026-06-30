@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 // Analyzer runs reachability analysis on a repository.

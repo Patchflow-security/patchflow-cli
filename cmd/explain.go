@@ -8,12 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/baseline"
-	"github.com/patchflow/patchflow-cli/internal/exitcode"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/baseline"
+	"github.com/Patchflow-security/patchflow-cli/internal/cwe"
+	"github.com/Patchflow-security/patchflow-cli/internal/exitcode"
+	"github.com/Patchflow-security/patchflow-cli/internal/fixsnippet"
+	fwpatterns "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/packs"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
 	"github.com/spf13/cobra"
 )
 
@@ -140,12 +144,26 @@ func explainByRuleID(formatter output.Formatter, root, ruleID string) error {
 	runner := sast.NewRunner()
 	runner.RespectGitignore = true
 
+	// First, check framework pack rules (they carry richer source/sink/
+	// sanitizer metadata than the core RuleEntry).
+	fwReg := packs.BuildDefaultRegistry()
+	for _, p := range fwReg.All() {
+		for _, r := range p.Rules() {
+			if r.ID == ruleID {
+				return outputFrameworkRuleExplanation(formatter, r)
+			}
+		}
+	}
+
 	groups := runner.AllRules()
 	for _, g := range groups {
 		for _, r := range g.Rules {
 			if r.ID == ruleID {
+				// Look up fix snippet
+				snippet := fixsnippet.ForRule(ruleID)
+
 				if output.IsJSON(formatter) {
-					return formatter.Print(map[string]interface{}{
+					result := map[string]interface{}{
 						"rule_id":   r.ID,
 						"title":     r.Title,
 						"severity":  r.Severity,
@@ -156,8 +174,19 @@ func explainByRuleID(formatter output.Formatter, root, ruleID string) error {
 							"allowed": true,
 							"format":  "// patchflow:ignore " + r.ID + " -- reason",
 						},
-					})
+					}
+					if snippet != nil {
+						result["fix_snippet"] = map[string]interface{}{
+							"title":       snippet.Title,
+							"language":    snippet.Language,
+							"vulnerable":  snippet.Vulnerable,
+							"fixed":       snippet.Fixed,
+							"explanation": snippet.Explanation,
+						}
+					}
+					return formatter.Print(result)
 				}
+
 				_ = formatter.Print("Rule: " + r.ID)
 				_ = formatter.Print("  Title: " + r.Title)
 				_ = formatter.Print("  Severity: " + r.Severity)
@@ -166,6 +195,23 @@ func explainByRuleID(formatter output.Formatter, root, ruleID string) error {
 				if hint := getFixHint(r.ID); hint != "" {
 					_ = formatter.Print("\n  Fix: " + hint)
 				}
+				if snippet != nil {
+					_ = formatter.Print("")
+					_ = formatter.Print("  Fix Suggestion:")
+					_ = formatter.Print("    " + snippet.Title)
+					_ = formatter.Print("")
+					_ = formatter.Print("    Vulnerable code:")
+					for _, line := range strings.Split(snippet.Vulnerable, "\n") {
+						_ = formatter.Print("      " + line)
+					}
+					_ = formatter.Print("")
+					_ = formatter.Print("    Fixed code:")
+					for _, line := range strings.Split(snippet.Fixed, "\n") {
+						_ = formatter.Print("      " + line)
+					}
+					_ = formatter.Print("")
+					_ = formatter.Print("    Why: " + snippet.Explanation)
+				}
 				_ = formatter.Print("\n  Suppress: // patchflow:ignore " + r.ID + " -- reason")
 				return nil
 			}
@@ -173,6 +219,95 @@ func explainByRuleID(formatter output.Formatter, root, ruleID string) error {
 	}
 
 	return formatter.PrintError(fmt.Errorf("rule %q not found. Run 'patchflow rules list' to see available rules.", ruleID))
+}
+
+// outputFrameworkRuleExplanation renders a typed framework rule with its
+// source/sink/sanitizer metadata, making the scanner feel intelligent instead
+// of like it found a string and got excited.
+func outputFrameworkRuleExplanation(formatter output.Formatter, r fwpatterns.FrameworkRule) error {
+	if output.IsJSON(formatter) {
+		result := map[string]interface{}{
+			"rule_id":    r.ID,
+			"title":      r.Title,
+			"framework":  r.Framework,
+			"language":   r.Language,
+			"severity":   string(r.Severity),
+			"confidence": string(r.Confidence),
+			"cwe":        r.CWE,
+			"match_mode": r.MatchMode.String(),
+			"maturity":   r.Maturity.String(),
+			"recommendation": r.Recommendation,
+			"suppression": map[string]interface{}{
+				"allowed": true,
+				"format":  "// patchflow:ignore " + r.ID + " -- reason",
+			},
+		}
+		if len(r.Sources) > 0 {
+			result["sources"] = sourceNames(r.Sources)
+		}
+		if len(r.Sinks) > 0 {
+			result["sinks"] = sinkNames(r.Sinks)
+		}
+		if len(r.Sanitizers) > 0 {
+			result["sanitizers"] = sanitizerNames(r.Sanitizers)
+		}
+		return formatter.Print(result)
+	}
+
+	_ = formatter.Print("Rule: " + r.ID)
+	_ = formatter.Print("  Framework:  " + r.Framework)
+	_ = formatter.Print("  Title:      " + r.Title)
+	_ = formatter.Print("  Severity:   " + string(r.Severity) + " (confidence: " + string(r.Confidence) + ")")
+	_ = formatter.Print("  Language:   " + r.Language)
+	_ = formatter.Print("  CWE:        " + r.CWE)
+	_ = formatter.Print("  Match mode: " + r.MatchMode.String())
+	_ = formatter.Print("  Maturity:   " + r.Maturity.String())
+	if len(r.Sources) > 0 {
+		_ = formatter.Print("  Sources:    " + strings.Join(sourceNames(r.Sources), ", "))
+	}
+	if len(r.Sinks) > 0 {
+		_ = formatter.Print("  Sinks:      " + strings.Join(sinkNames(r.Sinks), ", "))
+	}
+	if len(r.Sanitizers) > 0 {
+		_ = formatter.Print("  Sanitizers: " + strings.Join(sanitizerNames(r.Sanitizers), ", "))
+	}
+	if r.Recommendation != "" {
+		_ = formatter.Print("")
+		_ = formatter.Print("  Fix: " + r.Recommendation)
+	}
+	_ = formatter.Print("")
+	_ = formatter.Print("  Suppress: // patchflow:ignore " + r.ID + " -- reason")
+	return nil
+}
+
+func sourceNames(srcs []fwpatterns.SourcePattern) []string {
+	out := make([]string, 0, len(srcs))
+	for _, s := range srcs {
+		name := s.FuncName
+		if s.Annotation != "" {
+			name = s.Annotation
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func sinkNames(sinks []fwpatterns.SinkPattern) []string {
+	out := make([]string, 0, len(sinks))
+	for _, s := range sinks {
+		out = append(out, s.FuncName)
+	}
+	return out
+}
+
+func sanitizerNames(sanitizers []fwpatterns.SanitizerPattern) []string {
+	out := make([]string, 0, len(sanitizers))
+	for _, s := range sanitizers {
+		if s.FuncName != "" {
+			out = append(out, s.FuncName)
+		}
+	}
+	return out
 }
 
 // runExplainScan runs a full SAST scan for the explain command.
@@ -188,44 +323,144 @@ func runExplainScan(root string) ([]analysis.Finding, string, error) {
 	return result.Findings, "", nil
 }
 
-// outputFindingExplanation outputs a detailed finding explanation.
+// outputFindingExplanation outputs a detailed finding explanation with CWE
+// description, OWASP mapping, attack scenario, fix snippet, and references.
 func outputFindingExplanation(formatter output.Formatter, root string, f *analysis.Finding) error {
 	// Read the source code around the finding
 	evidence := readEvidence(root, f.FilePath, f.LineStart)
 
+	// Look up CWE info
+	var cweInfo *cwe.CWEInfo
+	if f.CWEID != "" {
+		if info, ok := cwe.Lookup(f.CWEID); ok {
+			cweInfo = &info
+		}
+	}
+
+	// Look up fix snippet
+	var snippet *fixsnippet.FixSnippet
+	if f.RuleID != "" {
+		snippet = fixsnippet.ForRule(f.RuleID)
+	}
+
+	// Look up framework rule metadata (sources/sinks/sanitizers) when the
+	// finding came from a framework pack. The Analyzer field is
+	// "framework-<name>" for framework findings.
+	var fwRule *fwpatterns.FrameworkRule
+	if strings.HasPrefix(f.Analyzer, "framework-") {
+		fwReg := packs.BuildDefaultRegistry()
+		for _, p := range fwReg.All() {
+			for _, r := range p.Rules() {
+				if r.ID == f.RuleID {
+					fwRule = &r
+					break
+				}
+			}
+			if fwRule != nil {
+				break
+			}
+		}
+	}
+
 	if output.IsJSON(formatter) {
-		return formatter.Print(map[string]interface{}{
-			"id":          f.ID,
-			"rule_id":     f.RuleID,
-			"title":       f.Title,
-			"description": f.Description,
-			"severity":    string(f.Severity),
-			"confidence":  string(f.Confidence),
-			"scanner":     f.Analyzer,
-			"file":        f.FilePath,
-			"line":        f.LineStart,
-			"evidence":    evidence,
-			"fix_hint":    getFixHint(f.RuleID),
+		result := map[string]interface{}{
+			"id":            f.ID,
+			"rule_id":       f.RuleID,
+			"title":         f.Title,
+			"description":   f.Description,
+			"severity":      string(f.Severity),
+			"confidence":    string(f.Confidence),
+			"scanner":       f.Analyzer,
+			"file":          f.FilePath,
+			"line":          f.LineStart,
+			"evidence":      evidence,
+			"fix_hint":      getFixHint(f.RuleID),
+			"recommendation": f.Recommendation,
 			"suppression": map[string]interface{}{
 				"allowed": true,
 				"format":  "// patchflow:ignore " + f.RuleID + " -- reason",
 			},
-			"recommendation": f.Recommendation,
-		})
+		}
+		if cweInfo != nil {
+			result["cwe"] = map[string]interface{}{
+				"id":             cweInfo.ID,
+				"name":           cweInfo.Name,
+				"description":    cweInfo.Description,
+				"owasp_id":       cweInfo.OWASP.ID,
+				"owasp_name":     cweInfo.OWASP.Name,
+				"attack_scenario": cweInfo.AttackScenario,
+				"references":     cweInfo.References,
+			}
+		}
+		if snippet != nil {
+			result["fix_snippet"] = map[string]interface{}{
+				"title":       snippet.Title,
+				"language":    snippet.Language,
+				"vulnerable":  snippet.Vulnerable,
+				"fixed":       snippet.Fixed,
+				"explanation": snippet.Explanation,
+			}
+		}
+		if fwRule != nil {
+			fwCtx := map[string]interface{}{
+				"framework":  fwRule.Framework,
+				"match_mode": fwRule.MatchMode.String(),
+				"maturity":   fwRule.Maturity.String(),
+			}
+			if len(fwRule.Sources) > 0 {
+				fwCtx["sources"] = sourceNames(fwRule.Sources)
+			}
+			if len(fwRule.Sinks) > 0 {
+				fwCtx["sinks"] = sinkNames(fwRule.Sinks)
+			}
+			if len(fwRule.Sanitizers) > 0 {
+				fwCtx["sanitizers"] = sanitizerNames(fwRule.Sanitizers)
+			}
+			result["framework"] = fwCtx
+		}
+		return formatter.Print(result)
 	}
 
 	// Terminal output
 	_ = formatter.Print("")
 	_ = formatter.Print(fmt.Sprintf("Finding: %s", f.ID))
-	_ = formatter.Print(fmt.Sprintf("  Rule:      %s — %s", f.RuleID, f.Title))
-	_ = formatter.Print(fmt.Sprintf("  Severity:  %s (confidence: %s)", f.Severity, f.Confidence))
-	_ = formatter.Print(fmt.Sprintf("  Scanner:   %s", f.Analyzer))
-	_ = formatter.Print(fmt.Sprintf("  Location:  %s:%d", f.FilePath, f.LineStart))
-	if f.Description != "" {
+	_ = formatter.Print(fmt.Sprintf("  Rule:       %s — %s", f.RuleID, f.Title))
+	_ = formatter.Print(fmt.Sprintf("  Severity:   %s (confidence: %s)", f.Severity, f.Confidence))
+	_ = formatter.Print(fmt.Sprintf("  Scanner:    %s", f.Analyzer))
+	_ = formatter.Print(fmt.Sprintf("  Location:   %s:%d", f.FilePath, f.LineStart))
+
+	// Framework context (sources/sinks/sanitizers) for framework-pack findings.
+	if fwRule != nil {
+		_ = formatter.Print(fmt.Sprintf("  Framework:  %s (%s, %s)", fwRule.Framework, fwRule.MatchMode.String(), fwRule.Maturity.String()))
+		if len(fwRule.Sources) > 0 {
+			_ = formatter.Print("  Sources:    " + strings.Join(sourceNames(fwRule.Sources), ", "))
+		}
+		if len(fwRule.Sinks) > 0 {
+			_ = formatter.Print("  Sinks:      " + strings.Join(sinkNames(fwRule.Sinks), ", "))
+		}
+		if len(fwRule.Sanitizers) > 0 {
+			_ = formatter.Print("  Sanitizers: " + strings.Join(sanitizerNames(fwRule.Sanitizers), ", "))
+		}
+	}
+
+	// CWE + OWASP mapping
+	if cweInfo != nil {
+		_ = formatter.Print("")
+		_ = formatter.Print(fmt.Sprintf("  CWE:        %s — %s", cweInfo.ID, cweInfo.Name))
+		_ = formatter.Print(fmt.Sprintf("  OWASP:      %s: %s", cweInfo.OWASP.ID, cweInfo.OWASP.Name))
+		_ = formatter.Print("")
+		_ = formatter.Print("  Description:")
+		_ = formatter.Print("    " + cweInfo.Description)
+		_ = formatter.Print("")
+		_ = formatter.Print("  Attack Scenario:")
+		_ = formatter.Print("    " + cweInfo.AttackScenario)
+	} else if f.Description != "" {
 		_ = formatter.Print("")
 		_ = formatter.Print("  Description:")
 		_ = formatter.Print("    " + f.Description)
 	}
+
+	// Evidence (source code)
 	if evidence != "" {
 		_ = formatter.Print("")
 		_ = formatter.Print("  Evidence:")
@@ -233,16 +468,47 @@ func outputFindingExplanation(formatter output.Formatter, root string, f *analys
 			_ = formatter.Print("    " + line)
 		}
 	}
-	if hint := getFixHint(f.RuleID); hint != "" {
+
+	// Fix snippet (code-level fix with before/after)
+	if snippet != nil {
+		_ = formatter.Print("")
+		_ = formatter.Print("  Fix Suggestion:")
+		_ = formatter.Print("    " + snippet.Title)
+		_ = formatter.Print("")
+		_ = formatter.Print("    Vulnerable code:")
+		for _, line := range strings.Split(snippet.Vulnerable, "\n") {
+			_ = formatter.Print("      " + line)
+		}
+		_ = formatter.Print("")
+		_ = formatter.Print("    Fixed code:")
+		for _, line := range strings.Split(snippet.Fixed, "\n") {
+			_ = formatter.Print("      " + line)
+		}
+		_ = formatter.Print("")
+		_ = formatter.Print("    Why: " + snippet.Explanation)
+	} else if hint := getFixHint(f.RuleID); hint != "" {
 		_ = formatter.Print("")
 		_ = formatter.Print("  Fix:")
 		_ = formatter.Print("    " + hint)
 	}
+
+	// Recommendation
 	if f.Recommendation != "" {
 		_ = formatter.Print("")
 		_ = formatter.Print("  Recommendation:")
 		_ = formatter.Print("    " + f.Recommendation)
 	}
+
+	// References
+	if cweInfo != nil && len(cweInfo.References) > 0 {
+		_ = formatter.Print("")
+		_ = formatter.Print("  References:")
+		for _, ref := range cweInfo.References {
+			_ = formatter.Print("    - " + ref)
+		}
+	}
+
+	// Suppression
 	_ = formatter.Print("")
 	_ = formatter.Print("  Suppress:")
 	_ = formatter.Print(fmt.Sprintf("    // patchflow:ignore %s -- false positive: <reason>", f.RuleID))

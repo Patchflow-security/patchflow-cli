@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/risk"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/risk"
 )
 
 func TestTerminalSummary(t *testing.T) {

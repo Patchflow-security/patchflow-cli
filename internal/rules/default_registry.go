@@ -1,13 +1,12 @@
 package rules
 
 import (
-	"github.com/patchflow/patchflow-cli/internal/sast"
-	"github.com/patchflow/patchflow-cli/internal/sast/gosast"
-	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
-	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
-	"github.com/patchflow/patchflow-cli/internal/sast/taint"
-	"github.com/patchflow/patchflow-cli/internal/sast/taintpatterns"
-	"github.com/patchflow/patchflow-cli/internal/sast/treesitter"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/gosast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/patterns"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/secrets"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/taint"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/taintpatterns"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/treesitter"
 )
 
 // BuildDefaultRegistry creates a Registry populated with metadata for all
@@ -86,29 +85,6 @@ func BuildDefaultRegistry() *Registry {
 			string(tr.Confidence),
 			tr.Language,
 		)
-	}
-
-	return r
-}
-
-// BuildRegistryFromRunner creates a Registry from a specific SAST runner
-// instance. This is used when custom rules are loaded, so the registry
-// reflects the actual rules that will run in a scan.
-func BuildRegistryFromRunner(runner *sast.Runner) *Registry {
-	r := NewRegistry()
-
-	for _, group := range runner.AllRules() {
-		engine := Engine(group.Scanner)
-		for _, entry := range group.Rules {
-			r.RegisterEngineRule(
-				engine,
-				entry.ID,
-				entry.Title,
-				entry.Severity,
-				"", // confidence not exposed in RuleEntry
-				group.Language,
-			)
-		}
 	}
 
 	return r

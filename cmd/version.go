@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/patchflow/patchflow-cli/pkg/version"
+	"github.com/Patchflow-security/patchflow-cli/pkg/version"
 	"github.com/spf13/cobra"
 )
 

@@ -28,12 +28,18 @@ func TestInitCreatesDirectory(t *testing.T) {
 		t.Errorf("config.yml not created: %v", err)
 	}
 
-	// Check subdirectories
-	for _, sub := range []string{"cache", "baselines", "reports"} {
+	// Check subdirectories (cache/ is NOT created — it lives in global XDG location)
+	for _, sub := range []string{"baselines", "reports"} {
 		path := filepath.Join(result.Dir, sub)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("subdirectory %s not created: %v", sub, err)
 		}
+	}
+
+	// Verify cache/ is NOT created in the project directory
+	cachePath := filepath.Join(result.Dir, "cache")
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Errorf("cache/ should NOT be created under .patchflow/ (global XDG location used instead)")
 	}
 
 	// Check .gitignore
@@ -85,6 +91,9 @@ func TestLoadConfig(t *testing.T) {
 	if !cfg.Privacy.RedactSecrets {
 		t.Error("expected RedactSecrets=true by default")
 	}
+	if !cfg.Frameworks.AutoDetect {
+		t.Error("expected Frameworks.AutoDetect=true by default")
+	}
 }
 
 func TestIsInitialized(t *testing.T) {
@@ -112,5 +121,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if len(cfg.Ignore.Paths) == 0 {
 		t.Error("expected default ignore paths")
+	}
+	if !cfg.Frameworks.AutoDetect {
+		t.Error("expected framework auto-detect enabled by default")
 	}
 }

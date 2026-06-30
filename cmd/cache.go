@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/osvdb"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -16,9 +19,19 @@ var cacheCmd = &cobra.Command{
 	Short: "Manage the PatchFlow local cache",
 	Long: `Inspect and clean the PatchFlow local cache.
 
-The cache lives under .patchflow/cache/ and contains:
+The cache lives in a global XDG-compliant location:
+  ~/.cache/patchflow/<project-hash>/
+  (or $XDG_CACHE_HOME/patchflow/<project-hash>/)
+
+It contains:
   - osv/            OSV vulnerability response cache (JSON files keyed by dependency hash)
   - sast_state.json Incremental SAST scan state (file hashes between scans)
+  - registry/       Package registry metadata cache (npm, PyPI, Maven licenses)
+  - maven/          Maven POM file cache for transitive resolution
+
+Override the cache location with:
+  --cache-dir DIR   CLI flag
+  PATCHFLOW_CACHE_DIR  environment variable
 
 Baselines (.patchflow/baselines/) and reports (.patchflow/reports/) are NOT
 part of the cache and are preserved by 'cache clean'.`,
@@ -43,10 +56,31 @@ Use --force to skip the confirmation prompt.`,
 
 var cacheCleanForce bool
 
+var cacheUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Download the local OSV vulnerability database for offline scanning",
+	Long: `Download OSV vulnerability data from the OSV.dev bulk export and cache
+it locally at ~/.patchflow/osv-db/. This enables fast offline scanning without
+API calls to OSV.dev.
+
+The database is refreshed automatically when stale (>24h old), but you can
+force a refresh with --force.
+
+Supported ecosystems: PyPI, npm, Maven, Go, RubyGems, Packagist, crates.io.
+Use --ecosystems to select specific ones (default: all relevant to detected manifests).`,
+	RunE: runCacheUpdate,
+}
+
+var cacheUpdateForce bool
+var cacheUpdateEcosystems []string
+
 func init() {
 	cacheCmd.AddCommand(cacheStatusCmd)
 	cacheCmd.AddCommand(cacheCleanCmd)
+	cacheCmd.AddCommand(cacheUpdateCmd)
 	cacheCleanCmd.Flags().BoolVar(&cacheCleanForce, "force", false, "Skip confirmation prompt")
+	cacheUpdateCmd.Flags().BoolVar(&cacheUpdateForce, "force", false, "Force refresh even if DB is fresh")
+	cacheUpdateCmd.Flags().StringSliceVar(&cacheUpdateEcosystems, "ecosystems", nil, "Ecosystems to download (pypi,npm,maven,go,rubygems,packagist,crates.io)")
 	rootCmd.AddCommand(cacheCmd)
 }
 
@@ -86,7 +120,7 @@ func runCacheStatus(cmd *cobra.Command, _ []string) error {
 		return formatter.PrintError(err)
 	}
 
-	cacheDir := filepath.Join(root, ".patchflow", "cache")
+	cacheDir := cacheutil.ResolveCacheDir(root)
 	osvDir := filepath.Join(cacheDir, "osv")
 	sastStatePath := filepath.Join(cacheDir, "sast_state.json")
 	baselinesDir := filepath.Join(root, ".patchflow", "baselines")
@@ -157,7 +191,7 @@ func runCacheClean(cmd *cobra.Command, _ []string) error {
 		return formatter.PrintError(err)
 	}
 
-	cacheDir := filepath.Join(root, ".patchflow", "cache")
+	cacheDir := cacheutil.ResolveCacheDir(root)
 	osvDir := filepath.Join(cacheDir, "osv")
 	sastStatePath := filepath.Join(cacheDir, "sast_state.json")
 
@@ -285,4 +319,102 @@ func humanBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// runCacheUpdate downloads the OSV vulnerability database for offline scanning.
+func runCacheUpdate(cmd *cobra.Command, _ []string) error {
+	formatter := FormatterFromContext(cmd.Context())
+	ctx := cmd.Context()
+
+	db := osvdb.DefaultLocalDB()
+
+	// Determine which ecosystems to download
+	var ecosystems []analysis.Ecosystem
+	if len(cacheUpdateEcosystems) > 0 {
+		for _, e := range cacheUpdateEcosystems {
+			eco := parseEcosystemFlag(e)
+			if eco != "" {
+				ecosystems = append(ecosystems, eco)
+			}
+		}
+	} else {
+		// Default: all supported ecosystems
+		ecosystems = []analysis.Ecosystem{
+			analysis.EcosystemPyPI,
+			analysis.EcosystemNPM,
+			analysis.EcosystemMaven,
+			analysis.EcosystemGo,
+			analysis.EcosystemRubyGems,
+			analysis.EcosystemPackagist,
+		}
+	}
+
+	if !output.IsJSON(formatter) {
+		formatter.Print(fmt.Sprintf("Downloading OSV vulnerability database for %d ecosystems...", len(ecosystems)))
+	}
+
+	// Check which ecosystems need refreshing
+	var toDownload []analysis.Ecosystem
+	for _, eco := range ecosystems {
+		if cacheUpdateForce || db.NeedsRefresh(eco) {
+			toDownload = append(toDownload, eco)
+		}
+	}
+
+	if len(toDownload) == 0 {
+		if !output.IsJSON(formatter) {
+			formatter.Print("  All ecosystems are up to date. Use --force to refresh.")
+		}
+		return nil
+	}
+
+	if !output.IsJSON(formatter) {
+		for _, eco := range toDownload {
+			formatter.Print(fmt.Sprintf("  Downloading %s...", eco))
+		}
+	}
+
+	if err := db.Download(ctx, toDownload); err != nil {
+		return formatter.PrintError(fmt.Errorf("failed to download OSV DB: %w", err))
+	}
+
+	// Print stats
+	stats := db.Stats()
+	if output.IsJSON(formatter) {
+		return formatter.Print(map[string]interface{}{
+			"ecosystems": db.ListEcosystems(),
+			"vuln_counts": stats,
+		})
+	}
+
+	formatter.Print("")
+	formatter.Print("OSV database updated successfully.")
+	for eco, count := range stats {
+		formatter.Print(fmt.Sprintf("  %-15s %d vulnerabilities", eco, count))
+	}
+	formatter.Print("")
+	formatter.Print("Scans will now use the local DB for fast offline lookups.")
+	return nil
+}
+
+// parseEcosystemFlag converts a string flag to an analysis.Ecosystem.
+func parseEcosystemFlag(s string) analysis.Ecosystem {
+	switch strings.ToLower(s) {
+	case "pypi", "python":
+		return analysis.EcosystemPyPI
+	case "npm", "node", "javascript":
+		return analysis.EcosystemNPM
+	case "maven", "java":
+		return analysis.EcosystemMaven
+	case "go", "golang":
+		return analysis.EcosystemGo
+	case "rubygems", "ruby", "gem":
+		return analysis.EcosystemRubyGems
+	case "packagist", "php", "composer":
+		return analysis.EcosystemPackagist
+	case "crates.io", "cargo", "rust":
+		return analysis.EcosystemCargo
+	default:
+		return ""
+	}
 }

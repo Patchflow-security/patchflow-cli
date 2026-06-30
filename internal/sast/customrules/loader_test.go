@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func TestLoadFromBytes_ValidRules(t *testing.T) {
@@ -224,5 +226,71 @@ func TestParseLanguage_AllLanguages(t *testing.T) {
 		if string(got) != tt.want {
 			t.Errorf("parseLanguage(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestLoadPolicyFromBytes_FrameworkSelectionAndOverrides(t *testing.T) {
+	yamlData := []byte(`
+frameworks:
+  auto_detect: false
+  enabled: [express, react]
+  disabled: [spring]
+
+framework_overrides:
+  express:
+    custom_sources:
+      - func: req.headers
+    custom_sinks:
+      - func: res.redirect
+        arg_index: 0
+    custom_sanitizers:
+      - func: isSafeRedirect
+      - regex: 'allowlistedHost\('
+    severity_overrides:
+      PF-EXPRESS-REDIRECT-001: high
+`)
+
+	policy, err := LoadPolicyFromBytes(yamlData)
+	if err != nil {
+		t.Fatalf("LoadPolicyFromBytes failed: %v", err)
+	}
+	if policy.FrameworkSelection.AutoDetect {
+		t.Fatal("expected auto_detect=false")
+	}
+	if !policy.FrameworkSelection.AutoDetectSet {
+		t.Fatal("expected AutoDetectSet=true")
+	}
+	if len(policy.FrameworkSelection.Enabled) != 2 {
+		t.Fatalf("expected 2 enabled frameworks, got %d", len(policy.FrameworkSelection.Enabled))
+	}
+	override, ok := policy.FrameworkOverrides["express"]
+	if !ok {
+		t.Fatal("expected express override")
+	}
+	if len(override.Sources) != 1 || override.Sources[0].FuncName != "req.headers" {
+		t.Fatalf("unexpected sources: %+v", override.Sources)
+	}
+	if len(override.Sinks) != 1 || override.Sinks[0].FuncName != "res.redirect" {
+		t.Fatalf("unexpected sinks: %+v", override.Sinks)
+	}
+	if len(override.Sanitizers) != 2 {
+		t.Fatalf("expected 2 sanitizers, got %d", len(override.Sanitizers))
+	}
+	if got := override.SeverityOverrides["PF-EXPRESS-REDIRECT-001"]; got != analysis.SeverityHigh {
+		t.Fatalf("severity override = %q, want high", got)
+	}
+}
+
+func TestLoadPolicyFromBytes_InvalidFrameworkOverrideSeverity(t *testing.T) {
+	yamlData := []byte(`
+framework_overrides:
+  express:
+    severity_overrides:
+      PF-EXPRESS-REDIRECT-001: urgent
+`)
+
+	_, err := LoadPolicyFromBytes(yamlData)
+	if err == nil {
+		t.Fatal("expected error for invalid framework severity override")
 	}
 }

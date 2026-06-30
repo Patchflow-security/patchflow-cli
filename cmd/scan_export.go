@@ -6,14 +6,15 @@ import (
 	"os"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/reachability"
-	"github.com/patchflow/patchflow-cli/internal/report"
-	"github.com/patchflow/patchflow-cli/internal/risk"
-	"github.com/patchflow/patchflow-cli/internal/sast"
-	"github.com/patchflow/patchflow-cli/internal/sca"
-	"github.com/patchflow/patchflow-cli/internal/scan"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/reachability"
+	"github.com/Patchflow-security/patchflow-cli/internal/report"
+	"github.com/Patchflow-security/patchflow-cli/internal/risk"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sbom"
+	"github.com/Patchflow-security/patchflow-cli/internal/sca"
+	"github.com/Patchflow-security/patchflow-cli/internal/scan"
 	"github.com/spf13/cobra"
 )
 
@@ -27,10 +28,11 @@ then exports the findings in the specified format.`,
 }
 
 func init() {
-	scanExportCmd.Flags().String("format", "json", "Export format (json, sarif)")
+	scanExportCmd.Flags().String("format", "json", "Export format (json, sarif, cyclonedx-json, spdx-json, vex-json, dep-tree, dep-dot)")
 	scanExportCmd.Flags().String("output", "", "Output file path (stdout if omitted)")
 	scanExportCmd.Flags().Bool("upload-github", false, "Upload SARIF to GitHub Code Scanning (requires --format sarif and GITHUB_TOKEN)")
 	scanExportCmd.Flags().Bool("no-gitignore", false, "Do not respect .gitignore patterns (scan all files)")
+	scanExportCmd.Flags().Bool("include-vex", false, "Include VEX statements in CycloneDX SBOM (vulnerability exploitability)")
 }
 
 func runScanExport(cmd *cobra.Command, _ []string) error {
@@ -38,14 +40,15 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 	outputPath, _ := cmd.Flags().GetString("output")
 	uploadGitHub, _ := cmd.Flags().GetBool("upload-github")
 	noGitignore, _ := cmd.Flags().GetBool("no-gitignore")
+	includeVEX, _ := cmd.Flags().GetBool("include-vex")
 	formatter := FormatterFromContext(cmd.Context())
 	ctx := cmd.Context()
 
 	// Validate format
 	switch format {
-	case "json", "sarif":
+	case "json", "sarif", "cyclonedx-json", "spdx-json", "vex-json", "dep-tree", "dep-dot":
 	default:
-		return fmt.Errorf("unsupported format: %q (supported: json, sarif)", format)
+		return fmt.Errorf("unsupported format: %q (supported: json, sarif, cyclonedx-json, spdx-json, vex-json, dep-tree, dep-dot)", format)
 	}
 
 	// --upload-github requires SARIF format.
@@ -148,10 +151,45 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return formatter.PrintError(err)
 		}
+	case "cyclonedx-json":
+		sbomCfg := sbom.GenerateConfig{
+			Format:       "cyclonedx-json",
+			ToolVersion:  versionString(),
+			IncludeVEX:   includeVEX,
+		}
+		data, err = sbom.GenerateCycloneDXJSON(result, sbomCfg)
+		if err != nil {
+			return formatter.PrintError(err)
+		}
+	case "spdx-json":
+		sbomCfg := sbom.GenerateConfig{
+			Format:      "spdx-json",
+			ToolVersion: versionString(),
+		}
+		data, err = sbom.GenerateSPDXJSON(result, sbomCfg)
+		if err != nil {
+			return formatter.PrintError(err)
+		}
+	case "vex-json":
+		sbomCfg := sbom.GenerateConfig{
+			Format:      "vex-json",
+			ToolVersion: versionString(),
+			IncludeVEX:  true,
+		}
+		data, err = sbom.GenerateVEXJSON(result, sbomCfg)
+		if err != nil {
+			return formatter.PrintError(err)
+		}
+	case "dep-tree":
+		graph := sbom.BuildDepGraph(result)
+		data = []byte(graph.RenderTree())
+	case "dep-dot":
+		graph := sbom.BuildDepGraph(result)
+		data = []byte(graph.RenderDOT())
 	}
 
 	if outputPath != "" {
-		if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		if err := os.WriteFile(outputPath, data, 0600); err != nil {
 			return fmt.Errorf("failed to write output file: %w", err)
 		}
 		if !uploadGitHub {

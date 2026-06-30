@@ -1,18 +1,24 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/reachability"
-	"github.com/patchflow/patchflow-cli/internal/report"
-	"github.com/patchflow/patchflow-cli/internal/risk"
-	"github.com/patchflow/patchflow-cli/internal/sast"
-	"github.com/patchflow/patchflow-cli/internal/sca"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/fix"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/pathutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/pr"
+	"github.com/Patchflow-security/patchflow-cli/internal/reachability"
+	"github.com/Patchflow-security/patchflow-cli/internal/report"
+	"github.com/Patchflow-security/patchflow-cli/internal/reviewers"
+	"github.com/Patchflow-security/patchflow-cli/internal/risk"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sca"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +30,9 @@ var (
 	prReviewNoSAST    bool
 	prReviewNoSecrets bool
 	prReviewNoReach   bool
+	prReviewSuggestReviewers bool
+	prReviewAnnotations      bool
+	prReviewSuggestFixes     bool
 )
 
 var prReviewCmd = &cobra.Command{
@@ -34,18 +43,25 @@ findings, reachability data, and recommendations — all locally, before you ope
 
 This is the PatchFlow "is this change safe?" command. It runs SCA (OSV.dev),
 SAST (local tools), reachability analysis, and risk scoring, then produces a
-terminal summary or a report file (markdown/json/sarif).`,
+terminal summary or a report file (markdown/json/sarif).
+
+Use --suggest-reviewers to get CODEOWNERS and git blame based reviewer suggestions.
+Use --annotations to generate inline code annotations for the PR diff.
+Use --suggest-fixes to generate safe fix proposals for detected vulnerabilities.`,
 	RunE: runPRReview,
 }
 
 func init() {
 	prReviewCmd.Flags().StringVar(&prReviewBase, "base", "", "Base branch (auto-detected if omitted)")
 	prReviewCmd.Flags().StringVar(&prReviewHead, "head", "", "Head branch (current branch if omitted)")
-	prReviewCmd.Flags().StringVar(&prReviewFormat, "format", "", "Report format: markdown, json, sarif")
+	prReviewCmd.Flags().StringVar(&prReviewFormat, "format", "", "Report format: markdown, json, sarif, pr-summary, annotations")
 	prReviewCmd.Flags().StringVar(&prReviewOutput, "output", "", "Write report to file (stdout if omitted)")
 	prReviewCmd.Flags().BoolVar(&prReviewNoSAST, "no-sast", false, "Skip SAST analysis")
 	prReviewCmd.Flags().BoolVar(&prReviewNoSecrets, "no-secrets", false, "Skip secret detection")
 	prReviewCmd.Flags().BoolVar(&prReviewNoReach, "no-reachability", false, "Skip reachability analysis")
+	prReviewCmd.Flags().BoolVar(&prReviewSuggestReviewers, "suggest-reviewers", false, "Suggest reviewers based on CODEOWNERS and git blame")
+	prReviewCmd.Flags().BoolVar(&prReviewAnnotations, "annotations", false, "Generate inline code annotations for the PR diff")
+	prReviewCmd.Flags().BoolVar(&prReviewSuggestFixes, "suggest-fixes", false, "Generate safe fix proposals for detected vulnerabilities")
 
 	rootCmd.AddCommand(prReviewCmd)
 }
@@ -197,6 +213,57 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 	// 5. Output
 	gen := report.NewGenerator(result, &riskScore)
 
+	// Handle PR-specific formats
+	if prReviewFormat == "pr-summary" || prReviewFormat == "annotations" {
+		// Get diff for finding placement
+		diffOutput, err := pr.GetDiff(repo.Root, repo.BaseBranch)
+		if err == nil {
+			diffs := pr.ParseDiff(diffOutput)
+			placements := pr.PlaceFindings(allFindings, diffs)
+
+			if prReviewFormat == "pr-summary" {
+				summary := pr.GeneratePRSummary(result, &riskScore, placements)
+				if prReviewOutput != "" {
+					if err := pathutil.ValidateOutputPath(repo.Root, prReviewOutput); err != nil {
+						return formatter.PrintError(fmt.Errorf("invalid output path: %w", err))
+					}
+					md := pr.RenderMarkdown(summary)
+					if err := os.WriteFile(prReviewOutput, []byte(md), 0600); err != nil {
+						return formatter.PrintError(fmt.Errorf("failed to write PR summary: %w", err))
+					}
+					if !output.IsJSON(formatter) {
+						_ = formatter.PrintSuccess("PR summary written to " + prReviewOutput)
+					}
+				} else {
+					_ = formatter.Print(pr.RenderMarkdown(summary))
+				}
+				return nil
+			}
+
+			if prReviewFormat == "annotations" {
+				annotations := pr.GenerateAnnotations(placements)
+				if prReviewOutput != "" {
+					if err := pathutil.ValidateOutputPath(repo.Root, prReviewOutput); err != nil {
+						return formatter.PrintError(fmt.Errorf("invalid output path: %w", err))
+					}
+					data, err := json.MarshalIndent(annotations, "", "  ")
+					if err != nil {
+						return formatter.PrintError(err)
+					}
+					if err := os.WriteFile(prReviewOutput, data, 0600); err != nil {
+						return formatter.PrintError(fmt.Errorf("failed to write annotations: %w", err))
+					}
+					if !output.IsJSON(formatter) {
+						_ = formatter.PrintSuccess(fmt.Sprintf("%d annotations written to %s", len(annotations), prReviewOutput))
+					}
+				} else {
+					return formatter.Print(annotations)
+				}
+				return nil
+			}
+		}
+	}
+
 	// Write report file if requested
 	if prReviewFormat != "" || prReviewOutput != "" {
 		fmtStr := prReviewFormat
@@ -204,6 +271,9 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 			fmtStr = "markdown"
 		}
 		if prReviewOutput != "" {
+			if err := pathutil.ValidateOutputPath(repo.Root, prReviewOutput); err != nil {
+				return formatter.PrintError(fmt.Errorf("invalid output path: %w", err))
+			}
 			if err := gen.WriteFile(fmtStr, prReviewOutput); err != nil {
 				return formatter.PrintError(fmt.Errorf("failed to write report: %w", err))
 			}
@@ -301,6 +371,93 @@ func runPRReview(cmd *cobra.Command, _ []string) error {
 		status = "Caution — review findings before opening a PR"
 	}
 	_ = formatter.Print("Status: " + status)
+
+	// Inline annotations
+	if prReviewAnnotations {
+		diffOutput, err := pr.GetDiff(repo.Root, repo.BaseBranch)
+		if err == nil {
+			diffs := pr.ParseDiff(diffOutput)
+			placements := pr.PlaceFindings(allFindings, diffs)
+			annotations := pr.GenerateAnnotations(placements)
+			_ = formatter.Print("")
+			if len(annotations) > 0 {
+				_ = formatter.Print(fmt.Sprintf("Inline Annotations (%d):", len(annotations)))
+				for _, ann := range annotations {
+					_ = formatter.Print(fmt.Sprintf("  [%s] %s:%d — %s",
+						strings.ToUpper(ann.Severity), ann.Path, ann.Line, ann.Title))
+				}
+			} else {
+				_ = formatter.Print("Inline Annotations: none (no findings in changed code)")
+			}
+		}
+	}
+
+	// Reviewer suggestions
+	if prReviewSuggestReviewers {
+		suggestResult, err := reviewers.Suggest(reviewers.SuggestOptions{
+			RepoRoot:      repo.Root,
+			ChangedFiles:  repo.ChangedFiles,
+			MaxReviewers:  5,
+			UseBlame:      true,
+			UseCodeowners: true,
+		})
+		if err == nil {
+			_ = formatter.Print("")
+			if len(suggestResult.Reviewers) > 0 {
+				_ = formatter.Print("Suggested Reviewers:")
+				for i, rev := range suggestResult.Reviewers {
+					ownerTag := ""
+					if rev.IsOwner {
+						ownerTag = " (CODEOWNER)"
+					}
+					_ = formatter.Print(fmt.Sprintf("  %d. @%s%s — %d pts", i+1, rev.Username, ownerTag, rev.Score))
+					for _, reason := range rev.Reasons {
+						_ = formatter.Print(fmt.Sprintf("       %s", reason))
+					}
+				}
+				if !suggestResult.CodeownersFound {
+					_ = formatter.Print("  (no CODEOWNERS file found — using git blame only)")
+				}
+			} else {
+				_ = formatter.Print("Suggested Reviewers: none found")
+			}
+		}
+	}
+
+	// Fix suggestions
+	if prReviewSuggestFixes {
+		fixEngine := fix.NewEngine()
+		proposals := fixEngine.Suggest(allFindings)
+		_ = formatter.Print("")
+		if len(proposals) > 0 {
+			_ = formatter.Print(fmt.Sprintf("Fix Proposals (%d):", len(proposals)))
+			autoCount := 0
+			for i, p := range proposals {
+				autoTag := ""
+				if p.AutoApplicable {
+					autoTag = " [auto]"
+					autoCount++
+				}
+				_ = formatter.Print(fmt.Sprintf("  %d. [%s%s] %s", i+1,
+					strings.ToUpper(string(p.Confidence)), autoTag, p.Title))
+				if p.FilePath != "" {
+					_ = formatter.Print(fmt.Sprintf("     File: %s:%d", p.FilePath, p.LineStart))
+				}
+				if p.PackageName != "" {
+					pkgLine := fmt.Sprintf("     Package: %s@%s", p.PackageName, p.PackageVersion)
+					if p.FixedVersion != "" {
+						pkgLine += fmt.Sprintf(" → %s", p.FixedVersion)
+					}
+					_ = formatter.Print(pkgLine)
+				}
+			}
+			_ = formatter.Print("")
+			_ = formatter.Print(fmt.Sprintf("  %d auto-applicable, %d need review", autoCount, len(proposals)-autoCount))
+			_ = formatter.Print("  Run 'patchflow fix apply --all' to apply auto-applicable fixes")
+		} else {
+			_ = formatter.Print("Fix Proposals: none available for current findings")
+		}
+	}
 
 	return nil
 }

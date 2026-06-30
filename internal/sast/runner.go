@@ -14,21 +14,25 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/ignore"
-	"github.com/patchflow/patchflow-cli/internal/sast/customrules"
-	"github.com/patchflow/patchflow-cli/internal/sast/gosast"
-	"github.com/patchflow/patchflow-cli/internal/sast/incremental"
-	"github.com/patchflow/patchflow-cli/internal/sast/patterns"
-	"github.com/patchflow/patchflow-cli/internal/sast/secrets"
-	"github.com/patchflow/patchflow-cli/internal/sast/suppression"
-	"github.com/patchflow/patchflow-cli/internal/sast/taint"
-	"github.com/patchflow/patchflow-cli/internal/sast/taintpatterns"
-	"github.com/patchflow/patchflow-cli/internal/sast/treesitter"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/frameworks"
+	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/customrules"
+	fwpatterns "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/packs"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/gosast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/incremental"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/patterns"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/secrets"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/suppression"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/taint"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/taintpatterns"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/treesitter"
 )
 
 // Tool represents an external SAST tool that can be invoked via subprocess.
@@ -43,11 +47,11 @@ type Tool struct {
 // Runner manages embedded scanners and external SAST tools.
 type Runner struct {
 	// Embedded scanners (always available, no installation required)
-	gosastAnalyzer     *gosast.Analyzer
-	secretScanner      *secrets.Scanner
-	patternScanner     *patterns.Scanner
-	taintAnalyzer      *taint.Analyzer
-	treesitterAnalyzer *treesitter.Analyzer
+	gosastAnalyzer       *gosast.Analyzer
+	secretScanner        *secrets.Scanner
+	patternScanner       *patterns.Scanner
+	taintAnalyzer        *taint.Analyzer
+	treesitterAnalyzer   *treesitter.Analyzer
 	taintPatternAnalyzer *taintpatterns.Analyzer
 
 	// Suppression manager for //patchflow:ignore directives
@@ -60,11 +64,11 @@ type Runner struct {
 	Timeout      time.Duration
 
 	// Flags to control which scanners run
-	NoEmbeddedGo           bool
-	NoEmbeddedSecrets      bool
-	NoEmbeddedPatterns     bool
-	NoEmbeddedTaint        bool
-	NoEmbeddedTreeSitter   bool
+	NoEmbeddedGo            bool
+	NoEmbeddedSecrets       bool
+	NoEmbeddedPatterns      bool
+	NoEmbeddedTaint         bool
+	NoEmbeddedTreeSitter    bool
 	NoEmbeddedTaintPatterns bool
 
 	// ShowSuppressed controls whether suppressed findings are included in output
@@ -92,20 +96,50 @@ type Runner struct {
 	// used to skip files during scanning. When true, a .gitignore matcher is
 	// initialized on first use and shared across all embedded scanners.
 	RespectGitignore bool
+
+	// TaintDepth controls the maximum inter-procedural call-hop depth for
+	// the taint pattern analyzer. 0 disables inter-procedural analysis.
+	// Default is 3. Set via the --taint-depth CLI flag.
+	TaintDepth int
+
+	// FrameworkConfig controls which framework rule packs are activated.
+	// It is the highest-precedence layer and is typically set from CLI flags.
+	FrameworkConfig fwpatterns.SelectionConfig
+	// FrameworkProjectConfig is the lower-precedence project-level framework
+	// selection loaded from .patchflow/config.yml.
+	FrameworkProjectConfig fwpatterns.SelectionConfig
+
+	// FrameworksDetected holds the frameworks detected during the last
+	// Analyze run. Populated by Analyze; read by callers for reporting
+	// and explain output.
+	FrameworksDetected []frameworks.Detection
+
+	// frameworkRegistry holds all official embedded framework packs. It is
+	// lazily initialized on first use.
+	frameworkRegistry *fwpatterns.Registry
+}
+
+// SetTaintDepth configures the inter-procedural taint analysis depth on the
+// taint pattern analyzer. 0 disables inter-procedural analysis.
+func (r *Runner) SetTaintDepth(depth int) {
+	r.TaintDepth = depth
+	r.taintPatternAnalyzer.SetTaintDepth(depth)
 }
 
 // NewRunner creates a SAST runner with embedded scanners and external tools.
 func NewRunner() *Runner {
 	r := &Runner{
-		Timeout:               120 * time.Second,
-		gosastAnalyzer:        gosast.NewAnalyzer(),
-		secretScanner:         secrets.NewScanner(),
-		patternScanner:        patterns.NewScanner(),
-		taintAnalyzer:         taint.NewAnalyzer(),
-		treesitterAnalyzer:    treesitter.NewAnalyzer(),
-		taintPatternAnalyzer:  taintpatterns.NewAnalyzer(),
-		suppressionMgr:        suppression.NewManager(),
+		Timeout:              120 * time.Second,
+		gosastAnalyzer:       gosast.NewAnalyzer(),
+		secretScanner:        secrets.NewScanner(),
+		patternScanner:       patterns.NewScanner(),
+		taintAnalyzer:        taint.NewAnalyzer(),
+		treesitterAnalyzer:   treesitter.NewAnalyzer(),
+		taintPatternAnalyzer: taintpatterns.NewAnalyzer(),
+		suppressionMgr:       suppression.NewManager(),
+		TaintDepth:           taintpatterns.DefaultTaintDepth,
 	}
+	r.taintPatternAnalyzer.SetTaintDepth(r.TaintDepth)
 
 	r.Tools = []Tool{
 		{
@@ -136,30 +170,38 @@ func NewRunner() *Runner {
 			IsAvailable: func() bool { return commandExists("gitleaks") },
 			Run:         runGitleaks,
 		},
+		{
+			Name:        "checkov",
+			Binary:      "checkov",
+			Language:    "iac",
+			IsAvailable: func() bool { return commandExists("checkov") },
+			Run:         runCheckov,
+		},
 	}
 
 	return r
 }
 
-// loadCustomRules loads custom rules from a YAML file and adds them to the
-// pattern scanner. If CustomRulesPath is set, it loads from that path.
-// Otherwise, it looks for .patchflow/rules.yaml in the project root.
-func (r *Runner) loadCustomRules(root string) error {
-	var rules []patterns.PatternRule
-	var err error
+// loadRulePolicy loads the user YAML policy, adds generic regex rules to the
+// pattern scanner, and returns any framework selection/override metadata.
+func (r *Runner) loadRulePolicy(root string) (*customrules.Policy, error) {
+	var (
+		policy *customrules.Policy
+		err    error
+	)
 
 	if r.CustomRulesPath != "" {
-		rules, err = customrules.LoadFromFile(r.CustomRulesPath)
+		policy, err = customrules.LoadPolicyFromFile(r.CustomRulesPath)
 	} else {
-		rules, err = customrules.LoadFromDir(root)
+		policy, err = customrules.LoadPolicyFromDir(root)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if len(rules) > 0 {
-		r.patternScanner.AddRules(rules)
+	if len(policy.PatternRules) > 0 {
+		r.patternScanner.AddRules(policy.PatternRules)
 	}
-	return nil
+	return policy, nil
 }
 
 // RuleGroup represents a group of rules from a specific scanner.
@@ -303,7 +345,8 @@ func (r *Runner) AllRules() []RuleGroup {
 // .patchflow/rules.yaml in the given root directory. This is public so
 // commands like `rules list` can load custom rules without running a full scan.
 func (r *Runner) LoadCustomRules(root string) error {
-	return r.loadCustomRules(root)
+	_, err := r.loadRulePolicy(root)
+	return err
 }
 
 // AvailableTools returns the names of external tools that are installed and ready to run.
@@ -324,11 +367,12 @@ func (r *Runner) EmbeddedTools() []string {
 
 // Result is the output of a SAST analysis run.
 type Result struct {
-	Findings        []analysis.Finding `json:"findings"`
-	ToolsRun        []string           `json:"tools_run"`
-	ToolsSkipped    []string           `json:"tools_skipped"`
-	Errors          []string           `json:"errors,omitempty"`
-	SuppressedCount int                `json:"suppressed_count,omitempty"`
+	Findings        []analysis.Finding     `json:"findings"`
+	ToolsRun        []string               `json:"tools_run"`
+	ToolsSkipped    []string               `json:"tools_skipped"`
+	Errors          []string               `json:"errors,omitempty"`
+	SuppressedCount int                    `json:"suppressed_count,omitempty"`
+	Frameworks      []frameworks.Detection `json:"frameworks,omitempty"`
 }
 
 // Analyze runs all embedded scanners first, then external tools as supplements.
@@ -336,7 +380,8 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	result := &Result{}
 
 	// --- Phase 0: Load custom rules from YAML ---
-	if err := r.loadCustomRules(root); err != nil {
+	policy, err := r.loadRulePolicy(root)
+	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("custom-rules: %v", err))
 	}
 
@@ -350,6 +395,45 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			r.patternScanner.SetIgnoreMatcher(matcher)
 			r.treesitterAnalyzer.SetIgnoreMatcher(matcher)
 		}
+	}
+
+	// --- Phase 0c: Framework detection + pack selection ---
+	// Detect frameworks in the project, select the official embedded packs to
+	// activate, build a line matcher for pattern/template rules, and register
+	// framework taint rules into the taint engine. No detection => no
+	// framework rules run, which keeps noise out of non-framework projects.
+	var frameworkMatcher *fwpatterns.Matcher
+	if r.frameworkRegistry == nil {
+		r.frameworkRegistry = packs.BuildDefaultRegistry()
+	}
+	loader := fwpatterns.NewLoader(r.frameworkRegistry)
+	cfg := r.FrameworkProjectConfig
+	if policy != nil {
+		cfg = fwpatterns.MergeSelectionConfig(cfg, policy.FrameworkSelection)
+	}
+	cfg = fwpatterns.MergeSelectionConfig(cfg, r.FrameworkConfig)
+	if !cfg.AutoDetectSet && len(cfg.Enabled) == 0 {
+		// Default: auto-detect on when nothing explicit was configured.
+		cfg.AutoDetect = true
+		cfg.AutoDetectSet = true
+	}
+	selection := loader.SelectForRoot(root, cfg, frameworks.NewDetector())
+	r.FrameworksDetected = selection.Detections
+	result.Frameworks = selection.Detections
+	if len(selection.Packs) > 0 {
+		var fwRules []fwpatterns.FrameworkRule
+		for _, p := range selection.Packs {
+			if policy != nil {
+				if override, ok := policy.FrameworkOverrides[p.Name()]; ok {
+					p = fwpatterns.ApplyPackOverride(p, override)
+				}
+			}
+			fwRules = append(fwRules, p.Rules()...)
+		}
+		frameworkMatcher = fwpatterns.NewMatcher(fwRules)
+		// Register framework taint rules into the taint engine so its
+		// source->sink tracking covers framework-specific flows.
+		r.taintPatternAnalyzer.AddRules(fwpatterns.ToTaintRules(fwRules))
 	}
 
 	// --- Phase 1: Embedded scanners ---
@@ -437,7 +521,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// 3. Full scan: walk tree, scan everything.
 	// (gitChangedSet was built above before the Go SAST section.)
 
-	if scanPatterns || scanSecrets || scanTreeSitter {
+	if scanPatterns || scanSecrets || scanTreeSitter || frameworkMatcher != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -447,6 +531,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			results, errors := runParallelScanners(
 				scanCtx, root, ignoreMatcher,
 				r.patternScanner, r.secretScanner, r.treesitterAnalyzer, r.taintPatternAnalyzer,
+				frameworkMatcher,
 				scanPatterns, scanSecrets, scanTreeSitter, scanTaintPatterns,
 				r.IncludeTests, r.Timeout, incState, gitChangedSet,
 			)
@@ -491,43 +576,84 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	}
 
 	// --- Phase 2: External tools (supplement embedded scanners) ---
+	// Run all available external tools in parallel for faster scans.
 
+	type externalResult struct {
+		name     string
+		findings []analysis.Finding
+		err      error
+	}
+
+	// First, determine which tools are available
+	var availableTools []Tool
 	for _, tool := range r.Tools {
 		if !tool.IsAvailable() {
 			result.ToolsSkipped = append(result.ToolsSkipped, tool.Name)
 			continue
 		}
+		availableTools = append(availableTools, tool)
+	}
 
-		toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
-		findings, err := tool.Run(toolCtx, root)
-		cancel()
+	// Run all available tools concurrently
+	if len(availableTools) > 0 {
+		resultCh := make(chan externalResult, len(availableTools))
+		var wg sync.WaitGroup
 
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", tool.Name, err))
-			result.ToolsSkipped = append(result.ToolsSkipped, tool.Name)
-			continue
+		for _, tool := range availableTools {
+			wg.Add(1)
+			go func(t Tool) {
+				defer wg.Done()
+				toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+				findings, err := t.Run(toolCtx, root)
+				cancel()
+				resultCh <- externalResult{name: t.Name, findings: findings, err: err}
+			}(tool)
 		}
 
-		// Filter to changed files if requested
-		if r.ChangedOnly && len(r.ChangedFiles) > 0 {
-			findings = filterFindingsToChanged(findings, r.ChangedFiles)
-		}
-		if !r.IncludeTests {
-			findings = filterFindingsToNonTests(findings)
+		// Close channel after all goroutines finish
+		go func() {
+			wg.Wait()
+			close(resultCh)
+		}()
+
+		// Collect results in order (channel preserves goroutine completion order,
+		// but we sort findings by tool name for deterministic output)
+		var collectedResults []externalResult
+		for sr := range resultCh {
+			collectedResults = append(collectedResults, sr)
 		}
 
-		// Drop external gosec findings for rule IDs that the embedded
-		// gosast scanner already implements. The embedded scanner has
-		// better precision (value-based checks, mock-file detection, etc.)
-		// so its suppressions should be respected — if the embedded scanner
-		// suppresses a finding, the external gosec finding for the same
-		// rule at the same location should also be dropped.
-		if tool.Name == "gosec" {
-			findings = filterGosecOverlaps(findings)
-		}
+		// Sort by tool name for deterministic output
+		sort.Slice(collectedResults, func(i, j int) bool {
+			return collectedResults[i].name < collectedResults[j].name
+		})
 
-		result.Findings = append(result.Findings, findings...)
-		result.ToolsRun = append(result.ToolsRun, tool.Name)
+		for _, sr := range collectedResults {
+			if sr.err != nil {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", sr.name, sr.err))
+				result.ToolsSkipped = append(result.ToolsSkipped, sr.name)
+				continue
+			}
+
+			findings := sr.findings
+
+			// Filter to changed files if requested
+			if r.ChangedOnly && len(r.ChangedFiles) > 0 {
+				findings = filterFindingsToChanged(findings, r.ChangedFiles)
+			}
+			if !r.IncludeTests {
+				findings = filterFindingsToNonTests(findings)
+			}
+
+			// Drop external gosec findings for rule IDs that the embedded
+			// gosast scanner already implements.
+			if sr.name == "gosec" {
+				findings = filterGosecOverlaps(findings)
+			}
+
+			result.Findings = append(result.Findings, findings...)
+			result.ToolsRun = append(result.ToolsRun, sr.name)
+		}
 	}
 
 	// --- Phase 2b: Apply severity overrides for external tool findings ---
@@ -541,6 +667,13 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// findings on the same file+line+rule are deduplicated (preferring
 	// the embedded scanner's finding via the priority map).
 	result.Findings = dedupFindings(result.Findings)
+
+	// --- Phase 2d: Semantic deduplication ---
+	// Collapse findings with the same rule + file + evidence across different
+	// lines. This prevents the same vulnerability (e.g., the same Process.Start
+	// call copied 869 times in a generated file) from producing 869 separate
+	// findings. The first occurrence is kept; duplicates are dropped.
+	result.Findings = semanticDedupFindings(result.Findings)
 
 	// --- Phase 3: Apply suppression directives (//patchflow:ignore) ---
 	if !r.ShowSuppressed {
@@ -664,6 +797,60 @@ func dedupFindings(findings []analysis.Finding) []analysis.Finding {
 	result := make([]analysis.Finding, 0, len(order))
 	for _, k := range order {
 		result = append(result, best[k])
+	}
+	return result
+}
+
+// semanticDedupFindings collapses findings that share the same rule ID, file
+// path, and evidence string across different line numbers. This prevents the
+// same vulnerability pattern (e.g., Process.Start("cmd.exe", ...) copied
+// hundreds of times in a generated file) from producing hundreds of separate
+// findings. The first occurrence is kept; subsequent duplicates are dropped.
+//
+// The evidence comparison is normalized (whitespace-trimmed) to handle
+// minor formatting differences. Findings with empty evidence are not
+// collapsed (they may represent distinct issues that happen to share a rule).
+//
+// This runs after dedupFindings (which handles same-line duplicates) and
+// before suppression filtering.
+func semanticDedupFindings(findings []analysis.Finding) []analysis.Finding {
+	type semKey struct {
+		ruleID   string
+		file     string
+		evidence string
+	}
+	seen := make(map[semKey]bool)
+	result := make([]analysis.Finding, 0, len(findings))
+
+	for _, f := range findings {
+		evidence := strings.TrimSpace(f.Evidence)
+		if evidence == "" {
+			// No evidence to compare — keep the finding as-is.
+			result = append(result, f)
+			continue
+		}
+
+		// Normalize the file path to last two components for robustness
+		// (same logic as dedupFindings).
+		normalizedPath := f.FilePath
+		parts := strings.Split(filepath.ToSlash(normalizedPath), "/")
+		if len(parts) >= 2 {
+			normalizedPath = parts[len(parts)-2] + "/" + parts[len(parts)-1]
+		} else if len(parts) == 1 {
+			normalizedPath = parts[0]
+		}
+
+		ruleKey := normalizeRuleID(f.RuleID)
+		if ruleKey == "" {
+			ruleKey = f.Title
+		}
+
+		k := semKey{ruleID: ruleKey, file: normalizedPath, evidence: evidence}
+		if seen[k] {
+			continue // duplicate — same rule + file + evidence on a different line
+		}
+		seen[k] = true
+		result = append(result, f)
 	}
 	return result
 }
@@ -1247,6 +1434,108 @@ func maskSecret(s string) string {
 		return strings.Repeat("*", len(s))
 	}
 	return s[:2] + strings.Repeat("*", len(s)-4) + s[len(s)-2:]
+}
+
+// --- checkov (IaC scanner) ---
+
+// checkovReport represents the JSON output from checkov.
+type checkovReport struct {
+	Results struct {
+		FailedChecks []checkovResult `json:"failed_checks"`
+	} `json:"results"`
+}
+
+type checkovResult struct {
+	CheckID       string   `json:"check_id"`
+	CheckName     string   `json:"check_name"`
+	CheckType     string   `json:"check_type"`
+	FilePath      string   `json:"file_path"`
+	FileLineRange []int    `json:"file_line_range"`
+	Severity      string   `json:"severity"`
+	Guideline     string   `json:"guideline"`
+	Evaluated     []string `json:"evaluations"`
+	BcID          string   `json:"bc_check_id"`
+}
+
+// runCheckov runs the Checkov IaC scanner on the repository root.
+// Checkov scans Terraform, Kubernetes, Dockerfile, CloudFormation, ARM,
+// and other IaC formats for misconfigurations and policy violations.
+func runCheckov(ctx context.Context, root string) ([]analysis.Finding, error) {
+	// Run checkov with JSON output, scanning all IaC file types.
+	// --quiet suppresses the CLI banner. --compact skips passing checks.
+	cmd := exec.CommandContext(ctx, "checkov", "--directory", root, "--output", "json", "--quiet", "--compact")
+	cmd.Dir = root
+	output, err := cmd.Output()
+	if err != nil {
+		if len(output) > 0 {
+			// checkov returns non-zero when failed checks are found
+		} else {
+			return nil, fmt.Errorf("checkov execution failed: %w", err)
+		}
+	}
+
+	// Checkov outputs a JSON array (one element per framework scanned).
+	// We need to handle both array and single-object formats.
+	var reports []checkovReport
+	if err := json.Unmarshal(output, &reports); err != nil {
+		// Try single object
+		var single checkovReport
+		if err2 := json.Unmarshal(output, &single); err2 != nil {
+			return nil, fmt.Errorf("failed to parse checkov output: %w", err)
+		}
+		reports = []checkovReport{single}
+	}
+
+	var findings []analysis.Finding
+	for _, report := range reports {
+		for _, r := range report.Results.FailedChecks {
+			lineStart := 0
+			lineEnd := 0
+			if len(r.FileLineRange) >= 2 {
+				lineStart = r.FileLineRange[0]
+				lineEnd = r.FileLineRange[1]
+			}
+
+			// Generate a stable ID from check_id + file + line
+			id := fmt.Sprintf("iac-checkov-%s-%s-%d", r.CheckID, filepath.Base(r.FilePath), lineStart)
+
+			findings = append(findings, analysis.Finding{
+				ID:             id,
+				Type:           analysis.TypeIaC,
+				Analyzer:       "checkov",
+				Severity:       normalizeCheckovSeverity(r.Severity),
+				Confidence:     analysis.ConfidenceHigh,
+				Title:          r.CheckName,
+				Description:    fmt.Sprintf("Checkov check %s failed: %s", r.CheckID, r.CheckName),
+				FilePath:       r.FilePath,
+				LineStart:      lineStart,
+				LineEnd:        lineEnd,
+				RuleID:         r.CheckID,
+				AdvisoryURL:    r.Guideline,
+				Recommendation: fmt.Sprintf("See checkov documentation for %s: %s", r.CheckID, r.Guideline),
+				DetectedAt:     time.Now(),
+			})
+		}
+	}
+
+	return findings, nil
+}
+
+// normalizeCheckovSeverity converts Checkov severity strings to analysis.Severity.
+// Checkov uses: HIGH, MEDIUM, LOW. If severity is empty, default to MEDIUM.
+func normalizeCheckovSeverity(s string) analysis.Severity {
+	switch strings.ToUpper(s) {
+	case "HIGH":
+		return analysis.SeverityHigh
+	case "MEDIUM":
+		return analysis.SeverityMedium
+	case "LOW":
+		return analysis.SeverityLow
+	case "CRITICAL":
+		return analysis.SeverityCritical
+	default:
+		return analysis.SeverityMedium // checkov default is medium when not specified
+	}
 }
 
 // PlatformBinaryName returns the platform-specific binary name for a tool.

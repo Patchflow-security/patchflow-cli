@@ -1,6 +1,9 @@
 package sast
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -84,8 +87,8 @@ func TestPlatformBinaryName(t *testing.T) {
 
 func TestNewRunner(t *testing.T) {
 	runner := NewRunner()
-	if len(runner.Tools) != 4 {
-		t.Errorf("expected 4 tools, got %d", len(runner.Tools))
+	if len(runner.Tools) != 5 {
+		t.Errorf("expected 5 tools, got %d", len(runner.Tools))
 	}
 
 	// Check tool names
@@ -117,5 +120,53 @@ func TestIsTestPath(t *testing.T) {
 		if got := isTestPath(tt.path); got != tt.want {
 			t.Errorf("isTestPath(%q) = %v, want %v", tt.path, got, tt.want)
 		}
+	}
+}
+
+func TestAnalyzeLoadsFrameworkPolicyFromRulesYAML(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".patchflow"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".patchflow", "rules.yaml"), []byte(`
+frameworks:
+  auto_detect: false
+  enabled: [rails]
+
+framework_overrides:
+  rails:
+    severity_overrides:
+      PF-RAILS-REDIRECT-001: high
+`), 0o644); err != nil {
+		t.Fatalf("write rules.yaml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.rb"), []byte(`redirect_to params[:next_url]`), 0o644); err != nil {
+		t.Fatalf("write controller.rb: %v", err)
+	}
+
+	runner := NewRunner()
+	runner.Tools = nil
+	runner.NoEmbeddedGo = true
+	runner.NoEmbeddedSecrets = true
+	runner.NoEmbeddedTreeSitter = true
+	runner.NoEmbeddedTaint = true
+	runner.NoEmbeddedTaintPatterns = true
+
+	result, err := runner.Analyze(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+
+	var found bool
+	for _, finding := range result.Findings {
+		if finding.RuleID == "PF-RAILS-REDIRECT-001" {
+			found = true
+			if finding.Severity != "high" {
+				t.Fatalf("severity = %s, want high", finding.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected framework finding, got %+v", result.Findings)
 	}
 }

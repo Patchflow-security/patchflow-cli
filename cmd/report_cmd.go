@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/reachability"
-	"github.com/patchflow/patchflow-cli/internal/report"
-	"github.com/patchflow/patchflow-cli/internal/risk"
-	"github.com/patchflow/patchflow-cli/internal/sast"
-	"github.com/patchflow/patchflow-cli/internal/sca"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/reachability"
+	"github.com/Patchflow-security/patchflow-cli/internal/report"
+	"github.com/Patchflow-security/patchflow-cli/internal/risk"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sca"
 	"github.com/spf13/cobra"
 )
 

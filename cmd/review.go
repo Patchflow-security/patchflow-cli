@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/patchflow/patchflow-cli/internal/api"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/review"
+	"github.com/Patchflow-security/patchflow-cli/internal/api"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/review"
 	"github.com/spf13/cobra"
 )
 

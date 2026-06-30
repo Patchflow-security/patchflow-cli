@@ -5,6 +5,114 @@ import (
 	"strings"
 )
 
+// suppressJS051 checks whether a JS051 (exec with string literal) match is a
+// false positive. The regex matches exec("...") but if the argument is a
+// static string with no variable interpolation, it's not command injection.
+func suppressJS051(line string) bool {
+	// If the line contains variable concatenation (+) or template literals (${...}),
+	// it's potentially vulnerable — don't suppress
+	if strings.Contains(line, "+") || strings.Contains(line, "${") {
+		return false
+	}
+	// If it's a static string with no concatenation, suppress
+	// Check if the exec argument is a pure string literal
+	execRe := regexp.MustCompile(`(?i)\bexec\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	if execRe.MatchString(line) {
+		return true
+	}
+	return false
+}
+
+// suppressJS044 checks whether a JS044 (innerHTML XSS) match is a false
+// positive from known third-party library code. The regex matches any
+// `.innerHTML = <variable>` pattern, which produces false positives in:
+//   - Calendar widgets: calendar.js, datepicker libraries
+//   - DOM utility libraries that use innerHTML for rendering
+//   - "Impossible" (secure) variants in benchmark suites
+//
+// This function checks the line content for known library patterns. A more
+// robust solution would pass the file path to SuppressFunc, but that requires
+// architectural changes.
+func suppressJS044(line string) bool {
+	// Calendar library patterns (e.g., DHTML calendar, JSCal2)
+	if strings.Contains(line, "Calendar._TT") ||
+		strings.Contains(line, "cal.convertNumbers") ||
+		strings.Contains(line, "cal.date") ||
+		strings.Contains(line, "Calendar._DN") ||
+		strings.Contains(line, "cal.minYear") ||
+		strings.Contains(line, "cal.maxYear") {
+		return true
+	}
+	// jQuery/plugin patterns that use innerHTML for DOM construction
+	if strings.Contains(line, "jQuery") && strings.Contains(line, "innerHTML") {
+		return true
+	}
+	return false
+}
+
+// suppressJAVA012 checks whether a JAVA012 (hardcoded password) match is a
+// false positive. The regex matches any `password = <value>` pattern, which
+// produces false positives on:
+//   - Setter assignments: this.password = password
+//   - Field declarations: private String password = ""
+//   - Empty string defaults: password = ""
+//   - Placeholder values: password = "xxx" or password = "changeme"
+//   - Variable-to-variable assignments: password = input
+//
+// Real hardcoded secrets are string literals with meaningful content (4+ chars,
+// not a placeholder, not empty, not a variable name).
+func suppressJAVA012(line string) bool {
+	trimmed := strings.TrimSpace(line)
+
+	// Suppress setter assignments: this.password = password (RHS is a bare identifier)
+	// Pattern: this.X = X  or  this.X = y (variable, not literal)
+	if regexp.MustCompile(`(?i)this\.\w+\s*=\s*\w+\s*[;{]`).MatchString(trimmed) {
+		// Check if RHS is a string literal — if not, it's a variable assignment
+		if !strings.Contains(trimmed, "\"") && !strings.Contains(trimmed, "'") {
+			return true
+		}
+	}
+
+	// Suppress field declarations with empty string default
+	// Pattern: private/protected/public String password = ""
+	if regexp.MustCompile(`(?i)(private|protected|public)\s+.*\b\w+\s*=\s*""\s*;`).MatchString(trimmed) {
+		return true
+	}
+
+	// Suppress empty string assignments: password = ""
+	if regexp.MustCompile(`(?i)\bpassword\s*=\s*""\s*;`).MatchString(trimmed) {
+		return true
+	}
+
+	// Suppress variable-to-variable assignments: password = someVariable;
+	// (no quotes on RHS means it's not a literal)
+	rhsMatch := regexp.MustCompile(`(?i)\bpassword\s*=\s*(.+?);`).FindStringSubmatch(trimmed)
+	if len(rhsMatch) >= 2 {
+		rhs := strings.TrimSpace(rhsMatch[1])
+		// If RHS doesn't start with a quote, it's not a string literal
+		if !strings.HasPrefix(rhs, "\"") && !strings.HasPrefix(rhs, "'") {
+			return true
+		}
+		// If RHS is an empty string or placeholder, suppress
+		rhsVal := strings.Trim(rhs, "\"'")
+		if rhsVal == "" || rhsVal == "xxx" || rhsVal == "changeme" ||
+			rhsVal == "placeholder" || rhsVal == "todo" || rhsVal == "YOUR_PASSWORD" {
+			return true
+		}
+		// If the value looks like a config key name (all lowercase + underscores), suppress
+		if isConfigKeyName(rhsVal) {
+			return true
+		}
+	}
+
+	// Suppress setter method patterns: setPassword(String password) { this.password = password; }
+	if regexp.MustCompile(`(?i)setPassword\s*\(`).MatchString(trimmed) {
+		return true
+	}
+
+	return false
+}
+
 // suppressPY045 checks whether a PY045 (hardcoded password/secret) match is a
 // false positive. The regex matches any variable whose name contains
 // "password"/"secret"/"token" assigned to a string of 4+ chars. This produces

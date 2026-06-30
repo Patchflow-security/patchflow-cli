@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/config"
+	"github.com/Patchflow-security/patchflow-cli/internal/config"
 )
 
 // AuthStatus represents the current authentication state.

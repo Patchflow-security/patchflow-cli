@@ -50,43 +50,43 @@ const (
 	ReachabilityHigh    ReachabilityStatus = "high"    // directly imported or invoked
 	ReachabilityMedium  ReachabilityStatus = "medium"  // direct dependency, possible runtime usage
 	ReachabilityLow     ReachabilityStatus = "low"     // transitive dependency, no direct usage
-	ReachabilityNone    ReachabilityStatus = "none"     // not present in dependency graph
+	ReachabilityNone    ReachabilityStatus = "none"    // not present in dependency graph
 	ReachabilityUnknown ReachabilityStatus = "unknown" // analysis incomplete
 )
 
 // Finding is the normalized output of any analyzer.
 type Finding struct {
-	ID             string              `json:"id"`
-	Type           FindingType         `json:"type"`
-	Analyzer       string              `json:"analyzer"`
-	Severity       Severity            `json:"severity"`
-	Confidence     Confidence          `json:"confidence"`
-	Title          string              `json:"title"`
-	Description    string              `json:"description,omitempty"`
-	FilePath       string              `json:"file_path,omitempty"`
-	LineStart      int                 `json:"line_start,omitempty"`
-	LineEnd        int                 `json:"line_end,omitempty"`
-	PackageName    string              `json:"package_name,omitempty"`
-	PackageVersion string              `json:"package_version,omitempty"`
-	FixedVersion   string              `json:"fixed_version,omitempty"`
-	CVEID          string              `json:"cve_id,omitempty"`
-	CWEID          string              `json:"cwe_id,omitempty"`
-	AdvisoryURL    string              `json:"advisory_url,omitempty"`
-	RuleID         string              `json:"rule_id,omitempty"`
-	Evidence       string              `json:"evidence,omitempty"`
-	Recommendation string              `json:"recommendation,omitempty"`
+	ID             string      `json:"id"`
+	Type           FindingType `json:"type"`
+	Analyzer       string      `json:"analyzer"`
+	Severity       Severity    `json:"severity"`
+	Confidence     Confidence  `json:"confidence"`
+	Title          string      `json:"title"`
+	Description    string      `json:"description,omitempty"`
+	FilePath       string      `json:"file_path,omitempty"`
+	LineStart      int         `json:"line_start,omitempty"`
+	LineEnd        int         `json:"line_end,omitempty"`
+	PackageName    string      `json:"package_name,omitempty"`
+	PackageVersion string      `json:"package_version,omitempty"`
+	FixedVersion   string      `json:"fixed_version,omitempty"`
+	CVEID          string      `json:"cve_id,omitempty"`
+	CWEID          string      `json:"cwe_id,omitempty"`
+	AdvisoryURL    string      `json:"advisory_url,omitempty"`
+	RuleID         string      `json:"rule_id,omitempty"`
+	Evidence       string      `json:"evidence,omitempty"`
+	Recommendation string      `json:"recommendation,omitempty"`
 
 	// Reachability fields (populated by the reachability analyzer for SCA findings).
-	Reachability          ReachabilityStatus `json:"reachability,omitempty"`
-	ReachabilityConfidence Confidence        `json:"reachability_confidence,omitempty"`
-	ReachabilityEvidence  []string           `json:"reachability_evidence,omitempty"`
+	Reachability           ReachabilityStatus `json:"reachability,omitempty"`
+	ReachabilityConfidence Confidence         `json:"reachability_confidence,omitempty"`
+	ReachabilityEvidence   []string           `json:"reachability_evidence,omitempty"`
 
 	// Stable fingerprints used for baseline comparison and deduplication.
 	// The semantic fingerprint is line-number independent so that findings
 	// survive code reformatting and minor edits. The location fingerprint is
 	// a coarser key that includes the line for legacy compatibility.
-	SemanticFingerprint  string `json:"semantic_fingerprint,omitempty"`
-	LocationFingerprint  string `json:"location_fingerprint,omitempty"`
+	SemanticFingerprint string `json:"semantic_fingerprint,omitempty"`
+	LocationFingerprint string `json:"location_fingerprint,omitempty"`
 
 	// Lifecycle
 	DetectedAt time.Time `json:"detected_at"`
@@ -96,25 +96,27 @@ type Finding struct {
 type Ecosystem string
 
 const (
-	EcosystemGo       Ecosystem = "Go"
-	EcosystemNPM      Ecosystem = "npm"
-	EcosystemPyPI     Ecosystem = "PyPI"
-	EcosystemCargo    Ecosystem = "crates.io"
-	EcosystemRubyGems Ecosystem = "RubyGems"
+	EcosystemGo        Ecosystem = "Go"
+	EcosystemNPM       Ecosystem = "npm"
+	EcosystemPyPI      Ecosystem = "PyPI"
+	EcosystemCargo     Ecosystem = "crates.io"
+	EcosystemRubyGems  Ecosystem = "RubyGems"
 	EcosystemPackagist Ecosystem = "Packagist"
-	EcosystemMaven    Ecosystem = "Maven"
+	EcosystemMaven     Ecosystem = "Maven"
+	EcosystemHelm      Ecosystem = "Helm"
 )
 
 // Dependency represents a single package dependency parsed from a manifest or lockfile.
 type Dependency struct {
-	Name        string    `json:"name"`
-	Version     string    `json:"version"`
-	Ecosystem   Ecosystem `json:"ecosystem"`
-	ManifestPath string   `json:"manifest_path"`
-	IsDirect    bool      `json:"is_direct"`
-	IsDev       bool      `json:"is_dev,omitempty"`
-	IsRoot      bool      `json:"is_root,omitempty"`
-	License     string    `json:"license,omitempty"`
+	Name         string    `json:"name"`
+	Version      string    `json:"version"`
+	Ecosystem    Ecosystem `json:"ecosystem"`
+	ManifestPath string    `json:"manifest_path"`
+	IsDirect     bool      `json:"is_direct"`
+	IsDev        bool      `json:"is_dev,omitempty"`
+	IsRoot       bool      `json:"is_root,omitempty"`
+	License      string    `json:"license,omitempty"`
+	Repository   string    `json:"repository,omitempty"`
 }
 
 // AnalysisResult is the complete output of an analysis run.
@@ -128,6 +130,7 @@ type AnalysisResult struct {
 	CompletedAt    time.Time       `json:"completed_at"`
 	Findings       []Finding       `json:"findings"`
 	Dependencies   []Dependency    `json:"dependencies"`
+	LicenseSummary *LicenseSummary `json:"license_summary,omitempty"`
 	RiskScore      int             `json:"risk_score"`
 	RiskLevel      string          `json:"risk_level"`
 	FilesChanged   int             `json:"files_changed"`
@@ -137,18 +140,32 @@ type AnalysisResult struct {
 	Analyzers      []string        `json:"analyzers"`
 	EngineTimings  []EngineTiming  `json:"engine_timings,omitempty"`
 
+	// Monorepo metadata — describes the detected monorepo structure (if any).
+	MonorepoTool    string   `json:"monorepo_tool,omitempty"`
+	MonorepoMembers []string `json:"monorepo_members,omitempty"`
+
 	// Scan metadata — describes how the scan was run so reports are
 	// self-describing and reproducible in CI.
-	Profile           string          `json:"profile,omitempty"`           // quick, standard, deep
-	Mode              string          `json:"mode,omitempty"`              // full, changed, since
-	Baseline          string          `json:"baseline,omitempty"`          // baseline name when --new-only
-	NewOnly           bool            `json:"new_only,omitempty"`          // whether --new-only was active
-	SinceRef          string          `json:"since_ref,omitempty"`         // git ref passed to --since
-	GovernanceProfile string          `json:"governance_profile,omitempty"` // dev, pr, ci, audit
-	Duration          time.Duration   `json:"duration,omitempty"`          // total scan duration
-	ExitCode          int             `json:"exit_code,omitempty"`         // final exit code (0=success, 1=findings, ...)
-	Version           string          `json:"version,omitempty"`           // CLI version
-	ChangedFiles      []string        `json:"changed_files,omitempty"`     // filtered changed-file inventory
+	Profile           string        `json:"profile,omitempty"`            // quick, standard, deep
+	Mode              string        `json:"mode,omitempty"`               // full, changed, since
+	Baseline          string        `json:"baseline,omitempty"`           // baseline name when --new-only
+	NewOnly           bool          `json:"new_only,omitempty"`           // whether --new-only was active
+	SinceRef          string        `json:"since_ref,omitempty"`          // git ref passed to --since
+	GovernanceProfile string        `json:"governance_profile,omitempty"` // dev, pr, ci, audit
+	Duration          time.Duration `json:"duration,omitempty"`           // total scan duration
+	ExitCode          int           `json:"exit_code,omitempty"`          // final exit code (0=success, 1=findings, ...)
+	Version           string        `json:"version,omitempty"`            // CLI version
+	ChangedFiles      []string      `json:"changed_files,omitempty"`      // filtered changed-file inventory
+}
+
+// LicenseSummary captures dependency license coverage in scan reports without
+// coupling the core analysis package to the SBOM package.
+type LicenseSummary struct {
+	Total       int            `json:"total"`
+	WithLicense int            `json:"with_license"`
+	NoLicense   int            `json:"no_license"`
+	ByCategory  map[string]int `json:"by_category,omitempty"`
+	ByRisk      map[string]int `json:"by_risk,omitempty"`
 }
 
 // EngineTiming records the duration a specific scanner engine took.

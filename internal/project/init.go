@@ -1,5 +1,7 @@
 // Package project handles the initialization of a PatchFlow project directory
-// (.patchflow/) with configuration, cache, baselines, and reports subdirectories.
+// (.patchflow/) with configuration, baselines, and reports subdirectories.
+// Cache data is stored in a global XDG-compliant location (~/.cache/patchflow/)
+// and is NOT created under .patchflow/ — this keeps project directories clean.
 package project
 
 import (
@@ -8,41 +10,50 @@ import (
 	"path/filepath"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"gopkg.in/yaml.v3"
 )
 
 // ProjectConfig is the .patchflow/config.yml structure.
 type ProjectConfig struct {
-	ProjectID     string `yaml:"project_id,omitempty"`
+	ProjectID      string `yaml:"project_id,omitempty"`
 	OrganizationID string `yaml:"organization_id,omitempty"`
-	BackendURL    string `yaml:"backend_url,omitempty"`
-	Mode          string `yaml:"mode"`
+	BackendURL     string `yaml:"backend_url,omitempty"`
+	Mode           string `yaml:"mode"`
 
-	Analysis AnalysisConfig `yaml:"analysis"`
-	Privacy  PrivacyConfig  `yaml:"privacy"`
-	Ignore   IgnoreConfig   `yaml:"ignore"`
+	Analysis   AnalysisConfig   `yaml:"analysis"`
+	Privacy    PrivacyConfig    `yaml:"privacy"`
+	Ignore     IgnoreConfig     `yaml:"ignore"`
+	Frameworks FrameworksConfig `yaml:"frameworks"`
 }
 
 // AnalysisConfig controls which analyzers run and their behavior.
 type AnalysisConfig struct {
-	DefaultProfile       string `yaml:"default_profile"`
-	ChangedFilesOnly     bool   `yaml:"changed_files_only"`
-	IncludeReachability  bool   `yaml:"include_reachability"`
-	IncludeSAST          bool   `yaml:"include_sast"`
-	IncludeSecrets       bool   `yaml:"include_secrets"`
-	IncludeFixProposals  bool   `yaml:"include_fix_proposals"`
+	DefaultProfile      string `yaml:"default_profile"`
+	ChangedFilesOnly    bool   `yaml:"changed_files_only"`
+	IncludeReachability bool   `yaml:"include_reachability"`
+	IncludeSAST         bool   `yaml:"include_sast"`
+	IncludeSecrets      bool   `yaml:"include_secrets"`
+	IncludeFixProposals bool   `yaml:"include_fix_proposals"`
 }
 
 // PrivacyConfig controls data handling.
 type PrivacyConfig struct {
-	RedactSecrets       bool `yaml:"redact_secrets"`
-	SendCodeToRemoteAI  bool `yaml:"send_code_to_remote_ai"`
+	RedactSecrets        bool `yaml:"redact_secrets"`
+	SendCodeToRemoteAI   bool `yaml:"send_code_to_remote_ai"`
 	RetainLocalCacheDays int  `yaml:"retain_local_cache_days"`
 }
 
 // IgnoreConfig specifies paths to exclude from analysis.
 type IgnoreConfig struct {
 	Paths []string `yaml:"paths"`
+}
+
+// FrameworksConfig controls framework pack auto-detection and explicit pack
+// selection at the project level.
+type FrameworksConfig struct {
+	AutoDetect bool     `yaml:"auto_detect"`
+	Enabled    []string `yaml:"enabled,omitempty"`
+	Disabled   []string `yaml:"disabled,omitempty"`
 }
 
 // DefaultConfig returns the default project configuration.
@@ -73,6 +84,9 @@ func DefaultConfig() ProjectConfig {
 				".git/**",
 			},
 		},
+		Frameworks: FrameworksConfig{
+			AutoDetect: true,
+		},
 	}
 }
 
@@ -98,8 +112,12 @@ func Init(root string) (*InitResult, error) {
 		}, nil
 	}
 
-	// Create directory structure
-	subdirs := []string{"cache", "baselines", "reports"}
+	// Create directory structure.
+	// Note: cache/ is NOT created here — it lives in a global XDG-compliant
+	// location (~/.cache/patchflow/<project-hash>/) to avoid polluting the
+	// project directory. Only project-specific artifacts (baselines, reports)
+	// remain under .patchflow/.
+	subdirs := []string{"baselines", "reports"}
 	if err := os.MkdirAll(pfDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create .patchflow directory: %w", err)
 	}
@@ -116,22 +134,23 @@ func Init(root string) (*InitResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal config: %w", err)
 	}
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write config.yml: %w", err)
 	}
 
 	// Write state.json
 	state := map[string]interface{}{
 		"initialized_at": time.Now().UTC().Format(time.RFC3339),
-		"last_scan":       "",
-		"baseline":        "",
+		"last_scan":      "",
+		"baseline":       "",
 	}
 	stateData, _ := yaml.Marshal(state)
 	statePath := filepath.Join(pfDir, "state.json")
-	_ = os.WriteFile(statePath, stateData, 0644)
+	_ = os.WriteFile(statePath, stateData, 0600)
 
-	// Write .gitignore for cache (but keep reports and baselines)
-	gitignoreContent := "cache/\n"
+	// Write .gitignore (keep reports and baselines tracked, nothing to ignore
+	// since cache is no longer stored under .patchflow/)
+	gitignoreContent := "# PatchFlow project directory\n# Reports and baselines are project artifacts.\n# Cache is stored globally at ~/.cache/patchflow/ (XDG-compliant).\n"
 	gitignorePath := filepath.Join(pfDir, ".gitignore")
 	_ = os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644)
 

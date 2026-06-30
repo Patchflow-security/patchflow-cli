@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/baseline"
-	"github.com/patchflow/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/baseline"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
 )
 
 // --- Golden repository builders ---
@@ -260,6 +260,116 @@ func TestScanMixedGolden(t *testing.T) {
 	}
 	if !hasFindingWithRule(findings, "JS001") {
 		t.Errorf("expected JS001 in mixed repo, got: %v", ruleIDs(findings))
+	}
+}
+
+// buildGoWorkGolden creates a Go workspace monorepo with two modules.
+func buildGoWorkGolden(t *testing.T) *goldenRepo {
+	g := newGoldenRepo(t)
+	g.write("go.work", `go 1.21
+
+use (
+	./services/api
+	./services/worker
+)
+`)
+	g.write("services/api/main.go", `package main
+
+func main() {
+	token := "hardcoded-api-secret"
+	_ = token
+}
+`)
+	g.write("services/api/go.mod", "module example.com/api\n\ngo 1.21\n")
+	g.write("services/worker/main.go", `package main
+
+func main() {
+	password := "hardcoded-worker-password"
+	_ = password
+}
+`)
+	g.write("services/worker/go.mod", "module example.com/worker\n\ngo 1.21\n")
+	g.commit("initial go.work monorepo")
+	return g
+}
+
+// TestScanGoWorkGolden verifies that scanning a go.work monorepo detects
+// findings across both workspace modules.
+func TestScanGoWorkGolden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	g := buildGoWorkGolden(t)
+	findings := runScan(t, g.root)
+	if len(findings) == 0 {
+		t.Errorf("expected findings in go.work monorepo, got 0")
+	}
+	// Verify findings come from both modules
+	foundAPI := false
+	foundWorker := false
+	for _, f := range findings {
+		if strings.Contains(f.FilePath, "services/api/") {
+			foundAPI = true
+		}
+		if strings.Contains(f.FilePath, "services/worker/") {
+			foundWorker = true
+		}
+	}
+	if !foundAPI {
+		t.Errorf("expected findings from services/api/ module, got: %v", ruleIDs(findings))
+	}
+	if !foundWorker {
+		t.Errorf("expected findings from services/worker/ module, got: %v", ruleIDs(findings))
+	}
+}
+
+// buildPnpmWorkspaceGolden creates a pnpm workspace monorepo with two packages.
+func buildPnpmWorkspaceGolden(t *testing.T) *goldenRepo {
+	g := newGoldenRepo(t)
+	g.write("pnpm-workspace.yaml", `packages:
+  - "packages/*"
+`)
+	g.write("packages/ui/index.js", `function exec(cmd) {
+    return eval(cmd);
+}
+`)
+	g.write("packages/ui/package.json", `{"name":"@app/ui","version":"1.0.0"}`)
+	g.write("packages/utils/index.js", `function run(input) {
+    return eval(input);
+}
+`)
+	g.write("packages/utils/package.json", `{"name":"@app/utils","version":"1.0.0"}`)
+	g.commit("initial pnpm workspace monorepo")
+	return g
+}
+
+// TestScanPnpmWorkspaceGolden verifies that scanning a pnpm workspace monorepo
+// detects findings across all workspace packages.
+func TestScanPnpmWorkspaceGolden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+	g := buildPnpmWorkspaceGolden(t)
+	findings := runScan(t, g.root)
+	if !hasFindingWithRule(findings, "JS001") {
+		t.Errorf("expected JS001 in pnpm workspace, got: %v", ruleIDs(findings))
+	}
+	// Verify findings come from both packages
+	foundUI := false
+	foundUtils := false
+	for _, f := range findings {
+		if strings.Contains(f.FilePath, "packages/ui/") {
+			foundUI = true
+		}
+		if strings.Contains(f.FilePath, "packages/utils/") {
+			foundUtils = true
+		}
+	}
+	if !foundUI {
+		t.Errorf("expected findings from packages/ui/, got: %v", ruleIDs(findings))
+	}
+	if !foundUtils {
+		t.Errorf("expected findings from packages/utils/, got: %v", ruleIDs(findings))
 	}
 }
 

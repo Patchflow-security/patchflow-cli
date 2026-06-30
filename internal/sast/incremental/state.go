@@ -1,6 +1,7 @@
 // Package incremental tracks file hashes between scans so that only changed
-// files need to be re-scanned. State is persisted as JSON under
-// .patchflow/cache/sast_state.json.
+// files need to be re-scanned. State is persisted as JSON in a global
+// XDG-compliant cache location (resolved via cacheutil) at
+// ~/.cache/patchflow/<project-hash>/sast_state.json.
 package incremental
 
 import (
@@ -13,7 +14,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/ignore"
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
 )
 
 // maxFileSize matches the scanner limit (2MB). Files larger than this are
@@ -25,6 +27,11 @@ const maxFileSize int64 = 2 * 1024 * 1024
 var skipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true,
 	"build": true, "__pycache__": true, ".patchflow": true,
+	// Third-party library directories
+	"lib": true, "libs": true, "wwwroot": true, "third_party": true,
+	"thirdparty": true, "external": true, "deps": true,
+	"bower_components": true, "jspm_packages": true, "webjars": true,
+	"packages": true, "Content": true, "Scripts": true,
 }
 
 // stateFile is the on-disk JSON representation of State.
@@ -50,8 +57,9 @@ type State struct {
 }
 
 // statePath returns the absolute path to the persisted state file for rootDir.
+// The path is resolved via cacheutil to a global XDG-compliant location.
 func statePath(rootDir string) string {
-	return filepath.Join(rootDir, ".patchflow", "cache", "sast_state.json")
+	return cacheutil.ResolveFile(rootDir, "sast_state.json")
 }
 
 // LoadState reads the persisted state for rootDir. If the state file is
@@ -82,10 +90,10 @@ func LoadState(rootDir string) *State {
 	return s
 }
 
-// SaveState writes the current state to .patchflow/cache/sast_state.json,
+// SaveState writes the current state to the global cache location,
 // creating the cache directory if necessary.
 func (s *State) SaveState(rootDir string) error {
-	cacheDir := filepath.Join(rootDir, ".patchflow", "cache")
+	cacheDir := cacheutil.ResolveCacheDir(rootDir)
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
@@ -99,7 +107,7 @@ func (s *State) SaveState(rootDir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
 	}
-	if err := os.WriteFile(statePath(rootDir), data, 0644); err != nil {
+	if err := os.WriteFile(statePath(rootDir), data, 0600); err != nil {
 		return fmt.Errorf("failed to write state file: %w", err)
 	}
 	return nil

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/templates"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/templates"
 	"github.com/spf13/cobra"
 )
 
@@ -127,7 +127,7 @@ func nextSteps(platform string) []string {
 	case "pre-commit":
 		return []string{
 			"Run: pre-commit install",
-			"Ensure patchflow is on your PATH (go install github.com/patchflow/patchflow-cli/cmd/patchflow@latest).",
+			"Ensure patchflow is on your PATH (go install github.com/Patchflow-security/patchflow-cli/cmd/patchflow@latest).",
 		}
 	case "jenkins":
 		return []string{

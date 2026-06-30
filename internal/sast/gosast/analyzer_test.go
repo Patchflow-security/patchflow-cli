@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func TestGoSAST_DetectsWeakCrypto(t *testing.T) {

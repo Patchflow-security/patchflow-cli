@@ -7,11 +7,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/manifest"
-	"github.com/patchflow/patchflow-cli/internal/output"
-	osvclient "github.com/patchflow/patchflow-cli/internal/osv"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/manifest"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	osvclient "github.com/Patchflow-security/patchflow-cli/internal/osv"
+	"github.com/Patchflow-security/patchflow-cli/internal/sbom"
 	"github.com/spf13/cobra"
 )
 
@@ -45,11 +46,21 @@ var depsTreeCmd = &cobra.Command{
 	RunE:  runDepsTree,
 }
 
+var depsLicensesCmd = &cobra.Command{
+	Use:   "licenses",
+	Short: "Check dependency licenses and classify by risk",
+	Long: `Extract and classify license information from project dependencies.
+Licenses are categorized as permissive, weak copyleft, copyleft, proprietary, or unknown,
+with risk levels (low, medium, high, critical) for policy enforcement.`,
+	RunE: runDepsLicenses,
+}
+
 func init() {
 	depsCmd.AddCommand(depsListCmd)
 	depsCmd.AddCommand(depsVulnerableCmd)
 	depsCmd.AddCommand(depsDiffCmd)
 	depsCmd.AddCommand(depsTreeCmd)
+	depsCmd.AddCommand(depsLicensesCmd)
 	rootCmd.AddCommand(depsCmd)
 }
 
@@ -349,6 +360,126 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-1] + "…"
+}
+
+func runDepsLicenses(cmd *cobra.Command, _ []string) error {
+	formatter := FormatterFromContext(cmd.Context())
+
+	root, err := getRepoRoot()
+	if err != nil {
+		return formatter.PrintError(err)
+	}
+
+	// Parse manifests to get dependencies with license info
+	deps, _, err := manifest.ParseAll(root, 3)
+	if err != nil {
+		return formatter.PrintError(fmt.Errorf("failed to parse manifests: %w", err))
+	}
+
+	if len(deps) == 0 {
+		return formatter.Print("No dependencies found.")
+	}
+
+	// Extract and classify licenses
+	licenseInfos := sbom.ExtractLicenses(deps)
+	summary := sbom.SummarizeLicenses(licenseInfos)
+
+	if output.IsJSON(formatter) {
+		type licenseReport struct {
+			Summary struct {
+				Total      int                    `json:"total"`
+				WithLicense int                   `json:"with_license"`
+				NoLicense  int                    `json:"no_license"`
+				ByCategory map[string]int         `json:"by_category"`
+				ByRisk     map[string]int         `json:"by_risk"`
+			} `json:"summary"`
+			Licenses []struct {
+				Name      string `json:"name"`
+				Version   string `json:"version"`
+				Ecosystem string `json:"ecosystem"`
+				License   string `json:"license"`
+				Category  string `json:"category"`
+				Risk      string `json:"risk"`
+			} `json:"licenses"`
+		}
+		var report licenseReport
+		report.Summary.Total = summary.Total
+		report.Summary.WithLicense = summary.WithLicense
+		report.Summary.NoLicense = summary.NoLicense
+		report.Summary.ByCategory = make(map[string]int)
+		for k, v := range summary.ByCategory {
+			report.Summary.ByCategory[string(k)] = v
+		}
+		report.Summary.ByRisk = make(map[string]int)
+		for k, v := range summary.ByRisk {
+			report.Summary.ByRisk[string(k)] = v
+		}
+		for _, info := range licenseInfos {
+			report.Licenses = append(report.Licenses, struct {
+				Name      string `json:"name"`
+				Version   string `json:"version"`
+				Ecosystem string `json:"ecosystem"`
+				License   string `json:"license"`
+				Category  string `json:"category"`
+				Risk      string `json:"risk"`
+			}{
+				Name:      info.Dependency.Name,
+				Version:   info.Dependency.Version,
+				Ecosystem: string(info.Dependency.Ecosystem),
+				License:   info.RawLicense,
+				Category:  string(info.Category),
+				Risk:      string(info.Risk),
+			})
+		}
+		return formatter.Print(report)
+	}
+
+	// Text output
+	formatter.Print(fmt.Sprintf("License Report: %d dependencies\n", summary.Total))
+	formatter.Print(fmt.Sprintf("  With license: %d | No license: %d\n\n", summary.WithLicense, summary.NoLicense))
+
+	// Summary by category
+	formatter.Print("By Category:")
+	categories := []string{"permissive", "weak_copyleft", "copyleft", "proprietary", "unknown"}
+	for _, cat := range categories {
+		if count := summary.ByCategory[sbom.LicenseCategory(cat)]; count > 0 {
+			formatter.Print(fmt.Sprintf("  %-15s %d", cat, count))
+		}
+	}
+
+	// Summary by risk
+	formatter.Print("\nBy Risk:")
+	risks := []string{"low", "medium", "high", "critical"}
+	for _, risk := range risks {
+		if count := summary.ByRisk[sbom.LicenseRisk(risk)]; count > 0 {
+			formatter.Print(fmt.Sprintf("  %-15s %d", risk, count))
+		}
+	}
+
+	// High/critical risk details
+	if len(summary.HighRisk) > 0 {
+		formatter.Print("\n\nHigh/Critical Risk Licenses:")
+		for _, info := range summary.HighRisk {
+			license := info.RawLicense
+			if license == "" {
+				license = "(no license)"
+			}
+			formatter.Print(fmt.Sprintf("  [%s] %s@%s — %s (%s)",
+				info.Risk, info.Dependency.Name, info.Dependency.Version, license, info.Category))
+		}
+	}
+
+	// All licenses detail
+	formatter.Print("\n\nAll Dependencies:")
+	for _, info := range licenseInfos {
+		license := info.RawLicense
+		if license == "" {
+			license = "(no license)"
+		}
+		formatter.Print(fmt.Sprintf("  %-40s %-15s %-20s [%s]", truncateStr(info.Dependency.Name, 40), info.Risk, license, info.Category))
+	}
+
+	return nil
 }
 
 // Ensure context is used

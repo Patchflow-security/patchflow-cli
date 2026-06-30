@@ -6,9 +6,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/rules"
-	"github.com/patchflow/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/frameworks"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/rules"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/packs"
 	"github.com/spf13/cobra"
 )
 
@@ -71,29 +73,55 @@ Use --engine <name> to filter to a specific engine.`,
 }
 
 var (
-	rulesListJSON     bool
-	rulesListAll      bool
-	rulesMaturityJSON bool
-	rulesMaturityAll  bool
-	rulesDocsOutput   string
-	rulesDocsEngine   string
+	rulesListJSON       bool
+	rulesListAll        bool
+	rulesListFrameworks []string
+	rulesMaturityJSON   bool
+	rulesMaturityAll    bool
+	rulesDocsOutput     string
+	rulesDocsEngine     string
+	rulesFrameworksJSON bool
 )
+
+var rulesFrameworksCmd = &cobra.Command{
+	Use:   "list-frameworks",
+	Short: "List all official embedded framework rule packs",
+	Long: `List all official embedded framework rule packs and their detection status.
+
+Shows:
+  - Pack name and primary language
+  - File and template extensions owned by the pack
+  - Number of rules in the pack
+  - Whether the pack would be auto-detected in the current project
+
+Use --json for machine-readable output.`,
+	Run: runRulesListFrameworks,
+}
 
 func init() {
 	rootCmd.AddCommand(rulesCmd)
 	rulesCmd.AddCommand(rulesListCmd)
 	rulesCmd.AddCommand(rulesMaturityCmd)
 	rulesCmd.AddCommand(rulesDocsCmd)
+	rulesCmd.AddCommand(rulesFrameworksCmd)
 	rulesListCmd.Flags().BoolVar(&rulesListJSON, "json", false, "Output in JSON format")
 	rulesListCmd.Flags().BoolVar(&rulesListAll, "all", false, "Show all rules (default: summary only)")
 	rulesListCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file")
+	rulesListCmd.Flags().StringSliceVar(&rulesListFrameworks, "framework", nil, "Filter to one or more framework packs (repeat flag or use comma-separated values)")
 	rulesMaturityCmd.Flags().BoolVar(&rulesMaturityJSON, "json", false, "Output in JSON format")
 	rulesMaturityCmd.Flags().BoolVar(&rulesMaturityAll, "all", false, "List every rule with maturity and CWE")
 	rulesDocsCmd.Flags().StringVar(&rulesDocsOutput, "output", "", "Write docs to file (stdout if omitted)")
 	rulesDocsCmd.Flags().StringVar(&rulesDocsEngine, "engine", "", "Filter to a specific engine")
+	rulesFrameworksCmd.Flags().BoolVar(&rulesFrameworksJSON, "json", false, "Output in JSON format")
 }
 
 func runRulesList(cmd *cobra.Command, args []string) {
+	// If --framework is set, list rules from the named framework pack only.
+	if len(rulesListFrameworks) > 0 {
+		printFrameworkRules(rulesListFrameworks, rulesListJSON)
+		return
+	}
+
 	runner := sast.NewRunner()
 	runner.CustomRulesPath = scanRulesPath
 
@@ -105,12 +133,187 @@ func runRulesList(cmd *cobra.Command, args []string) {
 
 	groups := runner.AllRules()
 
+	// Append framework pack rules as an additional group.
+	fwReg := packs.BuildDefaultRegistry()
+	for _, p := range fwReg.All() {
+		fwRules := p.Rules()
+		entries := make([]sast.RuleEntry, 0, len(fwRules))
+		for _, r := range fwRules {
+			entries = append(entries, sast.RuleEntry{
+				ID:       r.ID,
+				Title:    r.Title,
+				Severity: string(r.Severity),
+			})
+		}
+		groups = append(groups, sast.RuleGroup{
+			Scanner:   "framework-" + p.Name(),
+			Language:  p.Language(),
+			RuleCount: len(entries),
+			Rules:     entries,
+		})
+	}
+
 	if rulesListJSON {
 		printRulesJSON(groups)
 		return
 	}
 
 	printRulesTable(groups)
+}
+
+// printFrameworkRules lists the rules in one or more framework packs.
+func printFrameworkRules(names []string, asJSON bool) {
+	fwReg := packs.BuildDefaultRegistry()
+
+	type frameworkRuleView struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		Severity  string `json:"severity"`
+		CWE       string `json:"cwe"`
+		MatchMode string `json:"match_mode"`
+		Maturity  string `json:"maturity"`
+	}
+	type frameworkPackView struct {
+		Framework string              `json:"framework"`
+		Language  string              `json:"language"`
+		RuleCount int                 `json:"rule_count"`
+		Rules     []frameworkRuleView `json:"rules"`
+	}
+
+	var views []frameworkPackView
+	for _, name := range names {
+		p := fwReg.Get(name)
+		if p == nil {
+			fmt.Fprintf(os.Stderr, "Unknown framework pack: %s\n", name)
+			fmt.Fprintf(os.Stderr, "Available packs: %s\n", strings.Join(fwReg.Names(), ", "))
+			os.Exit(1)
+		}
+		fwRules := p.Rules()
+		view := frameworkPackView{
+			Framework: p.Name(),
+			Language:  p.Language(),
+			RuleCount: len(fwRules),
+		}
+		for _, r := range fwRules {
+			view.Rules = append(view.Rules, frameworkRuleView{
+				ID:        r.ID,
+				Title:     r.Title,
+				Severity:  string(r.Severity),
+				CWE:       r.CWE,
+				MatchMode: r.MatchMode.String(),
+				Maturity:  r.Maturity.String(),
+			})
+		}
+		views = append(views, view)
+	}
+
+	if asJSON {
+		fmt.Print("{\"frameworks\":[")
+		for i, view := range views {
+			fmt.Printf("{\"framework\":\"%s\",\"language\":\"%s\",\"rule_count\":%d,\"rules\":[",
+				view.Framework, view.Language, view.RuleCount)
+			for j, r := range view.Rules {
+				fmt.Printf("{\"id\":\"%s\",\"title\":\"%s\",\"severity\":\"%s\",\"cwe\":\"%s\",\"match_mode\":\"%s\",\"maturity\":\"%s\"}",
+					r.ID, escapeJSON(r.Title), r.Severity, r.CWE, r.MatchMode, r.Maturity)
+				if j < len(view.Rules)-1 {
+					fmt.Print(",")
+				}
+			}
+			fmt.Print("]}")
+			if i < len(views)-1 {
+				fmt.Print(",")
+			}
+		}
+		fmt.Println("]}")
+		return
+	}
+
+	for i, view := range views {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("Framework Pack: %s (%s)\n", view.Framework, view.Language)
+		fmt.Printf("Rules: %d\n\n", view.RuleCount)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "  ID\tSEVERITY\tMATCH\tCWE\tMATURITY\tTITLE\n")
+		fmt.Fprintf(w, "  --\t--------\t-----\t---\t--------\t-----\n")
+		for _, r := range view.Rules {
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Severity, r.MatchMode, r.CWE, r.Maturity, r.Title)
+		}
+		w.Flush()
+	}
+}
+
+// buildGovernanceRegistry builds the default rules registry and registers
+// framework pack rules into it. This is the canonical way to construct a
+// registry that includes both core scanner rules and framework rules.
+func buildGovernanceRegistry() *rules.Registry {
+	reg := rules.BuildDefaultRegistry()
+	packs.RegisterFrameworkRules(reg)
+	return reg
+}
+
+// runRulesListFrameworks implements `patchflow rules list-frameworks`.
+func runRulesListFrameworks(cmd *cobra.Command, _ []string) {
+	formatter := FormatterFromContext(cmd.Context())
+	fwReg := packs.BuildDefaultRegistry()
+
+	// Detect frameworks in the current project to show which packs would
+	// activate automatically.
+	cwd, _ := os.Getwd()
+	detector := frameworks.NewDetector()
+	detections := detector.Detect(cwd)
+	detectedNames := map[string]bool{}
+	for _, d := range detections.Frameworks {
+		detectedNames[string(d.Name)] = true
+	}
+
+	packs := fwReg.All()
+	if len(packs) == 0 {
+		_ = formatter.Print("No framework packs registered.")
+		return
+	}
+
+	if rulesFrameworksJSON {
+		type frameworkInfo struct {
+			Framework  string   `json:"framework"`
+			Language   string   `json:"language"`
+			RuleCount  int      `json:"rule_count"`
+			Detected   bool     `json:"detected"`
+			Extensions []string `json:"extensions"`
+		}
+		var out []frameworkInfo
+		for _, p := range packs {
+			exts := append([]string(nil), p.FileExtensions()...)
+			exts = append(exts, p.TemplateExtensions()...)
+			out = append(out, frameworkInfo{
+				Framework:  p.Name(),
+				Language:   p.Language(),
+				RuleCount:  len(p.Rules()),
+				Detected:   detectedNames[p.Name()],
+				Extensions: exts,
+			})
+		}
+		_ = formatter.Print(map[string]interface{}{"frameworks": out})
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(w, "FRAMEWORK\tLANGUAGE\tRULES\tDETECTED\tEXTENSIONS\n")
+	fmt.Fprintf(w, "---------\t--------\t-----\t--------\t----------\n")
+	for _, p := range packs {
+		detected := "no"
+		if detectedNames[p.Name()] {
+			detected = "yes"
+		}
+		exts := strings.Join(p.FileExtensions(), ", ")
+		tmpls := strings.Join(p.TemplateExtensions(), ", ")
+		if tmpls != "" {
+			exts = exts + " | " + tmpls
+		}
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", p.Name(), p.Language(), len(p.Rules()), detected, exts)
+	}
+	w.Flush()
 }
 
 func printRulesTable(groups []sast.RuleGroup) {
@@ -200,7 +403,7 @@ func escapeJSON(s string) string {
 // runRulesMaturity implements `patchflow rules maturity`.
 func runRulesMaturity(cmd *cobra.Command, _ []string) {
 	formatter := FormatterFromContext(cmd.Context())
-	registry := rules.BuildDefaultRegistry()
+	registry := buildGovernanceRegistry()
 	report := registry.Coverage()
 
 	if rulesMaturityJSON {
@@ -278,15 +481,15 @@ func printMaturityTable(formatter output.Formatter, registry *rules.Registry, re
 
 func printMaturityJSON(formatter output.Formatter, registry *rules.Registry, report rules.CoverageReport) {
 	type maturityJSON struct {
-		TotalRules       int            `json:"total_rules"`
-		MaturityCounts   map[string]int `json:"maturity_counts"`
-		BlockingEligible int            `json:"blocking_eligible"`
-		BlockingExcluded int            `json:"blocking_excluded"`
-		CWEMapped        int            `json:"cwe_mapped"`
-		CWEMissing       int            `json:"cwe_missing"`
-		OWASPMapped      int            `json:"owasp_mapped"`
-		ProfilesActive   map[string]int `json:"profiles_active"`
-		ByEngine         map[string]int `json:"by_engine"`
+		TotalRules       int                  `json:"total_rules"`
+		MaturityCounts   map[string]int       `json:"maturity_counts"`
+		BlockingEligible int                  `json:"blocking_eligible"`
+		BlockingExcluded int                  `json:"blocking_excluded"`
+		CWEMapped        int                  `json:"cwe_mapped"`
+		CWEMissing       int                  `json:"cwe_missing"`
+		OWASPMapped      int                  `json:"owasp_mapped"`
+		ProfilesActive   map[string]int       `json:"profiles_active"`
+		ByEngine         map[string]int       `json:"by_engine"`
 		Rules            []rules.RuleMetadata `json:"rules,omitempty"`
 	}
 
@@ -311,7 +514,7 @@ func printMaturityJSON(formatter output.Formatter, registry *rules.Registry, rep
 // runRulesDocs implements `patchflow rules docs`.
 func runRulesDocs(cmd *cobra.Command, _ []string) {
 	formatter := FormatterFromContext(cmd.Context())
-	registry := rules.BuildDefaultRegistry()
+	registry := buildGovernanceRegistry()
 
 	var allRules []rules.RuleMetadata
 	if rulesDocsEngine != "" {
@@ -323,7 +526,7 @@ func runRulesDocs(cmd *cobra.Command, _ []string) {
 	docs := generateRuleDocs(allRules)
 
 	if rulesDocsOutput != "" {
-		if err := os.WriteFile(rulesDocsOutput, []byte(docs), 0644); err != nil {
+		if err := os.WriteFile(rulesDocsOutput, []byte(docs), 0600); err != nil {
 			_ = formatter.PrintError(fmt.Errorf("failed to write docs: %w", err))
 			return
 		}

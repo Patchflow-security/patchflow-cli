@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/api"
-	"github.com/patchflow/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/api"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

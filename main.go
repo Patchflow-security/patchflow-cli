@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/patchflow/patchflow-cli/cmd"
-	"github.com/patchflow/patchflow-cli/internal/exitcode"
+	"github.com/Patchflow-security/patchflow-cli/cmd"
+	"github.com/Patchflow-security/patchflow-cli/internal/exitcode"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
 )
 
 func TestCollectContextPopulatesFields(t *testing.T) {

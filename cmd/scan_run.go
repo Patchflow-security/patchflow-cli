@@ -3,41 +3,61 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/baseline"
-	"github.com/patchflow/patchflow-cli/internal/exitcode"
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/reachability"
-	"github.com/patchflow/patchflow-cli/internal/report"
-	"github.com/patchflow/patchflow-cli/internal/rules"
-	"github.com/patchflow/patchflow-cli/internal/risk"
-	"github.com/patchflow/patchflow-cli/internal/sast"
-	"github.com/patchflow/patchflow-cli/internal/sca"
-	osvclient "github.com/patchflow/patchflow-cli/internal/osv"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/baseline"
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/cwe"
+	"github.com/Patchflow-security/patchflow-cli/internal/exitcode"
+	"github.com/Patchflow-security/patchflow-cli/internal/fix"
+	"github.com/Patchflow-security/patchflow-cli/internal/fixsnippet"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/monorepo"
+	osvclient "github.com/Patchflow-security/patchflow-cli/internal/osv"
+	"github.com/Patchflow-security/patchflow-cli/internal/osvdb"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/pathutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/project"
+	"github.com/Patchflow-security/patchflow-cli/internal/reachability"
+	"github.com/Patchflow-security/patchflow-cli/internal/registry"
+	"github.com/Patchflow-security/patchflow-cli/internal/report"
+	"github.com/Patchflow-security/patchflow-cli/internal/risk"
+	"github.com/Patchflow-security/patchflow-cli/internal/rules"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	fwpatterns "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
+	"github.com/Patchflow-security/patchflow-cli/internal/sca"
 	"github.com/spf13/cobra"
 )
 
 var (
-	scanProfile        string
-	scanNoSAST         bool
-	scanNoSecrets      bool
-	scanNoReach        bool
-	scanOutput         string
-	scanFormat         string
-	scanChangedOnly    bool
-	scanShowSuppressed bool
-	scanRulesPath      string
-	scanIncludeTests   bool
-	scanNoGitignore    bool
-	scanIncremental    bool
-	scanNewOnly          bool
-	scanFailOn           string
-	scanSince            string
-	scanBaselineName     string
+	scanProfile           string
+	scanNoSAST            bool
+	scanNoSecrets         bool
+	scanNoReach           bool
+	scanOutput            string
+	scanFormat            string
+	scanChangedOnly       bool
+	scanShowSuppressed    bool
+	scanRulesPath         string
+	scanIncludeTests      bool
+	scanNoGitignore       bool
+	scanIncremental       bool
+	scanNewOnly           bool
+	scanFailOn            string
+	scanSince             string
+	scanBaselineName      string
 	scanGovernanceProfile string
+	scanSuggestFixes      bool
+	scanStaged            bool
+	scanPaths             []string
+	scanNoLicenses        bool
+	scanOffline           bool
+	scanLicensePolicy     string
+	scanTaintDepth        int
+	scanFramework         []string
+	scanDisableFramework  []string
 )
 
 var scanRealCmd = &cobra.Command{
@@ -66,12 +86,21 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file (default: .patchflow/rules.yaml)")
 	scanRealCmd.Flags().BoolVar(&scanIncludeTests, "include-tests", false, "Include test files in SAST analysis")
 	scanRealCmd.Flags().BoolVar(&scanNoGitignore, "no-gitignore", false, "Do not respect .gitignore patterns (scan all files)")
-	scanRealCmd.Flags().BoolVar(&scanIncremental, "incremental", false, "Only re-scan files changed since last scan (uses .patchflow/cache/sast_state.json)")
+	scanRealCmd.Flags().BoolVar(&scanIncremental, "incremental", false, "Only re-scan files changed since last scan (uses global cache sast_state.json)")
+	scanRealCmd.Flags().IntVar(&scanTaintDepth, "taint-depth", 3, "Maximum inter-procedural call-hop depth for taint analysis (0 disables)")
 	scanRealCmd.Flags().BoolVar(&scanNewOnly, "new-only", false, "Only report findings not in the baseline (requires --baseline)")
 	scanRealCmd.Flags().StringVar(&scanFailOn, "fail-on", "", "Fail (exit code 1) if findings at or above this severity: low, medium, high, critical")
 	scanRealCmd.Flags().StringVar(&scanSince, "since", "", "Scan files changed since the given branch/commit (e.g., --since main)")
 	scanRealCmd.Flags().StringVar(&scanBaselineName, "baseline", "", "Baseline name to compare against (used with --new-only)")
 	scanRealCmd.Flags().StringVar(&scanGovernanceProfile, "governance-profile", "", "Rule governance profile: dev, pr, ci, audit (filters findings by rule maturity)")
+	scanRealCmd.Flags().BoolVar(&scanSuggestFixes, "suggest-fixes", false, "Generate safe fix proposals for detected vulnerabilities")
+	scanRealCmd.Flags().BoolVar(&scanStaged, "staged", false, "Only scan staged files (git staged changes)")
+	scanRealCmd.Flags().StringSliceVar(&scanPaths, "path", nil, "Specific paths to scan (can be repeated)")
+	scanRealCmd.Flags().BoolVar(&scanNoLicenses, "no-licenses", false, "Skip license scanning")
+	scanRealCmd.Flags().BoolVar(&scanOffline, "offline", false, "Offline mode: only use local OSV DB and cache, no API calls (requires `patchflow cache update` first)")
+	scanRealCmd.Flags().StringVar(&scanLicensePolicy, "license-policy", "", "License policy: fail on restricted licenses (e.g., 'gpl,agpl,proprietary,unknown')")
+	scanRealCmd.Flags().StringSliceVar(&scanFramework, "framework", nil, "Enable specific framework rule packs (can be repeated, or 'auto' for detection-based activation)")
+	scanRealCmd.Flags().StringSliceVar(&scanDisableFramework, "disable-framework", nil, "Disable specific framework rule packs (can be repeated; takes precedence over --framework)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -90,6 +119,10 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		scanMode = "since"
 		scanChangedOnly = true // --since implies changed-only
 	}
+	if scanStaged {
+		scanMode = "staged"
+		scanChangedOnly = true // --staged implies changed-only
+	}
 
 	// Detect project context. Full scans support non-git directories; diff-only
 	// scans still require git metadata.
@@ -98,7 +131,13 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		return formatter.PrintError(err)
 	}
 	if isGitRepo {
-		if scanSince != "" {
+		if scanStaged {
+			// --staged: use git diff --name-only --cached
+			if stagedErr := repo.DetectStagedFiles(); stagedErr != nil {
+				return formatter.PrintError(fmt.Errorf("--staged: %w", stagedErr))
+			}
+			_ = repo.DetectDiffStats()
+		} else if scanSince != "" {
 			// --since <ref>: use git diff --name-only <ref>...HEAD and filter.
 			sinceFiles, sinceErr := repo.ChangedFilesSince(scanSince)
 			if sinceErr != nil {
@@ -111,10 +150,15 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			_ = repo.DetectChangedFiles()
 			_ = repo.DetectDiffStats()
 		}
-	} else if scanChangedOnly || scanSince != "" {
-		return formatter.PrintError(fmt.Errorf("--changed-only/--since requires a git repository"))
-	} else if !output.IsJSON(formatter) {
+	} else if scanChangedOnly || scanSince != "" || scanStaged {
+		return formatter.PrintError(fmt.Errorf("--changed-only/--since/--staged requires a git repository"))
+	} else if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 		_ = formatter.Print("Non-git directory detected; running full-project scan.")
+	}
+
+	// --path: filter to specific paths if provided
+	if len(scanPaths) > 0 {
+		repo.ChangedFiles = filterToPaths(repo.ChangedFiles, scanPaths)
 	}
 
 	// Debug/verbose: show the changed-file inventory so CI logs are auditable.
@@ -129,8 +173,14 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	started := time.Now()
 	var engineTimings []analysis.EngineTiming
 
+	// Detect monorepo structure early for informational output
+	monorepoInfo := monorepo.Detect(repo.Root)
+	if monorepoInfo.IsMonorepo() && (!output.IsJSON(formatter) && !QuietFromContext(ctx)) {
+		_ = formatter.Print(fmt.Sprintf("Monorepo detected: %s (%d workspace members)", monorepoInfo.Tool, len(monorepoInfo.MemberDirs)))
+	}
+
 	// 1. SCA Analysis
-	if !output.IsJSON(formatter) {
+	if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 		_ = formatter.Print("Running SCA analysis (OSV.dev)...")
 	}
 	scaStart := time.Now()
@@ -144,14 +194,41 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		scaAnalyzer.MaxDepth = 1
 	case "deep":
 		scaAnalyzer.MaxDepth = 5
+		scaAnalyzer.ResolveMavenTransitives = true
 	default:
 		scaAnalyzer.MaxDepth = 3
+		scaAnalyzer.ResolveMavenTransitives = true
 	}
 
 	// Wire up OSV response cache so repeated scans skip API calls for
-	// unchanged dependencies. Cache lives at {root}/.patchflow/cache/osv/.
+	// unchanged dependencies. Cache lives in a global XDG-compliant location
+	// (~/.cache/patchflow/<project-hash>/osv/).
+	// Migrate any legacy .patchflow/cache/ to the new global location.
+	cacheutil.MigrateLegacyCache(repo.Root)
 	osvCache := osvclient.NewCache(repo.Root)
 	scaAnalyzer.OSV.SetCache(osvCache)
+
+	// Wire up local OSV DB for offline/fast lookups. The DB is downloaded
+	// via `patchflow cache update` and stored at ~/.patchflow/osv-db/.
+	// When present, scans use it instead of the OSV.dev API, eliminating
+	// network latency and enabling air-gapped scanning.
+	osvLocalDB := osvdb.DefaultLocalDB()
+	if osvLocalDB.IsAvailable() {
+		scaAnalyzer.OSV.SetLocalDB(osvLocalDB)
+		if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+			_ = formatter.Print("  Using local OSV database (offline mode).")
+		}
+	}
+
+	// In --offline mode, skip all API calls. This enables air-gapped
+	// scanning in regulated environments. Requires `patchflow cache update`
+	// to have been run beforehand.
+	if scanOffline {
+		scaAnalyzer.OSV.SetOffline(true)
+		if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+			_ = formatter.Print("  Offline mode enabled — no API calls will be made.")
+		}
+	}
 
 	scaResult, err := scaAnalyzer.Analyze(ctx, repo.Root)
 	if err != nil {
@@ -161,15 +238,75 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		Engine: "osv-sca", Duration: time.Since(scaStart), Findings: len(scaResult.Findings),
 	})
 
-	// 2. SAST Analysis
-	var sastResult *sast.Result
+	// Initialize finding collection with SCA results.
 	var allFindings []analysis.Finding
 	allFindings = append(allFindings, scaResult.Findings...)
-
 	analyzersRun := []string{"osv"}
 
+	// 1b. License Analysis — fetch license info from package registries
+	//     (npm, PyPI, Maven, RubyGems, Packagist) for dependencies that
+	//     don't have license info in their lockfile/manifest. Generates
+	//     findings for high-risk licenses (copyleft, proprietary, unknown).
+	var licenseResult *registry.LicenseResult
+	if !scanNoLicenses && len(scaResult.Dependencies) > 0 {
+		if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+			_ = formatter.Print("Running license analysis (registry lookup)...")
+		}
+		licenseStart := time.Now()
+		licenseAnalyzer := registry.NewLicenseAnalyzer()
+		// Wire up registry cache so repeated scans skip API calls.
+		regCache := registry.NewCache(repo.Root)
+		licenseAnalyzer.SetCache(regCache)
+
+		// Apply license policy if specified
+		if scanLicensePolicy != "" {
+			policies := strings.Split(scanLicensePolicy, ",")
+			licenseAnalyzer.SetPolicy(policies)
+			if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+				_ = formatter.Print(fmt.Sprintf("  License policy: %s (violations will be CRITICAL)", scanLicensePolicy))
+			}
+		}
+
+		licenseResult, err = licenseAnalyzer.Analyze(ctx, scaResult.Dependencies)
+		if err != nil {
+			// Non-fatal — continue without license data
+			if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+				_ = formatter.Print("  (license analysis skipped: " + err.Error() + ")")
+			}
+		} else {
+			// Enrich dependencies with license info for SBOM/report
+			if licenseResult.Enriched > 0 {
+				licenseMap := make(map[string]string, len(scaResult.Dependencies))
+				for _, info := range licenseResult.Infos {
+					if info.RawLicense != "" {
+						licenseMap[fmt.Sprintf("%s@%s", info.Dependency.Name, info.Dependency.Version)] = info.RawLicense
+					}
+				}
+				for i := range scaResult.Dependencies {
+					if scaResult.Dependencies[i].License == "" {
+						key := fmt.Sprintf("%s@%s", scaResult.Dependencies[i].Name, scaResult.Dependencies[i].Version)
+						if lic, ok := licenseMap[key]; ok {
+							scaResult.Dependencies[i].License = lic
+						}
+					}
+				}
+			}
+			allFindings = append(allFindings, licenseResult.Findings...)
+			engineTimings = append(engineTimings, analysis.EngineTiming{
+				Engine: "registry-license", Duration: time.Since(licenseStart), Findings: len(licenseResult.Findings),
+			})
+			analyzersRun = append(analyzersRun, "registry-license")
+			if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+				_ = formatter.Print(fmt.Sprintf("  Licenses: %d enriched, %d high-risk findings", licenseResult.Enriched, len(licenseResult.Findings)))
+			}
+		}
+	}
+
+	// 2. SAST Analysis
+	var sastResult *sast.Result
+
 	if !scanNoSAST || !scanNoSecrets {
-		if !output.IsJSON(formatter) {
+		if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 			_ = formatter.Print("Running SAST analysis (local tools)...")
 		}
 		sastStart := time.Now()
@@ -189,9 +326,57 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			sastRunner.NoEmbeddedSecrets = true
 		}
 		sastRunner.ShowSuppressed = scanShowSuppressed
-		sastRunner.CustomRulesPath = scanRulesPath
+		if scanRulesPath != "" {
+			if err := pathutil.ValidateRulesPath(repo.Root, scanRulesPath); err != nil {
+				return formatter.PrintError(fmt.Errorf("invalid rules path: %w", err))
+			}
+			sastRunner.CustomRulesPath = scanRulesPath
+		}
 		sastRunner.RespectGitignore = !scanNoGitignore
 		sastRunner.IncrementalScan = scanIncremental
+		sastRunner.SetTaintDepth(scanTaintDepth)
+
+		// Framework rule pack selection merges three layers:
+		// project config -> YAML policy -> CLI flags. The runner handles the
+		// YAML policy overlay; CLI remains the highest-precedence input.
+		projectFWCfg := fwpatterns.SelectionConfig{}
+		if project.IsInitialized(repo.Root) {
+			if projectCfg, err := project.LoadConfig(repo.Root); err == nil {
+				projectFWCfg = fwpatterns.MergeSelectionConfig(projectFWCfg, fwpatterns.SelectionConfig{
+					AutoDetect:    projectCfg.Frameworks.AutoDetect,
+					AutoDetectSet: true,
+					Enabled:       projectCfg.Frameworks.Enabled,
+					Disabled:      projectCfg.Frameworks.Disabled,
+				})
+			}
+		}
+		sastRunner.FrameworkProjectConfig = projectFWCfg
+
+		// Framework rule pack selection. --framework auto enables
+		// detection-based activation. Explicit names force-enable those packs.
+		// --disable-framework always wins.
+		fwCfg := fwpatterns.SelectionConfig{}
+		if cmd.Flags().Changed("framework") {
+			cliCfg := fwpatterns.SelectionConfig{}
+			explicit := false
+			for _, f := range scanFramework {
+				if f == "auto" {
+					cliCfg.AutoDetect = true
+					cliCfg.AutoDetectSet = true
+				} else {
+					explicit = true
+					cliCfg.Enabled = append(cliCfg.Enabled, f)
+				}
+			}
+			_ = explicit
+			fwCfg = fwpatterns.MergeSelectionConfig(fwCfg, cliCfg)
+		}
+		if cmd.Flags().Changed("disable-framework") {
+			fwCfg = fwpatterns.MergeSelectionConfig(fwCfg, fwpatterns.SelectionConfig{
+				Disabled: scanDisableFramework,
+			})
+		}
+		sastRunner.FrameworkConfig = fwCfg
 
 		// When --changed-only or --since is set, auto-enable incremental
 		// scanning so file-based scanners (patterns, secrets, tree-sitter)
@@ -271,11 +456,20 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		})
 		allFindings = append(allFindings, sastResult.Findings...)
 		analyzersRun = append(analyzersRun, sastResult.ToolsRun...)
+
+		// Report detected frameworks and active packs (non-JSON only).
+		if !output.IsJSON(formatter) && !QuietFromContext(ctx) && len(sastResult.Frameworks) > 0 {
+			names := make([]string, 0, len(sastResult.Frameworks))
+			for _, d := range sastResult.Frameworks {
+				names = append(names, fmt.Sprintf("%s (%.0f%%)", d.Name, d.Confidence*100))
+			}
+			_ = formatter.Print(fmt.Sprintf("  Frameworks detected: %s", strings.Join(names, ", ")))
+		}
 	}
 
 	// 3. Reachability Analysis
 	if !scanNoReach && len(scaResult.Findings) > 0 {
-		if !output.IsJSON(formatter) {
+		if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 			_ = formatter.Print("Running reachability analysis...")
 		}
 		reachStart := time.Now()
@@ -283,7 +477,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		reachResult, err := reachAnalyzer.Analyze(ctx, repo.Root, allFindings, scaResult.Dependencies)
 		if err != nil {
 			// Non-fatal — continue without reachability data
-			if !output.IsJSON(formatter) {
+			if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 				_ = formatter.Print("  (reachability analysis skipped: " + err.Error() + ")")
 			}
 		} else {
@@ -317,15 +511,16 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if governanceProfile != rules.ProfileAudit {
-		registry := rules.BuildDefaultRegistry()
+		registry := buildGovernanceRegistry()
 		filtered := make([]analysis.Finding, 0, len(allFindings))
 		dropped := 0
 		for _, f := range allFindings {
-			// SCA and secret findings from external sources (OSV, gitleaks)
-			// don't have rule_ids in the governance registry — they should
-			// never be filtered by governance profile. Only SAST findings
-			// with a rule_id are subject to governance filtering.
-			if f.RuleID == "" || f.Type == analysis.TypeSCA || f.Type == analysis.TypeSecret {
+			// SCA, secret, IaC, and license findings from external sources
+			// (OSV, gitleaks, checkov, registry-license) don't have rule_ids
+			// in the governance registry — they should never be filtered by
+			// governance profile. Only SAST findings with a rule_id are
+			// subject to governance filtering.
+			if f.RuleID == "" || f.Type == analysis.TypeSCA || f.Type == analysis.TypeSecret || f.Type == analysis.TypeIaC || f.Type == analysis.TypeLicense {
 				filtered = append(filtered, f)
 				continue
 			}
@@ -335,7 +530,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 				dropped++
 			}
 		}
-		if dropped > 0 && !output.IsJSON(formatter) {
+		if dropped > 0 && (!output.IsJSON(formatter) && !QuietFromContext(ctx)) {
 			_ = formatter.Print(fmt.Sprintf("  Governance profile %s: filtered %d findings from inactive rules.", governanceProfile, dropped))
 		}
 		allFindings = filtered
@@ -381,26 +576,33 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	for _, m := range scaResult.Manifests {
 		manifestPaths = append(manifestPaths, m.Path)
 	}
+	var licenseSummary *analysis.LicenseSummary
+	if licenseResult != nil {
+		licenseSummary = licenseResult.AnalysisSummary()
+	}
 
 	result := &analysis.AnalysisResult{
-		ScanID:        generateScanID(),
-		ProjectRoot:   repo.Root,
-		Branch:        repo.CurrentBranch,
-		CommitSHA:     repo.CommitSHA,
-		BaseBranch:    repo.BaseBranch,
-		StartedAt:     started,
-		CompletedAt:   completed,
-		Duration:      completed.Sub(started),
-		Findings:      allFindings,
-		Dependencies:  scaResult.Dependencies,
-		RiskScore:     riskScore.Score,
-		RiskLevel:     riskScore.Level,
-		FilesChanged:  len(repo.ChangedFiles),
-		AddedLines:    repo.AddedLines,
-		DeletedLines:  repo.DeletedLines,
-		Manifests:     manifestPaths,
-		Analyzers:     analyzersRun,
-		EngineTimings: engineTimings,
+		ScanID:          generateScanID(),
+		ProjectRoot:     repo.Root,
+		Branch:          repo.CurrentBranch,
+		CommitSHA:       repo.CommitSHA,
+		BaseBranch:      repo.BaseBranch,
+		StartedAt:       started,
+		CompletedAt:     completed,
+		Duration:        completed.Sub(started),
+		Findings:        allFindings,
+		Dependencies:    scaResult.Dependencies,
+		LicenseSummary:  licenseSummary,
+		RiskScore:       riskScore.Score,
+		RiskLevel:       riskScore.Level,
+		FilesChanged:    len(repo.ChangedFiles),
+		AddedLines:      repo.AddedLines,
+		DeletedLines:    repo.DeletedLines,
+		Manifests:       manifestPaths,
+		Analyzers:       analyzersRun,
+		EngineTimings:   engineTimings,
+		MonorepoTool:    string(monorepoInfo.Tool),
+		MonorepoMembers: monorepoInfo.MemberDirs,
 		// Scan metadata
 		Profile:           scanProfile,
 		Mode:              scanMode,
@@ -422,10 +624,14 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			fmtStr = "json"
 		}
 		if scanOutput != "" {
+			// Validate output path to prevent path traversal
+			if err := pathutil.ValidateOutputPath(repo.Root, scanOutput); err != nil {
+				return formatter.PrintError(fmt.Errorf("invalid output path: %w", err))
+			}
 			if err := gen.WriteFile(fmtStr, scanOutput); err != nil {
 				return formatter.PrintError(fmt.Errorf("failed to write report: %w", err))
 			}
-			if !output.IsJSON(formatter) {
+			if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 				_ = formatter.PrintSuccess("Report written to " + scanOutput)
 			}
 		}
@@ -433,13 +639,17 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 
 	// Auto-save a markdown report to .patchflow/reports/ for full scans, even in
 	// non-git directories, so users always have a persistent artifact to share.
-	if !output.IsJSON(formatter) {
+	if !output.IsJSON(formatter) && !QuietFromContext(ctx) {
 		if writtenPath, err := gen.WriteToReportsDir(repo.Root, "markdown"); err == nil {
 			_ = formatter.Print("  Report saved: " + writtenPath)
 		}
 	}
 
 	if output.IsJSON(formatter) {
+		// Enrich findings with OWASP category, fix suggestion, and detection method.
+		enrichedFindings := enrichFindingsForJSON(allFindings)
+		result.Findings = enrichedFindings
+
 		// For JSON mode, output the full result with scan metadata.
 		return formatter.Print(struct {
 			*analysis.AnalysisResult `json:"analysis"`
@@ -452,6 +662,42 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 
 	// Terminal summary
 	_ = formatter.Print(gen.TerminalSummary())
+
+	// Fix suggestions
+	if scanSuggestFixes {
+		fixEngine := fix.NewEngine()
+		proposals := fixEngine.Suggest(allFindings)
+		if len(proposals) > 0 {
+			_ = formatter.Print("")
+			_ = formatter.Print(fmt.Sprintf("Fix Proposals (%d):", len(proposals)))
+			autoCount := 0
+			for i, p := range proposals {
+				autoTag := ""
+				if p.AutoApplicable {
+					autoTag = " [auto]"
+					autoCount++
+				}
+				_ = formatter.Print(fmt.Sprintf("  %d. [%s%s] %s", i+1,
+					strings.ToUpper(string(p.Confidence)), autoTag, p.Title))
+				if p.FilePath != "" {
+					_ = formatter.Print(fmt.Sprintf("     File: %s:%d", p.FilePath, p.LineStart))
+				}
+				if p.PackageName != "" {
+					pkgLine := fmt.Sprintf("     Package: %s@%s", p.PackageName, p.PackageVersion)
+					if p.FixedVersion != "" {
+						pkgLine += fmt.Sprintf(" → %s", p.FixedVersion)
+					}
+					_ = formatter.Print(pkgLine)
+				}
+			}
+			_ = formatter.Print("")
+			_ = formatter.Print(fmt.Sprintf("  %d auto-applicable, %d need review", autoCount, len(proposals)-autoCount))
+			_ = formatter.Print("  Run 'patchflow fix apply --all' to apply auto-applicable fixes")
+		} else {
+			_ = formatter.Print("")
+			_ = formatter.Print("Fix Proposals: none available for current findings")
+		}
+	}
 
 	// --new-only: print baseline comparison summary after the report.
 	if baselineDiff != nil {
@@ -621,4 +867,59 @@ func generateScanID() string {
 // in test builds.
 func versionString() string {
 	return versionBuildInfo()
+}
+
+// enrichFindingsForJSON adds OWASP category, fix suggestion, detection method,
+// and sanitizer status to each finding for JSON output. The original Finding
+// struct is supplemented with extra fields via a wrapper type so existing
+// consumers don't break.
+func enrichFindingsForJSON(findings []analysis.Finding) []analysis.Finding {
+	// We enrich by adding data to the Description/Evidence fields and using
+	// the existing CWEID field. For JSON consumers, we add structured data
+	// via the FindingJSON wrapper.
+	enriched := make([]analysis.Finding, len(findings))
+	for i, f := range findings {
+		// Add OWASP category label to the description if not already present
+		if f.CWEID != "" {
+			if owaspLabel := cwe.OWASPCategoryLabel(f.CWEID); owaspLabel != "" {
+				// Store OWASP category in the description as a prefix
+				if f.Description == "" {
+					f.Description = owaspLabel
+				} else if !strings.Contains(f.Description, owaspLabel) {
+					f.Description = owaspLabel + " — " + f.Description
+				}
+			}
+		}
+		// Add fix suggestion from the snippet database
+		if f.RuleID != "" {
+			if snippet := fixsnippet.ForRule(f.RuleID); snippet != nil {
+				// Append fix suggestion to recommendation if not already there
+				fixLine := fmt.Sprintf(" Fix: %s", snippet.Title)
+				if f.Recommendation == "" {
+					f.Recommendation = snippet.Title
+				} else if !strings.Contains(f.Recommendation, snippet.Title) {
+					f.Recommendation = f.Recommendation + fixLine
+				}
+			}
+		}
+		enriched[i] = f
+	}
+	return enriched
+}
+
+// filterToPaths filters a list of files to only those matching the given paths.
+func filterToPaths(files []string, paths []string) []string {
+	if len(paths) == 0 {
+		return files
+	}
+	var result []string
+	for _, f := range files {
+		for _, p := range paths {
+			if strings.HasPrefix(f, p) || f == p {
+				result = append(result, f)
+				break
+			}
+		}
+	}
+	return result
 }

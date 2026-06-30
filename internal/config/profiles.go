@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"go.yaml.in/yaml/v3"
+	"gopkg.in/yaml.v3"
 )
 
 // DefaultProfileName is the name of the default profile.

@@ -59,6 +59,20 @@ func TestProfileIncludesMaturity(t *testing.T) {
 	}
 }
 
+func TestProfilesForMaturity(t *testing.T) {
+	if got := ProfilesForMaturity(MaturityExperimental); len(got) != 1 || got[0] != ProfileAudit {
+		t.Fatalf("experimental profiles = %+v, want audit only", got)
+	}
+	beta := ProfilesForMaturity(MaturityBeta)
+	if len(beta) != 2 || beta[0] != ProfileCI || beta[1] != ProfileAudit {
+		t.Fatalf("beta profiles = %+v, want ci/audit", beta)
+	}
+	stable := ProfilesForMaturity(MaturityStable)
+	if len(stable) != 4 || stable[0] != ProfileDev || stable[1] != ProfilePR || stable[2] != ProfileCI || stable[3] != ProfileAudit {
+		t.Fatalf("stable profiles = %+v, want dev/pr/ci/audit", stable)
+	}
+}
+
 func TestDefaultMaturityForEngine(t *testing.T) {
 	cases := map[Engine]Maturity{
 		EngineGoSAST:        MaturityStable,
@@ -309,18 +323,18 @@ func TestShouldBlock(t *testing.T) {
 
 func TestCategoryFromRuleID(t *testing.T) {
 	cases := map[string]string{
-		"SECRET-aws":  "secrets",
-		"G101":        "secrets",
-		"G201":        "injection",
-		"G701":        "injection",
-		"PY001":       "injection",
-		"JS001":       "injection",
-		"TP-PY001":    "injection",
-		"TS-PY001":    "injection", // tree-sitter mirrors pattern IDs
-		"G115":        "crypto",
-		"G402":        "tls",
-		"G301":        "file-permissions",
-		"G104":        "error-handling",
+		"SECRET-aws": "secrets",
+		"G101":       "secrets",
+		"G201":       "injection",
+		"G701":       "injection",
+		"PY001":      "injection",
+		"JS001":      "injection",
+		"TP-PY001":   "injection",
+		"TS-PY001":   "injection", // tree-sitter mirrors pattern IDs
+		"G115":       "crypto",
+		"G402":       "tls",
+		"G301":       "file-permissions",
+		"G104":       "error-handling",
 	}
 	for id, want := range cases {
 		if got := CategoryFromRuleID(id); got != want {

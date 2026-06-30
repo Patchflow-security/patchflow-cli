@@ -3,7 +3,7 @@ package sast
 import (
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func TestDedupFindings(t *testing.T) {

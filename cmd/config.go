@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/config"
+	"github.com/Patchflow-security/patchflow-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

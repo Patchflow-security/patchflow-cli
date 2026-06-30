@@ -7,7 +7,7 @@ set -e
 # --- defaults ---
 VERSION="latest"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
-REPO="patchflow/patchflow-cli"
+REPO="Patchflow-security/patchflow-cli"
 
 # --- parse args ---
 while [ $# -gt 0 ]; do
@@ -90,7 +90,13 @@ fi
 CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 if curl -fsSL -o "${TMPDIR}/checksums.txt" "$CHECKSUM_URL"; then
     echo "Verifying checksum..."
-    (cd "$TMPDIR" && grep "${ARCHIVE}" checksums.txt | sha256sum -c -) || {
+    # sha256sum on Linux, shasum -a 256 on macOS/BSD
+    if command -v sha256sum >/dev/null 2>&1; then
+        SHA_CMD="sha256sum -c -"
+    else
+        SHA_CMD="shasum -a 256 -c -"
+    fi
+    (cd "$TMPDIR" && grep "${ARCHIVE}" checksums.txt | $SHA_CMD) || {
         echo "Checksum verification failed!"
         exit 1
     }

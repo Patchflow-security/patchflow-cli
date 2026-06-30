@@ -49,7 +49,7 @@ jobs:
           go-version: '1.25'
 
       - name: Install PatchFlow
-        run: go install github.com/patchflow/patchflow-cli/cmd/patchflow@latest
+        run: go install github.com/Patchflow-security/patchflow-cli/cmd/patchflow@latest
 
       - name: Run PatchFlow scan
         run: patchflow scan run --profile ci --format sarif --output patchflow.sarif
@@ -74,7 +74,7 @@ jobs:
   stage: test
   image: golang:1.24
   before_script:
-    - go install github.com/patchflow/patchflow-cli@latest
+    - go install github.com/Patchflow-security/patchflow-cli@latest
   script:
     - patchflow scan run --profile ci --format json --output patchflow-report.json
     - patchflow scan run --profile ci --format sarif --output patchflow.sarif
@@ -92,7 +92,7 @@ jobs:
 `
 
 	preCommitTemplate = `repos:
-  - repo: https://github.com/patchflow/patchflow-cli
+  - repo: https://github.com/Patchflow-security/patchflow-cli
     rev: v0.1.0
     hooks:
       - id: patchflow
@@ -106,7 +106,7 @@ jobs:
 	jenkinsTemplate = `stage('PatchFlow Security Scan') {
   agent any
   steps {
-    sh 'go install github.com/patchflow/patchflow-cli@latest'
+    sh 'go install github.com/Patchflow-security/patchflow-cli@latest'
     sh 'patchflow scan run --profile ci --format json --output patchflow-report.json'
     sh 'patchflow scan run --profile ci --format sarif --output patchflow.sarif'
     archiveArtifacts artifacts: 'patchflow-report.json, patchflow.sarif', allowEmptyArchive: true
@@ -119,7 +119,7 @@ jobs:
   inputs:
     targetType: 'inline'
     script: |
-      go install github.com/patchflow/patchflow-cli@latest
+      go install github.com/Patchflow-security/patchflow-cli@latest
       patchflow scan run --profile ci --format json --output patchflow-report.json
       patchflow scan run --profile ci --format sarif --output patchflow.sarif
 - task: PublishBuildArtifacts@1

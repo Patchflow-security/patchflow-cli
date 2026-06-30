@@ -28,7 +28,7 @@ runs:
 
     - name: Install PatchFlow CLI
       shell: bash
-      run: go install github.com/patchflow/patchflow-cli@${{ github.action_ref || 'main' }}
+      run: go install github.com/Patchflow-security/patchflow-cli@${{ github.action_ref || 'main' }}
 
     - name: Run PatchFlow scan
       shell: bash

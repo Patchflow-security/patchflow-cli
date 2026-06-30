@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 const (
@@ -35,6 +35,20 @@ type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
 	cache      *Cache
+	localDB    LocalDBQuerier
+	// Offline mode: when true, the client only uses the local DB and cache.
+	// No API calls are made. If a package is not in the local DB or cache,
+	// it returns nil (no vulnerabilities found). This enables air-gapped
+	// scanning in regulated environments.
+	Offline bool
+}
+
+// LocalDBQuerier is the interface for a local OSV DB that can answer queries
+// without hitting the network. Implemented by osvdb.LocalDB.
+type LocalDBQuerier interface {
+	IsAvailable() bool
+	Query(name, version string, ecosystem analysis.Ecosystem) []Vulnerability
+	FetchVulnByID(id string) *Vulnerability
 }
 
 // NewClient creates a new OSV client with default settings.
@@ -60,6 +74,19 @@ func NewClientWithHTTP(baseURL string, httpClient *http.Client) *Client {
 // preserves the default (no-cache) behavior.
 func (c *Client) SetCache(cache *Cache) {
 	c.cache = cache
+}
+
+// SetLocalDB attaches a local OSV DB for offline lookups. When set, the client
+// checks the local DB first before making API calls. This eliminates network
+// latency and enables air-gapped scanning.
+func (c *Client) SetLocalDB(db LocalDBQuerier) {
+	c.localDB = db
+}
+
+// SetOffline enables or disables offline mode. When enabled, the client only
+// uses the local DB and per-package cache — no API calls are made.
+func (c *Client) SetOffline(offline bool) {
+	c.Offline = offline
 }
 
 // QueryRequest is the OSV.dev query payload for a single package.
@@ -99,6 +126,21 @@ type Vulnerability struct {
 	Affected   []Affected `json:"affected,omitempty"`
 	References []Ref     `json:"references,omitempty"`
 	DatabaseSpecific map[string]interface{} `json:"database_specific,omitempty"`
+	Withdrawn  string   `json:"withdrawn,omitempty"`
+}
+
+// IsWithdrawn returns true if the advisory has been withdrawn or rejected.
+// OSV sets the "withdrawn" field for withdrawn advisories. Some GHSA entries
+// have "Withdrawn Advisory" in the summary but don't set the field — we check
+// both. NVD-rejected CVEs are also caught via the summary.
+func (v *Vulnerability) IsWithdrawn() bool {
+	if v.Withdrawn != "" {
+		return true
+	}
+	s := strings.ToLower(v.Summary)
+	return strings.HasPrefix(s, "withdrawn advisory") ||
+		strings.HasPrefix(s, "rejected") ||
+		strings.Contains(s, "** reject **")
 }
 
 // Severity is the OSV.dev severity entry.
@@ -144,10 +186,21 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 
 	results := make([][]Vulnerability, len(deps))
 
-	// Check cache first; collect indices that still need an API call.
+	// Check local DB and cache first; collect indices that still need an API call.
 	var uncachedIdx []int
 	var uncachedDeps []analysis.Dependency
 	for i, dep := range deps {
+		// 1. Check local OSV DB (offline-first)
+		if c.localDB != nil && c.localDB.IsAvailable() {
+			vulns := c.localDB.Query(dep.Name, dep.Version, dep.Ecosystem)
+			results[i] = vulns
+			// Also populate the per-package cache for future lookups
+			if c.cache != nil {
+				c.cache.Set(cacheKey(dep), vulns)
+			}
+			continue
+		}
+		// 2. Check per-package disk cache
 		if c.cache != nil {
 			key := cacheKey(dep)
 			if vulns, ok := c.cache.Get(key); ok {
@@ -161,6 +214,12 @@ func (c *Client) QueryBatch(ctx context.Context, deps []analysis.Dependency) ([]
 
 	// All deps were served from cache.
 	if len(uncachedDeps) == 0 {
+		return results, nil
+	}
+
+	// In offline mode, don't make API calls — return what we have from
+	// the local DB and cache. Uncached deps get nil (no vulnerabilities).
+	if c.Offline {
 		return results, nil
 	}
 
@@ -231,13 +290,28 @@ func (c *Client) Query(ctx context.Context, name, version string, ecosystem anal
 		return nil, nil
 	}
 
-	// Check cache first.
+	// Check local DB first (offline-first).
+	if c.localDB != nil && c.localDB.IsAvailable() {
+		vulns := c.localDB.Query(name, version, ecosystem)
+		if c.cache != nil {
+			dep := analysis.Dependency{Name: name, Version: version, Ecosystem: ecosystem}
+			c.cache.Set(cacheKey(dep), vulns)
+		}
+		return vulns, nil
+	}
+
+	// Check cache.
 	if c.cache != nil {
 		dep := analysis.Dependency{Name: name, Version: version, Ecosystem: ecosystem}
 		key := cacheKey(dep)
 		if vulns, ok := c.cache.Get(key); ok {
 			return vulns, nil
 		}
+	}
+
+	// In offline mode, don't make API calls.
+	if c.Offline {
+		return nil, nil
 	}
 
 	req := QueryRequest{
@@ -334,6 +408,20 @@ func (c *Client) postBatch(ctx context.Context, queries []QueryRequest) ([]Respo
 // OSV vulnerability ID. The batch query endpoint omits aliases, so this is
 // needed to map GHSA IDs to CVE IDs.
 func (c *Client) FetchVuln(ctx context.Context, id string) (*Vulnerability, error) {
+	// Check local DB first (offline-first)
+	if c.localDB != nil && c.localDB.IsAvailable() {
+		// The local DB stores full vulnerability data including aliases.
+		// We use a special query that fetches by vuln ID.
+		if vuln := c.localDB.FetchVulnByID(id); vuln != nil {
+			return vuln, nil
+		}
+	}
+
+	// In offline mode, don't make API calls
+	if c.Offline {
+		return nil, nil
+	}
+
 	url := c.BaseURL + VulnPath + "/" + id
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

@@ -15,7 +15,7 @@ func WriteSummaryJSON(s *Summary, path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 // WriteSummaryMarkdown writes a human-readable benchmark report. It respects
@@ -155,7 +155,7 @@ func WriteSummaryMarkdown(s *Summary, results []RepoResult, path string) error {
 	sb.WriteString("- Comparison tools run with their native JSON output and best-effort parsing.\n")
 	sb.WriteString("- Tool versions and exact commands are recorded in `raw/` for reproducibility.\n")
 
-	return os.WriteFile(path, []byte(sb.String()), 0644)
+	return os.WriteFile(path, []byte(sb.String()), 0600)
 }
 
 func sarifCell(m Metrics) string {

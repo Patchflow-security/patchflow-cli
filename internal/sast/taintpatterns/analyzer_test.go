@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func TestPythonSQLInjection(t *testing.T) {
@@ -181,11 +181,314 @@ func TestJSNoFalsePositive(t *testing.T) {
 	}
 }
 
+// === Ruby taint tests ===
+
+func TestRubySQLInjection(t *testing.T) {
+	code := `class UsersController < ApplicationController
+  def show
+    user_id = params[:id]
+    User.where("id = " + user_id)
+  end
+end
+`
+	findings := scanRubyCode(t, code)
+	if !hasRule(findings, "TP-RB001") {
+		t.Errorf("expected TP-RB001 (SQL injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestRubyCommandInjection(t *testing.T) {
+	code := `class CmdController < ApplicationController
+  def run
+    cmd = params[:cmd]
+    system("ls " + cmd)
+  end
+end
+`
+	findings := scanRubyCode(t, code)
+	if !hasRule(findings, "TP-RB002") {
+		t.Errorf("expected TP-RB002 (command injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestRubyPathTraversal(t *testing.T) {
+	code := `class FileController < ApplicationController
+  def read
+    filename = params[:file]
+    File.open("/tmp/" + filename)
+  end
+end
+`
+	findings := scanRubyCode(t, code)
+	if !hasRule(findings, "TP-RB003") {
+		t.Errorf("expected TP-RB003 (path traversal) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestRubyOpenRedirect(t *testing.T) {
+	code := `class RedirectController < ApplicationController
+  def redirect
+    url = params[:url]
+    redirect_to url
+  end
+end
+`
+	findings := scanRubyCode(t, code)
+	if !hasRule(findings, "TP-RB008") {
+		t.Errorf("expected TP-RB008 (open redirect) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestRubyNoFalsePositive(t *testing.T) {
+	// Hardcoded value should NOT trigger
+	code := `class UsersController < ApplicationController
+  def show
+    User.where("id = 1")
+  end
+end
+`
+	findings := scanRubyCode(t, code)
+	if hasRule(findings, "TP-RB001") {
+		t.Errorf("hardcoded query should not trigger TP-RB001, got: %v", ruleIDs(findings))
+	}
+}
+
+// === PHP taint tests ===
+
+func TestPHPSQLInjection(t *testing.T) {
+	code := `<?php
+function get_user() {
+    $id = $_GET["id"];
+    mysql_query("SELECT * FROM users WHERE id = " . $id);
+}
+?>
+`
+	findings := scanPHPCode(t, code)
+	if !hasRule(findings, "TP-PHP001") {
+		t.Errorf("expected TP-PHP001 (SQL injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestPHPCommandInjection(t *testing.T) {
+	code := `<?php
+function run_cmd() {
+    $cmd = $_GET["cmd"];
+    system("ls " . $cmd);
+}
+?>
+`
+	findings := scanPHPCode(t, code)
+	if !hasRule(findings, "TP-PHP002") {
+		t.Errorf("expected TP-PHP002 (command injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestPHPPathTraversal(t *testing.T) {
+	code := `<?php
+function get_file() {
+    $filename = $_GET["file"];
+    fopen("/tmp/" . $filename, "r");
+}
+?>
+`
+	findings := scanPHPCode(t, code)
+	if !hasRule(findings, "TP-PHP004") {
+		t.Errorf("expected TP-PHP004 (path traversal) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestPHPDeserialization(t *testing.T) {
+	code := `<?php
+function process() {
+    $data = $_COOKIE["data"];
+    unserialize($data);
+}
+?>
+`
+	findings := scanPHPCode(t, code)
+	if !hasRule(findings, "TP-PHP006") {
+		t.Errorf("expected TP-PHP006 (deserialization) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestPHPNoFalsePositive(t *testing.T) {
+	// Hardcoded value should NOT trigger
+	code := `<?php
+function get_user() {
+    mysql_query("SELECT * FROM users WHERE id = 1");
+}
+?>
+`
+	findings := scanPHPCode(t, code)
+	if hasRule(findings, "TP-PHP001") {
+		t.Errorf("hardcoded query should not trigger TP-PHP001, got: %v", ruleIDs(findings))
+	}
+}
+
+// === Java taint tests ===
+
+func TestJavaSQLInjection(t *testing.T) {
+	code := `import java.sql.*;
+import javax.servlet.http.*;
+
+public class UserController extends HttpServlet {
+    public void doGet(HttpServletRequest request, HttpServletResponse response) {
+        String userId = request.getParameter("id");
+        Statement stmt = conn.createStatement();
+        stmt.executeQuery("SELECT * FROM users WHERE id = " + userId);
+    }
+}
+`
+	findings := scanJavaCode(t, code)
+	if !hasRule(findings, "TP-JAVA001") {
+		t.Errorf("expected TP-JAVA001 (SQL injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestJavaCommandInjection(t *testing.T) {
+	code := `import javax.servlet.http.*;
+
+public class CmdController extends HttpServlet {
+    public void doGet(HttpServletRequest request, HttpServletResponse response) {
+        String cmd = request.getParameter("cmd");
+        Runtime.getRuntime().exec("ls " + cmd);
+    }
+}
+`
+	findings := scanJavaCode(t, code)
+	if !hasRule(findings, "TP-JAVA002") {
+		t.Errorf("expected TP-JAVA002 (command injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestJavaPathTraversal(t *testing.T) {
+	code := `import javax.servlet.http.*;
+import java.io.*;
+
+public class FileController extends HttpServlet {
+    public void doGet(HttpServletRequest request, HttpServletResponse response) {
+        String filename = request.getParameter("file");
+        FileInputStream fis = new FileInputStream("/tmp/" + filename);
+    }
+}
+`
+	findings := scanJavaCode(t, code)
+	if !hasRule(findings, "TP-JAVA003") {
+		t.Errorf("expected TP-JAVA003 (path traversal) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestJavaOpenRedirect(t *testing.T) {
+	code := `import javax.servlet.http.*;
+
+public class RedirectController extends HttpServlet {
+    public void doGet(HttpServletRequest request, HttpServletResponse response) {
+        String url = request.getParameter("url");
+        response.sendRedirect(url);
+    }
+}
+`
+	findings := scanJavaCode(t, code)
+	if !hasRule(findings, "TP-JAVA008") {
+		t.Errorf("expected TP-JAVA008 (open redirect) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestJavaNoFalsePositive(t *testing.T) {
+	// Hardcoded value should NOT trigger
+	code := `import java.sql.*;
+
+public class UserController {
+    public void getUser() {
+        Statement stmt = conn.createStatement();
+        stmt.executeQuery("SELECT * FROM users WHERE id = 1");
+    }
+}
+`
+	findings := scanJavaCode(t, code)
+	if hasRule(findings, "TP-JAVA001") {
+		t.Errorf("hardcoded query should not trigger TP-JAVA001, got: %v", ruleIDs(findings))
+	}
+}
+
+// === C# taint tests ===
+
+func TestCSharpSQLInjection(t *testing.T) {
+	code := `using System;
+using System.Data.SqlClient;
+using System.Web;
+
+public class UserController : System.Web.UI.Page {
+    public void PageLoad() {
+        string userId = Request.QueryString["id"];
+        SqlCommand cmd = new SqlCommand("SELECT * FROM users WHERE id = " + userId);
+    }
+}
+`
+	findings := scanCSharpCode(t, code)
+	if !hasRule(findings, "TP-CS001") {
+		t.Errorf("expected TP-CS001 (SQL injection) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestCSharpPathTraversal(t *testing.T) {
+	code := `using System;
+using System.IO;
+using System.Web;
+
+public class FileController : System.Web.UI.Page {
+    public void PageLoad() {
+        string filename = Request.QueryString["file"];
+        string content = File.ReadAllText("/tmp/" + filename);
+    }
+}
+`
+	findings := scanCSharpCode(t, code)
+	if !hasRule(findings, "TP-CS003") {
+		t.Errorf("expected TP-CS003 (path traversal) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestCSharpOpenRedirect(t *testing.T) {
+	code := `using System;
+using System.Web;
+
+public class RedirectController : System.Web.UI.Page {
+    public void PageLoad() {
+        string url = Request.QueryString["url"];
+        Response.Redirect(url);
+    }
+}
+`
+	findings := scanCSharpCode(t, code)
+	if !hasRule(findings, "TP-CS007") {
+		t.Errorf("expected TP-CS007 (open redirect) finding, got: %v", ruleIDs(findings))
+	}
+}
+
+func TestCSharpNoFalsePositive(t *testing.T) {
+	// Hardcoded value should NOT trigger
+	code := `using System;
+using System.Data.SqlClient;
+
+public class UserController {
+    public void getUser() {
+        SqlCommand cmd = new SqlCommand("SELECT * FROM users WHERE id = 1");
+        cmd.ExecuteNonQuery();
+    }
+}
+`
+	findings := scanCSharpCode(t, code)
+	if hasRule(findings, "TP-CS001") {
+		t.Errorf("hardcoded query should not trigger TP-CS001, got: %v", ruleIDs(findings))
+	}
+}
+
 func TestRulesCount(t *testing.T) {
 	a := NewAnalyzer()
 	rules := a.Rules()
-	if len(rules) != 14 {
-		t.Errorf("expected 14 taint pattern rules, got %d", len(rules))
+	if len(rules) != 47 {
+		t.Errorf("expected 47 taint pattern rules, got %d", len(rules))
 	}
 }
 
@@ -199,6 +502,26 @@ func scanPythonCode(t *testing.T, code string) []analysis.Finding {
 func scanJSCode(t *testing.T, code string) []analysis.Finding {
 	t.Helper()
 	return scanCode(t, "test.js", code)
+}
+
+func scanRubyCode(t *testing.T, code string) []analysis.Finding {
+	t.Helper()
+	return scanCode(t, "test.rb", code)
+}
+
+func scanPHPCode(t *testing.T, code string) []analysis.Finding {
+	t.Helper()
+	return scanCode(t, "test.php", code)
+}
+
+func scanJavaCode(t *testing.T, code string) []analysis.Finding {
+	t.Helper()
+	return scanCode(t, "Test.java", code)
+}
+
+func scanCSharpCode(t *testing.T, code string) []analysis.Finding {
+	t.Helper()
+	return scanCode(t, "Test.cs", code)
 }
 
 func scanCode(t *testing.T, filename, code string) []analysis.Finding {

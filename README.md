@@ -4,7 +4,7 @@ PatchFlow CLI provides change intelligence for engineering teams. Use it to scan
 
 ## Installation
 
-Download the latest binary for your platform from the [releases page](https://github.com/patchflow/patchflow-cli/releases), or build from source:
+Download the latest binary for your platform from the [releases page](https://github.com/Patchflow-security/patchflow-cli/releases), or build from source:
 
 ```bash
 go build -o patchflow .

@@ -6,7 +6,7 @@ package risk
 import (
 	"sort"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 // Engine computes risk scores from analysis results.

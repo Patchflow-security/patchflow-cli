@@ -5,25 +5,25 @@
     "license": "Apache-2.0",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/patchflow/patchflow-cli/releases/download/v0.1.0/patchflow_0.1.0_windows_x86_64.zip",
+            "url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v0.1.0/patchflow_0.1.0_windows_x86_64.zip",
             "hash": "REPLACE_WITH_ACTUAL_SHA256"
         },
         "arm64": {
-            "url": "https://github.com/patchflow/patchflow-cli/releases/download/v0.1.0/patchflow_0.1.0_windows_arm64.zip",
+            "url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v0.1.0/patchflow_0.1.0_windows_arm64.zip",
             "hash": "REPLACE_WITH_ACTUAL_SHA256"
         }
     },
     "bin": "patchflow.exe",
     "checkver": {
-        "github": "https://github.com/patchflow/patchflow-cli"
+        "github": "https://github.com/Patchflow-security/patchflow-cli"
     },
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/patchflow/patchflow-cli/releases/download/v$version/patchflow_$version_windows_x86_64.zip"
+                "url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v$version/patchflow_$version_windows_x86_64.zip"
             },
             "arm64": {
-                "url": "https://github.com/patchflow/patchflow-cli/releases/download/v$version/patchflow_$version_windows_arm64.zip"
+                "url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v$version/patchflow_$version_windows_arm64.zip"
             }
         }
     }

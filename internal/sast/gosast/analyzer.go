@@ -15,6 +15,7 @@ import (
 	"go/types"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,7 +23,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 // Severity levels for findings.
@@ -244,6 +245,11 @@ func (a *Analyzer) Analyze(ctx context.Context, root string) ([]analysis.Finding
 }
 
 // loadPackages loads all Go packages in the root directory using the Go toolchain.
+// When a go.work file is present at the root, the Go toolchain automatically
+// operates in workspace mode and loads all modules referenced by go.work.
+// When no go.work exists but go.mod files are in subdirectories (monorepo
+// without workspace), we load each module individually to avoid missing
+// packages that aren't reachable from the root.
 func (a *Analyzer) loadPackages(root string) ([]*packages.Package, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
@@ -253,19 +259,97 @@ func (a *Analyzer) loadPackages(root string) ([]*packages.Package, error) {
 		Tests: false,
 	}
 
-	pkgs, err := packages.Load(cfg, "./...")
+	// If go.mod exists at root, load with "./..." — standard single-module mode.
+	if fileExists(filepath.Join(root, "go.mod")) {
+		pkgs, err := packages.Load(cfg, "./...")
+		if err == nil && len(pkgs) > 0 {
+			return filterPackagesWithSyntax(pkgs), nil
+		}
+		// Fall through to sub-module loading if load fails
+	}
+
+	// If go.work exists at root (but no go.mod), the Go toolchain cannot
+	// use "./..." from the workspace root — it must load each module
+	// individually. Fall through to loadPackagesFromSubModules.
+	// (go.work without root go.mod: "directory prefix . does not contain
+	// modules listed in go.work")
+
+	// No go.mod at root, or go.mod load returned nothing:
+	// try loading "./..." first (may work if there's a go.mod in a parent
+	// directory). If that returns no packages, fall back to loading each
+	// subdirectory that has a go.mod.
+	if !fileExists(filepath.Join(root, "go.work")) {
+		pkgs, err := packages.Load(cfg, "./...")
+		if err == nil && len(pkgs) > 0 {
+			return filterPackagesWithSyntax(pkgs), nil
+		}
+	}
+
+	// Monorepo (go.work or multi-module): find all go.mod files and load
+	// each module individually.
+	return a.loadPackagesFromSubModules(root)
+}
+
+// loadPackagesFromSubModules finds go.mod files in subdirectories and loads
+// each module individually. This handles monorepos where Go modules live in
+// subdirectories without a go.work file at the root.
+func (a *Analyzer) loadPackagesFromSubModules(root string) ([]*packages.Package, error) {
+	var goModDirs []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "vendor" || name == "node_modules" || name == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() == "go.mod" {
+			goModDirs = append(goModDirs, filepath.Dir(path))
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter out packages with no syntax (e.g., cgo-only)
+	var result []*packages.Package
+	for _, modDir := range goModDirs {
+		cfg := &packages.Config{
+			Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+				packages.NeedImports | packages.NeedTypes | packages.NeedTypesInfo |
+				packages.NeedSyntax | packages.NeedModule,
+			Dir:   modDir,
+			Tests: false,
+		}
+		pkgs, err := packages.Load(cfg, "./...")
+		if err != nil {
+			a.logger.Printf("failed to load packages from %s: %v", modDir, err)
+			continue
+		}
+		result = append(result, filterPackagesWithSyntax(pkgs)...)
+	}
+	return result, nil
+}
+
+// filterPackagesWithSyntax returns only packages that have parsed syntax,
+// filtering out cgo-only or incomplete packages.
+func filterPackagesWithSyntax(pkgs []*packages.Package) []*packages.Package {
 	var result []*packages.Package
 	for _, p := range pkgs {
 		if len(p.Syntax) > 0 {
 			result = append(result, p)
 		}
 	}
-	return result, nil
+	return result
+}
+
+// fileExists returns true if the given path exists and is not a directory.
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // analyzePackage runs all rules against a single Go package.

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
 )
 
 // pfJSONOutput mirrors the JSON that `patchflow scan run --json` prints to
@@ -212,12 +214,12 @@ func (r *Runner) runRepo(ctx context.Context, spec RepoSpec, resultsDir string) 
 }
 
 // runPatchFlow invokes the patchflow binary as a subprocess. When clearCache is
-// true, the .patchflow/cache directory is removed first to force a cold scan.
+// true, the global cache for this project is removed first to force a cold scan.
 // sarifPath/jsonPath/mdPath are optional; when empty, no report file is written
 // (used for the warm run which only needs stdout JSON for timing).
 func (r *Runner) runPatchFlow(ctx context.Context, repoPath, sarifPath, jsonPath, mdPath string, clearCache bool) (*pfJSONOutput, time.Duration, int, int, error) {
 	if clearCache {
-		_ = os.RemoveAll(filepath.Join(repoPath, ".patchflow", "cache"))
+		_ = os.RemoveAll(cacheutil.ResolveCacheDir(repoPath))
 	}
 
 	args := []string{"scan", "run", "--json", "--profile", r.Config.PatchFlow.Profile}

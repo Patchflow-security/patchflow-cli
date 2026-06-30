@@ -3,7 +3,7 @@ package risk
 import (
 	"testing"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 func TestComputeNoFindings(t *testing.T) {

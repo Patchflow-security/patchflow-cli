@@ -153,6 +153,25 @@ func (r *Repository) DetectChangedFiles() error {
 	return nil
 }
 
+// DetectStagedFiles populates ChangedFiles with only staged (cached) files.
+// This is useful for pre-commit hooks that want to scan only staged changes.
+func (r *Repository) DetectStagedFiles() error {
+	out, err := r.executor.Run(r.Root, "diff", "--name-only", "--cached")
+	if err != nil {
+		return fmt.Errorf("failed to detect staged files: %w", err)
+	}
+
+	files := strings.Split(strings.TrimSpace(out), "\n")
+	var result []string
+	for _, f := range files {
+		if f != "" {
+			result = append(result, f)
+		}
+	}
+	r.ChangedFiles = result
+	return nil
+}
+
 // DetectDiffStats populates AddedLines and DeletedLines by diffing against the base branch.
 func (r *Repository) DetectDiffStats() error {
 	var out string

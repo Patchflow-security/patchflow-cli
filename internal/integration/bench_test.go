@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
-	"github.com/patchflow/patchflow-cli/internal/baseline"
-	"github.com/patchflow/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/baseline"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
 )
 
 // buildBenchRepo creates a repo with a configurable number of Python files,

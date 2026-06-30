@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
 )
 
 // Context holds structured review context for a repository.

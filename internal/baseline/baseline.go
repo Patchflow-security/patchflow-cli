@@ -11,7 +11,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 // Baseline represents a snapshot of findings at a point in time.
@@ -72,7 +72,7 @@ func (m *Manager) Create(name string, findings []analysis.Finding, commit string
 		return fmt.Errorf("failed to marshal baseline: %w", err)
 	}
 
-	if err := os.WriteFile(m.baselinePath(name), data, 0644); err != nil {
+	if err := os.WriteFile(m.baselinePath(name), data, 0600); err != nil {
 		return fmt.Errorf("failed to write baseline: %w", err)
 	}
 	return nil

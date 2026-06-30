@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
 
 // SecretPattern defines a regex pattern for detecting a specific type of secret.
@@ -94,6 +94,11 @@ func NewScanner() *Scanner {
 			".tox": true, ".pytest_cache": true, ".mypy_cache": true,
 			"site-packages": true, "__pycache__": true, ".eggs": true,
 			".eggs-info": true, ".ruff_cache": true,
+			// Third-party library directories
+			"lib": true, "libs": true, "wwwroot": true, "third_party": true,
+			"thirdparty": true, "external": true, "deps": true,
+			"bower_components": true, "jspm_packages": true, "webjars": true,
+			"packages": true, "Content": true, "Scripts": true,
 			// Test fixtures and documentation dirs contain example secrets
 			// that are not real credentials.
 			"testdata": true, "test_data": true, "fixtures": true,
@@ -318,7 +323,7 @@ func (s *Scanner) makeFinding(p SecretPattern, absPath, root string, lineNum int
 	relPath, _ := filepath.Rel(root, absPath)
 	return analysis.Finding{
 		ID:          fmt.Sprintf("secret-%s-%s-%d", sanitizeName(p.Name), filepath.Base(relPath), lineNum),
-		Type:        analysis.TypeSAST,
+		Type:        analysis.TypeSecret,
 		Analyzer:    "secrets-embedded",
 		Severity:    p.Severity,
 		Confidence:  p.Confidence,
@@ -348,7 +353,7 @@ func (s *Scanner) checkEntropy(line, absPath, root string, lineNum int, findings
 			if hasSecretKeyword(line) {
 				*findings = append(*findings, analysis.Finding{
 					ID:          fmt.Sprintf("secret-entropy-%s-%d", filepath.Base(absPath), lineNum),
-					Type:        analysis.TypeSAST,
+					Type:        analysis.TypeSecret,
 					Analyzer:    "secrets-embedded",
 					Severity:    analysis.SeverityMedium,
 					Confidence:  analysis.ConfidenceMedium,
@@ -396,6 +401,12 @@ func (s *Scanner) isFalsePositive(match, line string) bool {
 			return true
 		}
 	}
+	if isVariableBackedAssignment(match) {
+		return true
+	}
+	if isLikelyUISecretLabel(match) {
+		return true
+	}
 
 	// Skip if the line is a comment (but not if it contains a URL scheme like postgres://)
 	trimmed := strings.TrimSpace(line)
@@ -404,6 +415,57 @@ func (s *Scanner) isFalsePositive(match, line string) bool {
 		return true
 	}
 
+	return false
+}
+
+func isVariableBackedAssignment(match string) bool {
+	parts := strings.SplitN(match, "=", 2)
+	if len(parts) != 2 {
+		parts = strings.SplitN(match, ":", 2)
+	}
+	if len(parts) != 2 {
+		return false
+	}
+
+	value := strings.TrimSpace(parts[1])
+	value = strings.Trim(value, `"'`)
+	if strings.HasPrefix(value, "$") {
+		return true
+	}
+	if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {
+		return true
+	}
+	return false
+}
+
+func isLikelyUISecretLabel(match string) bool {
+	parts := strings.SplitN(match, "=", 2)
+	if len(parts) != 2 {
+		parts = strings.SplitN(match, ":", 2)
+	}
+	if len(parts) != 2 {
+		return false
+	}
+
+	value := strings.TrimSpace(strings.ToLower(parts[1]))
+	value = strings.Trim(value, `"'`)
+	if value == "" {
+		return true
+	}
+	if strings.Trim(value, "•* ") == "" {
+		return true
+	}
+
+	uiTerms := []string{
+		"password", "passwort", "mot de passe", "كلمة المرور", "كلمة مرور",
+		"at least", "confirm", "current", "new ", "forgot", "nouveau",
+		"caracteres", "caractères", "characters", "zeichen", "أحرف",
+	}
+	for _, term := range uiTerms {
+		if strings.Contains(value, term) {
+			return true
+		}
+	}
 	return false
 }
 

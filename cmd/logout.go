@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/patchflow/patchflow-cli/internal/auth"
+	"github.com/Patchflow-security/patchflow-cli/internal/auth"
 	"github.com/spf13/cobra"
 )
 

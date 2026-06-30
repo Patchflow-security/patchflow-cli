@@ -3,8 +3,8 @@ package doctor
 import (
 	"strings"
 
-	"github.com/patchflow/patchflow-cli/internal/git"
-	"github.com/patchflow/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast"
 )
 
 // Report contains the results of the environment diagnostic checks.

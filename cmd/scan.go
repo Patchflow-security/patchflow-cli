@@ -3,8 +3,8 @@ package cmd
 import (
 	"strconv"
 
-	"github.com/patchflow/patchflow-cli/internal/output"
-	"github.com/patchflow/patchflow-cli/internal/scan"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/scan"
 	"github.com/spf13/cobra"
 )
 

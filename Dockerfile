@@ -16,9 +16,9 @@ ARG COMMIT=none
 ARG DATE=unknown
 RUN CGO_ENABLED=0 go build -ldflags \
     "-s -w \
-    -X github.com/patchflow/patchflow-cli/pkg/version.Version=${VERSION} \
-    -X github.com/patchflow/patchflow-cli/pkg/version.Commit=${COMMIT} \
-    -X github.com/patchflow/patchflow-cli/pkg/version.Date=${DATE}" \
+    -X github.com/Patchflow-security/patchflow-cli/pkg/version.Version=${VERSION} \
+    -X github.com/Patchflow-security/patchflow-cli/pkg/version.Commit=${COMMIT} \
+    -X github.com/Patchflow-security/patchflow-cli/pkg/version.Date=${DATE}" \
     -o patchflow .
 
 # Runtime stage — distroless for minimal attack surface

@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/patchflow/patchflow-cli/internal/benchmark"
-	"github.com/patchflow/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/benchmark"
+	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
