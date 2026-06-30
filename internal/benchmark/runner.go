@@ -264,13 +264,17 @@ func (r *Runner) runPatchFlow(ctx context.Context, repoPath, sarifPath, jsonPath
 
 	// Persist the raw JSON output for archival/audit.
 	if jsonPath != "" && len(out) > 0 {
-		_ = os.WriteFile(jsonPath, out, 0600)
+		if err := os.WriteFile(jsonPath, out, 0600); err != nil {
+			return pf, dur, exitCode, memMB, fmt.Errorf("write JSON artifact %s: %w", jsonPath, err)
+		}
 	}
 	// Persist a markdown report via a second lightweight invocation only when a
 	// path is requested AND we did not already produce one. The scan run command
 	// auto-saves markdown to .patchflow/reports/, so copy that if present.
 	if mdPath != "" {
-		_ = copyAutoMarkdown(repoPath, mdPath)
+		if err := copyAutoMarkdown(repoPath, mdPath); err != nil {
+			return pf, dur, exitCode, memMB, fmt.Errorf("copy markdown artifact to %s: %w", mdPath, err)
+		}
 	}
 
 	return pf, dur, exitCode, memMB, parseErr
@@ -292,9 +296,13 @@ func (r *Runner) prepareRepo(ctx context.Context, spec RepoSpec) (string, error)
 	dest := filepath.Join(r.Config.WorkRoot(), spec.Name)
 	// If already cloned and pinned, reuse. We don't re-clone to keep reruns fast.
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
-		// If a ref is pinned, checkout it.
+		// If a ref is pinned, checkout it. A failed checkout means the cached
+		// repo is not at the requested revision, so surface the error rather
+		// than silently measuring the wrong code.
 		if spec.Ref != "" {
-			_ = exec.CommandContext(ctx, "git", "-C", dest, "checkout", spec.Ref).Run()
+			if out, err := exec.CommandContext(ctx, "git", "-C", dest, "checkout", spec.Ref).CombinedOutput(); err != nil {
+				return "", fmt.Errorf("checkout %s in %s: %w (%s)", spec.Ref, dest, err, truncate(out, 200))
+			}
 		}
 		return dest, nil
 	}
