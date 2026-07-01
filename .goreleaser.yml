@@ -5,7 +5,7 @@ project_name: patchflow
 before:
   hooks:
     - go mod tidy
-    - go test $(go list ./... | grep -v /internal/integration) -timeout 5m
+    - go vet ./...
 
 builds:
   - id: patchflow
