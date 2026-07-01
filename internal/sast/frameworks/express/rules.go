@@ -1,0 +1,87 @@
+package express
+
+import (
+	"regexp"
+
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
+)
+
+func Rules() []frameworks.FrameworkRule {
+	return []frameworks.FrameworkRule{
+		{
+			ID:             "PF-EXPRESS-SQLI-001",
+			Framework:      "express",
+			Language:       "javascript",
+			CWE:            "CWE-89",
+			Title:          "Express SQLi: query built from request data",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".js", ".mjs", ".cjs", ".ts"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`\.(query|execute)\s*\(\s*(\x60[^\x60]*\$\{|["'][^"']*["']\s*\+|.*req\.(query|params|body))`),
+			Sanitizers:     Sanitizers,
+			Recommendation: "Use parameterized queries and pass request values as bound parameters instead of concatenating SQL strings.",
+		},
+		{
+			ID:             "PF-EXPRESS-REDIRECT-001",
+			Framework:      "express",
+			Language:       "javascript",
+			CWE:            "CWE-601",
+			Title:          "Express open redirect: res.redirect with request input",
+			Severity:       analysis.SeverityMedium,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".js", ".mjs", ".cjs", ".ts"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`res\.redirect\s*\(\s*(req\.(query|params|body)|.*\[(["'])(next|redirect|url)["']\])`),
+			Sanitizers:     Sanitizers,
+			Recommendation: "Validate redirect targets against an allowlist or restrict redirects to known relative paths.",
+		},
+		{
+			ID:             "PF-EXPRESS-XSS-001",
+			Framework:      "express",
+			Language:       "javascript",
+			CWE:            "CWE-79",
+			Title:          "Express XSS: response sends request data as HTML",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".js", ".mjs", ".cjs", ".ts"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`res\.(send|write)\s*\(\s*(req\.(query|params|body)|.*\[(["'])(html|content|name)["']\])`),
+			Sanitizers:     Sanitizers,
+			Recommendation: "Escape request-controlled values before writing HTML responses, or render through a template engine with escaping.",
+		},
+		{
+			ID:             "PF-EXPRESS-CMDI-001",
+			Framework:      "express",
+			Language:       "javascript",
+			CWE:            "CWE-78",
+			Title:          "Express command injection: child_process with request data",
+			Severity:       analysis.SeverityCritical,
+			Confidence:     analysis.ConfidenceHigh,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".js", ".mjs", ".cjs", ".ts"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`child_process\.(exec|execFile|spawn)\s*\([^)]*req\.(query|params|body)`),
+			Recommendation: "Do not pass request data to shell commands. Use fixed commands with strict allowlisted arguments.",
+		},
+		{
+			ID:             "PF-EXPRESS-PATH-001",
+			Framework:      "express",
+			Language:       "javascript",
+			CWE:            "CWE-22",
+			Title:          "Express path traversal: filesystem access with request data",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".js", ".mjs", ".cjs", ".ts"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`fs\.(readFile|createReadStream|sendFile)\s*\([^)]*req\.(query|params|body)`),
+			Sanitizers:     Sanitizers,
+			Recommendation: "Resolve requested files against a fixed base directory and verify the final path remains inside it.",
+		},
+	}
+}

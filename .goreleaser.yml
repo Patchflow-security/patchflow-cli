@@ -1,0 +1,147 @@
+version: 2
+
+project_name: patchflow
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: patchflow
+    main: ./
+    binary: patchflow
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/Patchflow-security/patchflow-cli/pkg/version.Version={{.Version}}
+      - -X github.com/Patchflow-security/patchflow-cli/pkg/version.Commit={{.Commit}}
+      - -X github.com/Patchflow-security/patchflow-cli/pkg/version.Date={{.Date}}
+    targets:
+      - linux_amd64
+      - linux_arm64
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
+      - windows_arm64
+
+archives:
+  - id: default
+    ids: [patchflow]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macos
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - 'Generated with'
+      - 'Co-Authored-By'
+  groups:
+    - title: 'New Features'
+      regexp: '^feat'
+    - title: 'Bug Fixes'
+      regexp: '^fix'
+    - title: 'Security'
+      regexp: '^security|^noise|^sast'
+    - title: 'Other Changes'
+      order: 99
+
+sboms:
+  - id: default
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+    cmd: syft
+    args: ["${artifact}", "-o", "spdx-json=${document}"]
+
+release:
+  github:
+    owner: Patchflow-security
+    name: patchflow-cli
+  draft: true
+  prerelease: auto
+  name_template: "PatchFlow CLI v{{.Version}}"
+  header: |
+    ## PatchFlow CLI v{{.Version}}
+
+    ### Benchmark Results (v1.0)
+    - 18 intentionally vulnerable repos: 100% recall, 918K LOC, 19 CWE categories
+    - 5 historical CVE repos: 100% recall, 387K LOC
+    - 10 clean repos: 0.094 HC/KLOC, 720K LOC
+
+    See [Benchmark Report v1.0](https://github.com/Patchflow-security/patchflow-benchmarks/blob/main/reports/BENCHMARK_REPORT_v1.0.md) for details.
+
+brews:
+  - name: patchflow
+    repository:
+      owner: Patchflow-security
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: patchflow-bot
+      email: bot@patchflow.dev
+    homepage: https://patchflow.dev
+    description: Local-first security scanner for code, dependencies, and secrets
+    license: Apache-2.0
+    test: |
+      system "#{bin}/patchflow", "version"
+    install: |
+      bin.install "patchflow"
+
+scoops:
+  - name: patchflow
+    repository:
+      owner: Patchflow-security
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    commit_author:
+      name: patchflow-bot
+      email: bot@patchflow.dev
+    homepage: https://patchflow.dev
+    description: Local-first security scanner for code, dependencies, and secrets
+    license: Apache-2.0
+
+dockers_v2:
+  - id: patchflow
+    ids: [patchflow]
+    images:
+      - "ghcr.io/patchflow-security/cli"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
+    platforms:
+      - "linux/amd64"
+      - "linux/arm64"
+    dockerfile: Dockerfile.goreleaser
+    labels:
+      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.version: "{{.Version}}"
+      org.opencontainers.image.source: "{{.GitURL}}"
+      org.opencontainers.image.revision: "{{.Commit}}"
+    sbom: false
