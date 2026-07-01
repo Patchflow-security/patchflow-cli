@@ -18,7 +18,13 @@ import (
 // On Linux, /usr/bin/time -v prints "Maximum resident set size (kbytes)".
 func runWithMemory(ctx context.Context, name string, args []string, dir string) ([]byte, int, int, error) {
 	// Fast path: if /usr/bin/time is missing, run directly.
-	timePath, _ := exec.LookPath("/usr/bin/time")
+	// Try the bare "time" first (respects PATH), then fall back to the
+	// absolute path which is more reliable on macOS where /usr/bin/time
+	// is not in the default PATH.
+	timePath, _ := exec.LookPath("time")
+	if timePath == "" {
+		timePath, _ = exec.LookPath("/usr/bin/time")
+	}
 	if timePath == "" {
 		return runDirect(ctx, name, args, dir)
 	}

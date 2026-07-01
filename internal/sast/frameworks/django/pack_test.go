@@ -13,6 +13,9 @@ func scanFixture(t *testing.T, name, content string) []analysis.Finding {
 	t.Helper()
 	root := t.TempDir()
 	target := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -60,5 +63,12 @@ func TestDjangoNormalTemplateOutputSafe(t *testing.T) {
 	findings := scanFixture(t, "profile.jinja2", `{{ user_input }}`)
 	if hasFinding(findings, "PF-DJANGO-XSS-002") {
 		t.Fatalf("normal escaped output should not trigger safe-filter rule: %+v", findings)
+	}
+}
+
+func TestDjangoFrameworkSourceExcluded(t *testing.T) {
+	findings := scanFixture(t, filepath.Join("django", "contrib", "admin", "templates", "x.html"), `{{ help_text|safe }}`)
+	if hasFinding(findings, "PF-DJANGO-XSS-002") {
+		t.Fatalf("Django framework source should not trigger app template rule: %+v", findings)
 	}
 }

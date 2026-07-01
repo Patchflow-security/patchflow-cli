@@ -56,6 +56,13 @@ func TestNextJSRedirectVulnerable(t *testing.T) {
 	}
 }
 
+func TestNextJSRedirectDoesNotMatchExpressResponseRedirect(t *testing.T) {
+	findings := scanFixture(t, "routes.js", `return res.redirect(req.query.url)`)
+	if hasFinding(findings, "PF-NEXTJS-REDIRECT-001") {
+		t.Fatalf("Next.js redirect rule should not match Express res.redirect: %+v", findings)
+	}
+}
+
 func TestNextJSXSSSafeNormalText(t *testing.T) {
 	findings := scanFixture(t, "page.tsx", `<div>{searchParams.name}</div>`)
 	if hasFinding(findings, "PF-NEXTJS-XSS-001") {

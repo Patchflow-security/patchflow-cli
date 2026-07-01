@@ -7,6 +7,12 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
 )
 
+var frameworkSourceExclusions = []frameworks.PathPattern{
+	{Glob: "django/**", Reason: "Django framework source is a clean corpus target, not application code."},
+	{Glob: "docs/**", Reason: "Documentation examples are not application code."},
+	{Glob: "tests/**", Reason: "Framework tests are not deployed application routes."},
+}
+
 func Rules() []frameworks.FrameworkRule {
 	return []frameworks.FrameworkRule{
 		{
@@ -22,6 +28,7 @@ func Rules() []frameworks.FrameworkRule {
 			MatchMode:      frameworks.MatchPattern,
 			Pattern:        regexp.MustCompile(`(\.raw|cursor\.execute)\s*\(\s*(f["']|["'][^"']*["']\s*(%|\+)|.*request\.(GET|POST))`),
 			Sanitizers:     Sanitizers,
+			Exclusions:     frameworkSourceExclusions,
 			Recommendation: "Use ORM filters or parameterized cursor.execute calls instead of interpolating request data into SQL.",
 		},
 		{
@@ -37,6 +44,7 @@ func Rules() []frameworks.FrameworkRule {
 			MatchMode:      frameworks.MatchPattern,
 			Pattern:        regexp.MustCompile(`redirect\s*\(\s*(request\.(GET|POST)\.get|.*\[(["'])(next|redirect|url)["']\])`),
 			Sanitizers:     Sanitizers,
+			Exclusions:     frameworkSourceExclusions,
 			Recommendation: "Validate redirect targets with url_has_allowed_host_and_scheme before redirecting.",
 		},
 		{
@@ -52,6 +60,7 @@ func Rules() []frameworks.FrameworkRule {
 			MatchMode:      frameworks.MatchPattern,
 			Pattern:        regexp.MustCompile(`mark_safe\s*\([^)]*request\.(GET|POST|body|headers)`),
 			Sanitizers:     Sanitizers,
+			Exclusions:     frameworkSourceExclusions,
 			Recommendation: "Avoid mark_safe on user-controlled data. Use format_html or let Django auto-escape templates.",
 		},
 		{
@@ -67,6 +76,7 @@ func Rules() []frameworks.FrameworkRule {
 			MatchMode:      frameworks.MatchTemplate,
 			Pattern:        regexp.MustCompile(`\|\s*safe\b`),
 			Sanitizers:     Sanitizers,
+			Exclusions:     frameworkSourceExclusions,
 			Recommendation: "Avoid the safe filter for user-controlled values. Let template auto-escaping handle output.",
 		},
 		{
@@ -81,6 +91,7 @@ func Rules() []frameworks.FrameworkRule {
 			FileTypes:      []string{".py"},
 			MatchMode:      frameworks.MatchPattern,
 			Pattern:        regexp.MustCompile(`pickle\.loads\s*\([^)]*request\.(body|GET|POST)`),
+			Exclusions:     frameworkSourceExclusions,
 			Recommendation: "Do not deserialize untrusted request data with pickle. Use JSON with schema validation.",
 		},
 	}

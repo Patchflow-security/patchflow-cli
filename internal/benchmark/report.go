@@ -13,9 +13,12 @@ import (
 func WriteSummaryJSON(s *Summary, path string) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling benchmark summary: %w", err)
 	}
-	return os.WriteFile(path, data, 0600)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("writing benchmark summary to %s: %w", path, err)
+	}
+	return nil
 }
 
 // WriteSummaryMarkdown writes a human-readable benchmark report. It respects
@@ -39,6 +42,7 @@ func WriteSummaryMarkdown(s *Summary, results []RepoResult, path string) error {
 	sb.WriteString(fmt.Sprintf("| Repos scanned | %d |\n", s.ReposScanned))
 	sb.WriteString(fmt.Sprintf("| Total LOC | %s |\n", formatInt(s.TotalLOC)))
 	sb.WriteString(fmt.Sprintf("| Total findings | %d |\n", s.TotalFindings))
+	sb.WriteString(fmt.Sprintf("| Framework findings | %d |\n", s.TotalFrameworkFindings))
 	sb.WriteString(fmt.Sprintf("| Confirmed true positives | %d |\n", s.ConfirmedTruePos))
 	sb.WriteString(fmt.Sprintf("| False positives | %d |\n", s.FalsePositives))
 	sb.WriteString(fmt.Sprintf("| Unknown / unreviewed | %d |\n", s.UnknownUnreviewed))
@@ -51,6 +55,9 @@ func WriteSummaryMarkdown(s *Summary, results []RepoResult, path string) error {
 	if s.AvgRecall > 0 {
 		sb.WriteString(fmt.Sprintf("| Average recall | %.1f%% |\n", s.AvgRecall*100))
 	}
+	if s.AvgFrameworkRecall > 0 {
+		sb.WriteString(fmt.Sprintf("| Average framework recall | %.1f%% |\n", s.AvgFrameworkRecall*100))
+	}
 	if s.AvgNoiseRate > 0 {
 		sb.WriteString(fmt.Sprintf("| Average noise rate | %.1f%% |\n", s.AvgNoiseRate*100))
 	}
@@ -58,12 +65,12 @@ func WriteSummaryMarkdown(s *Summary, results []RepoResult, path string) error {
 
 	// Per-repo results table.
 	sb.WriteString("## Per-repository results\n\n")
-	sb.WriteString("| Repo | Type | Language | LOC | Files | Findings | Cold | Warm | Speedup | SARIF | Exit |\n")
-	sb.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	sb.WriteString("| Repo | Type | Language | LOC | Files | Findings | Framework | Cold | Warm | Speedup | SARIF | Exit |\n")
+	sb.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, m := range s.PerRepo {
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d | %d | %s | %s | %.0f%% | %s | %d |\n",
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d | %d | %d | %s | %s | %.0f%% | %s | %d |\n",
 			m.RepoName, m.RepoType, m.Language, formatInt(m.LOC), m.FilesScanned,
-			m.TotalFindings, m.ColdDuration.Round(time.Millisecond), m.WarmDuration.Round(time.Millisecond),
+			m.TotalFindings, m.FrameworkFindings, m.ColdDuration.Round(time.Millisecond), m.WarmDuration.Round(time.Millisecond),
 			m.CacheSpeedup, sarifCell(m), m.ExitCode))
 	}
 	sb.WriteString("\n")
@@ -119,6 +126,28 @@ func WriteSummaryMarkdown(s *Summary, results []RepoResult, path string) error {
 			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %.0f%% |\n",
 				res.Repo.Name, len(res.Repo.ExpectedFindings), len(m.ExpectedDetected),
 				len(m.ExpectedMissed), m.Recall*100))
+		}
+		sb.WriteString("\n")
+	}
+
+	hasFrameworkRecall := false
+	for _, res := range results {
+		if len(res.Repo.ExpectedFrameworkFindings) > 0 {
+			hasFrameworkRecall = true
+			break
+		}
+	}
+	if hasFrameworkRecall {
+		sb.WriteString("## Framework recall\n\n")
+		sb.WriteString("| Repo | Expected | Detected | Missed | Recall | Framework findings |\n| --- | --- | --- | --- | --- | --- |\n")
+		for _, res := range results {
+			if len(res.Repo.ExpectedFrameworkFindings) == 0 {
+				continue
+			}
+			m := res.PatchFlow
+			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %.0f%% | %d |\n",
+				res.Repo.Name, len(res.Repo.ExpectedFrameworkFindings), len(m.ExpectedFrameworkDetected),
+				len(m.ExpectedFrameworkMissed), m.FrameworkRecall*100, m.FrameworkFindings))
 		}
 		sb.WriteString("\n")
 	}

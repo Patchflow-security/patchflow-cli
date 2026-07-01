@@ -365,3 +365,57 @@ go test ./internal/sast/... ./internal/config/... ./cmd/... -count=1
 - Registered these packs in the default framework registry
 - Added pack contract tests plus representative vulnerable/safe fixtures for
   the first P1 batch
+
+## Real Benchmark Validation
+
+- Added a dedicated suite at `benchmarks/framework-pack-validation.yaml`.
+- The suite runs against local benchmark repos under
+  `/Users/digitalcenter/patchflow-benchmarks/.bench-work`.
+- Added framework-specific recall/accounting:
+  - per-repo `framework_findings`
+  - per-repo `expected_framework_detected`
+  - per-repo `expected_framework_missed`
+  - per-repo `framework_recall`
+  - summary `total_framework_findings`
+  - summary `avg_framework_recall`
+- Fixed benchmark artifact handling so missing `.patchflow/reports/` no longer
+  turns a successful JSON/SARIF scan into a failed repo result.
+
+### 2026-07-01 Run
+
+Command:
+
+```bash
+./patchflow benchmark run benchmarks/framework-pack-validation.yaml --no-tools
+```
+
+Results:
+
+- Results directory:
+  `/Users/digitalcenter/patchflow-benchmarks/results/2026-07-framework-pack-validation`
+- 7 repos scanned
+- 657,286 LOC
+- 1,473 total findings
+- 7 framework findings
+- 100% average framework recall across repos with
+  `expected_framework_findings`
+- 7/7 SARIF artifacts valid
+
+Framework-pack signal:
+
+- `nodegoat`: 1 framework finding, `PF-EXPRESS-REDIRECT-001`
+- `aspgoat`: 3 framework findings, `PF-RAZOR-XSS-001`
+- `vuln-springboot-app`: 1 framework finding, `PF-SPRINGSEC-CSRF-001`
+- `vulnerable-flask-app`: 2 framework findings, `PF-FLASK-SSTI-001`
+- `gin`: 0 framework findings on clean repo
+- `laravel-v5.5.40`: 0 framework findings on clean repo
+- `django`: 0 framework findings on clean repo
+
+Noise/overlap fixes validated:
+
+- Django clean-repo framework findings reduced from 44 to 0 by excluding
+  framework source/docs/tests paths for Django and Flask pack rules.
+- Express/Next.js overlap fixed: `res.redirect(req.query.url)` no longer
+  triggers `PF-NEXTJS-REDIRECT-001`.
+- Flask benchmark coverage fixed with `PF-FLASK-SSTI-001` for dynamic
+  `render_template_string(...)`.

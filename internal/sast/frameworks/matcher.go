@@ -95,6 +95,9 @@ func isExcluded(rule FrameworkRule, relPath string) bool {
 		if ex.Glob == "" {
 			continue
 		}
+		if strings.HasSuffix(ex.Glob, "/**") && strings.HasPrefix(rel, strings.TrimSuffix(ex.Glob, "**")) {
+			return true
+		}
 		if ok, _ := filepath.Match(ex.Glob, filepath.Base(rel)); ok {
 			return true
 		}

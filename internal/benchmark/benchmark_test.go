@@ -222,6 +222,46 @@ func TestValidateSARIF(t *testing.T) {
 	})
 }
 
+func TestCopyAutoMarkdownMissingReportsDirIsNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "out", "report.md")
+	if err := copyAutoMarkdown(dir, dest); err != nil {
+		t.Fatalf("copyAutoMarkdown should ignore missing reports dir: %v", err)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatalf("expected no markdown artifact, got stat err=%v", err)
+	}
+}
+
+func TestCopyAutoMarkdownCopiesNewestReport(t *testing.T) {
+	dir := t.TempDir()
+	reportsDir := filepath.Join(dir, ".patchflow", "reports")
+	if err := os.MkdirAll(reportsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(reportsDir, "old.md")
+	newPath := filepath.Join(reportsDir, "new.md")
+	if err := os.WriteFile(oldPath, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(newPath, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(dir, "artifacts", "report.md")
+	if err := copyAutoMarkdown(dir, dest); err != nil {
+		t.Fatalf("copyAutoMarkdown: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new" {
+		t.Fatalf("copied markdown = %q, want newest report", data)
+	}
+}
+
 func TestBuildMetrics(t *testing.T) {
 	pf := &pfJSONOutput{}
 	pf.Analysis.Findings = []pfFinding{
@@ -252,6 +292,9 @@ func TestBuildMetrics(t *testing.T) {
 	if m.ByType["sast"] != 2 {
 		t.Errorf("ByType sast = %d, want 2", m.ByType["sast"])
 	}
+	if m.FrameworkFindings != 0 {
+		t.Errorf("FrameworkFindings = %d, want 0", m.FrameworkFindings)
+	}
 	if m.LOC != 1000 {
 		t.Errorf("LOC = %d", m.LOC)
 	}
@@ -270,9 +313,12 @@ func TestApplyExpected(t *testing.T) {
 		{RuleID: "GO101"},
 		{CVEID: "CVE-2024-1234"},
 		{RuleID: "GO103"},
+		{Analyzer: "framework-express", RuleID: "PF-EXPRESS-REDIRECT-001", CWEID: "CWE-601"},
+		{Analyzer: "patterns-embedded", RuleID: "JS-REDIRECT-001", CWEID: "CWE-601"},
 	}
 	spec := RepoSpec{
-		ExpectedFindings: []string{"GO101", "CVE-2024-1234", "GO999"},
+		ExpectedFindings:          []string{"GO101", "CVE-2024-1234", "GO999"},
+		ExpectedFrameworkFindings: []string{"PF-EXPRESS-REDIRECT-001", "CWE-79"},
 	}
 	m := &Metrics{}
 	applyExpected(m, pf, spec)
@@ -286,16 +332,25 @@ func TestApplyExpected(t *testing.T) {
 	if m.Recall != 2.0/3.0 {
 		t.Errorf("recall = %.3f, want %.3f", m.Recall, 2.0/3.0)
 	}
+	if len(m.ExpectedFrameworkDetected) != 1 {
+		t.Errorf("framework detected = %d, want 1", len(m.ExpectedFrameworkDetected))
+	}
+	if len(m.ExpectedFrameworkMissed) != 1 {
+		t.Errorf("framework missed = %d, want 1", len(m.ExpectedFrameworkMissed))
+	}
+	if m.FrameworkRecall != 0.5 {
+		t.Errorf("framework recall = %.3f, want 0.5", m.FrameworkRecall)
+	}
 }
 
 func TestAggregate(t *testing.T) {
 	cfg := &Config{Suite: "test", Date: "2026-06-26"}
 	results := []RepoResult{
-		{Repo: RepoSpec{ExpectedFindings: []string{"A", "B"}}, PatchFlow: Metrics{
+		{Repo: RepoSpec{ExpectedFindings: []string{"A", "B"}, ExpectedFrameworkFindings: []string{"FW-A"}}, PatchFlow: Metrics{
 			LOC: 1000, TotalFindings: 10, ScanDuration: 10 * time.Second, ColdDuration: 10 * time.Second,
 			WarmDuration: 5 * time.Second, CacheSpeedup: 50, SARIFGenerated: true, SARIFValid: true,
-			Recall: 1.0, TruePositives: 8, FalsePositives: 2,
-			BySeverity: map[string]int{"high": 5, "medium": 5},
+			Recall: 1.0, FrameworkRecall: 1.0, FrameworkFindings: 3, TruePositives: 8, FalsePositives: 2,
+			BySeverity:   map[string]int{"high": 5, "medium": 5},
 			ToolFindings: map[string]int{"semgrep": 12},
 		}},
 		{Repo: RepoSpec{}, PatchFlow: Metrics{
@@ -315,6 +370,9 @@ func TestAggregate(t *testing.T) {
 	if s.TotalFindings != 30 {
 		t.Errorf("TotalFindings = %d", s.TotalFindings)
 	}
+	if s.TotalFrameworkFindings != 3 {
+		t.Errorf("TotalFrameworkFindings = %d, want 3", s.TotalFrameworkFindings)
+	}
 	if s.ConfirmedTruePos != 23 {
 		t.Errorf("ConfirmedTruePos = %d, want 23", s.ConfirmedTruePos)
 	}
@@ -333,6 +391,9 @@ func TestAggregate(t *testing.T) {
 	}
 	if s.AvgRecall != 1.0 {
 		t.Errorf("AvgRecall = %.2f", s.AvgRecall)
+	}
+	if s.AvgFrameworkRecall != 1.0 {
+		t.Errorf("AvgFrameworkRecall = %.2f", s.AvgFrameworkRecall)
 	}
 }
 
@@ -355,7 +416,7 @@ func TestWriteAndLoadSummaryJSON(t *testing.T) {
 	p := filepath.Join(dir, "summary.json")
 	s := &Summary{
 		Suite: "test", Date: "2026-06-26", ReposScanned: 3, TotalLOC: 50000,
-		TotalFindings: 100, PatchFlowVersion: "0.1.0",
+		TotalFindings: 100, TotalFrameworkFindings: 7, PatchFlowVersion: "0.1.0",
 	}
 	if err := WriteSummaryJSON(s, p); err != nil {
 		t.Fatal(err)
@@ -377,11 +438,12 @@ func TestWriteSummaryMarkdown(t *testing.T) {
 		ReposScanned: 2, TotalLOC: 50000, TotalFindings: 42,
 		ConfirmedTruePos: 30, FalsePositives: 8, UnknownUnreviewed: 4,
 		AvgScanTime: 42 * time.Second, CacheWarmSpeedup: 63,
-		SARIFValidCount: 2, SARIFTotalCount: 2,
+		SARIFValidCount: 2, SARIFTotalCount: 2, TotalFrameworkFindings: 5, AvgFrameworkRecall: 1,
 		PerRepo: []Metrics{
 			{RepoName: "juice-shop", RepoType: RepoIntentionallyVulnerable, Language: "javascript",
 				LOC: 30000, FilesScanned: 500, TotalFindings: 30, ColdDuration: 30 * time.Second,
 				WarmDuration: 12 * time.Second, CacheSpeedup: 60, SARIFGenerated: true, SARIFValid: true,
+				FrameworkFindings: 5, FrameworkRecall: 1, ExpectedFrameworkDetected: []string{"PF-TEST"},
 				BySeverity: map[string]int{"high": 20, "medium": 10}},
 			{RepoName: "clean-go", RepoType: RepoCleanRealWorld, Language: "go",
 				LOC: 20000, FilesScanned: 300, TotalFindings: 12, ColdDuration: 54 * time.Second,
@@ -390,7 +452,7 @@ func TestWriteSummaryMarkdown(t *testing.T) {
 		ToolComparison: map[string]int{"semgrep": 55, "gitleaks": 3},
 	}
 	results := []RepoResult{
-		{Repo: RepoSpec{Name: "juice-shop", Type: RepoIntentionallyVulnerable, ExpectedFindings: []string{"CWE-79"}},
+		{Repo: RepoSpec{Name: "juice-shop", Type: RepoIntentionallyVulnerable, ExpectedFindings: []string{"CWE-79"}, ExpectedFrameworkFindings: []string{"PF-TEST"}},
 			PatchFlow: s.PerRepo[0]},
 		{Repo: RepoSpec{Name: "clean-go", Type: RepoCleanRealWorld}, PatchFlow: s.PerRepo[1]},
 	}
@@ -404,7 +466,7 @@ func TestWriteSummaryMarkdown(t *testing.T) {
 	}
 	body := string(data)
 	// Check key sections present.
-	for _, want := range []string{"PatchFlow CLI Benchmark Report", "Responsible disclosure", "Tool comparison", "Recall"} {
+	for _, want := range []string{"PatchFlow CLI Benchmark Report", "Responsible disclosure", "Tool comparison", "Recall", "Framework recall"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("markdown missing section %q", want)
 		}

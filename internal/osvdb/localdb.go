@@ -170,7 +170,7 @@ func (db *LocalDB) downloadEcosystem(ctx context.Context, bucket string) error {
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating request for %s: %w", url, err)
 	}
 	req.Header.Set("User-Agent", "PatchFlow-CLI/0.1")
 
@@ -193,7 +193,7 @@ func (db *LocalDB) downloadEcosystem(ctx context.Context, bucket string) error {
 	// Extract to the DB directory
 	ecoDir := filepath.Join(db.dir, bucket)
 	if err := os.MkdirAll(ecoDir, 0o755); err != nil {
-		return err
+		return fmt.Errorf("creating ecosystem dir %s: %w", ecoDir, err)
 	}
 
 	// Read the zip
@@ -295,18 +295,20 @@ func (db *LocalDB) downloadEcosystem(ctx context.Context, bucket string) error {
 func extractZipFile(file *zip.File, outPath string) error {
 	rc, err := file.Open()
 	if err != nil {
-		return err
+		return fmt.Errorf("opening zip entry %s: %w", file.Name, err)
 	}
 	defer rc.Close()
 
 	out, err := os.Create(outPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating output file %s: %w", outPath, err)
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, rc)
-	return err
+	if _, err := io.Copy(out, rc); err != nil {
+		return fmt.Errorf("extracting %s to %s: %w", file.Name, outPath, err)
+	}
+	return nil
 }
 
 // Query looks up vulnerabilities for a package in the local DB.

@@ -4,11 +4,49 @@ PatchFlow CLI provides change intelligence for engineering teams. Use it to scan
 
 ## Installation
 
-Download the latest binary for your platform from the [releases page](https://github.com/Patchflow-security/patchflow-cli/releases), or build from source:
+### Homebrew (macOS / Linux)
 
 ```bash
+brew install Patchflow-security/tap/patchflow
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add patchflow https://github.com/Patchflow-security/scoop-bucket
+scoop install patchflow
+```
+
+### Install Script (macOS / Linux)
+
+```bash
+curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash
+```
+
+### Docker / Podman
+
+```bash
+podman pull ghcr.io/patchflow-security/cli:latest
+podman run --rm -v "$PWD:/repo" ghcr.io/patchflow-security/cli:latest scan run --path /repo
+```
+
+### Go Install
+
+```bash
+go install github.com/Patchflow-security/patchflow-cli@latest
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/Patchflow-security/patchflow-cli.git
+cd patchflow-cli
 go build -o patchflow .
 ```
+
+### Download Binary
+
+Download the latest binary for your platform from the [releases page](https://github.com/Patchflow-security/patchflow-cli/releases).
 
 ## Quick Start
 

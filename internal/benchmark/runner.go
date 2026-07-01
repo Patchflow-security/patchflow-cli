@@ -51,11 +51,11 @@ type pfEngineTiming struct {
 
 // Runner orchestrates a benchmark run across all repos in a config.
 type Runner struct {
-	Config   *Config
-	Out      func(string) // progress logger (human-readable)
-	NoTools  bool         // skip comparison tools
-	NoWarm   bool         // skip the warm (cached) second run
-	Timeout  time.Duration // per-scan timeout (default 15m)
+	Config  *Config
+	Out     func(string)  // progress logger (human-readable)
+	NoTools bool          // skip comparison tools
+	NoWarm  bool          // skip the warm (cached) second run
+	Timeout time.Duration // per-scan timeout (default 15m)
 }
 
 // NewRunner creates a benchmark runner.
@@ -367,6 +367,7 @@ func buildMetrics(spec RepoSpec, pf *pfJSONOutput, loc LOCStats, coldDur, warmDu
 		BySeverity:   map[string]int{},
 		ByConfidence: map[string]int{},
 		ByType:       map[string]int{},
+		ByFramework:  map[string]int{},
 	}
 	if pf == nil {
 		pf = &pfJSONOutput{}
@@ -382,6 +383,10 @@ func buildMetrics(spec RepoSpec, pf *pfJSONOutput, loc LOCStats, coldDur, warmDu
 		m.BySeverity[strings.ToLower(f.Severity)]++
 		m.ByConfidence[strings.ToLower(f.Confidence)]++
 		m.ByType[strings.ToLower(f.Type)]++
+		if strings.HasPrefix(f.Analyzer, "framework-") {
+			m.FrameworkFindings++
+			m.ByFramework[f.Analyzer]++
+		}
 	}
 	// Cache speedup: (cold - warm) / cold * 100. Negative or zero when no cache.
 	if coldDur > 0 && warmDur > 0 && warmDur < coldDur {
@@ -398,12 +403,23 @@ func buildMetrics(spec RepoSpec, pf *pfJSONOutput, loc LOCStats, coldDur, warmDu
 //   - CWE prefix match: a finding with CWE-79 matches an expected CWE-79-XSS
 //     (the dash-suffix is treated as a subcategory of the base CWE)
 func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
-	if len(spec.ExpectedFindings) == 0 || pf == nil {
+	if pf == nil {
+		return
+	}
+	applyExpectedSet(spec.ExpectedFindings, pf.Analysis.Findings, "", &m.ExpectedDetected, &m.ExpectedMissed, &m.Recall)
+	applyExpectedSet(spec.ExpectedFrameworkFindings, pf.Analysis.Findings, "framework-", &m.ExpectedFrameworkDetected, &m.ExpectedFrameworkMissed, &m.FrameworkRecall)
+}
+
+func applyExpectedSet(expected []string, findings []pfFinding, analyzerPrefix string, detected, missed *[]string, recall *float64) {
+	if len(expected) == 0 {
 		return
 	}
 	found := map[string]bool{}
 	foundCWEs := []string{}
-	for _, f := range pf.Analysis.Findings {
+	for _, f := range findings {
+		if analyzerPrefix != "" && !strings.HasPrefix(f.Analyzer, analyzerPrefix) {
+			continue
+		}
 		if f.RuleID != "" {
 			found[f.RuleID] = true
 		}
@@ -415,9 +431,9 @@ func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 			foundCWEs = append(foundCWEs, f.CWEID)
 		}
 	}
-	for _, exp := range spec.ExpectedFindings {
+	for _, exp := range expected {
 		if found[exp] {
-			m.ExpectedDetected = append(m.ExpectedDetected, exp)
+			*detected = append(*detected, exp)
 			continue
 		}
 		// CWE prefix match: if the expected finding is a CWE subcategory
@@ -431,14 +447,12 @@ func applyExpected(m *Metrics, pf *pfJSONOutput, spec RepoSpec) {
 			}
 		}
 		if matched {
-			m.ExpectedDetected = append(m.ExpectedDetected, exp)
+			*detected = append(*detected, exp)
 		} else {
-			m.ExpectedMissed = append(m.ExpectedMissed, exp)
+			*missed = append(*missed, exp)
 		}
 	}
-	if len(spec.ExpectedFindings) > 0 {
-		m.Recall = float64(len(m.ExpectedDetected)) / float64(len(spec.ExpectedFindings))
-	}
+	*recall = float64(len(*detected)) / float64(len(expected))
 }
 
 // parsePatchFlowJSON decodes the JSON printed to stdout by `patchflow scan run --json`.
@@ -502,7 +516,10 @@ func copyAutoMarkdown(repoPath, dest string) error {
 	src := filepath.Join(repoPath, ".patchflow", "reports")
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return err
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading reports dir %s: %w", src, err)
 	}
 	// Pick the most recently modified .md file.
 	var newest os.DirEntry
@@ -525,7 +542,13 @@ func copyAutoMarkdown(repoPath, dest string) error {
 	}
 	data, err := os.ReadFile(filepath.Join(src, newest.Name()))
 	if err != nil {
-		return err
+		return fmt.Errorf("reading report %s: %w", newest.Name(), err)
 	}
-	return os.WriteFile(dest, data, 0600)
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return fmt.Errorf("creating dest dir for %s: %w", dest, err)
+	}
+	if err := os.WriteFile(dest, data, 0600); err != nil {
+		return fmt.Errorf("writing report to %s: %w", dest, err)
+	}
+	return nil
 }

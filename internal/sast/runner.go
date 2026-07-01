@@ -346,7 +346,10 @@ func (r *Runner) AllRules() []RuleGroup {
 // commands like `rules list` can load custom rules without running a full scan.
 func (r *Runner) LoadCustomRules(root string) error {
 	_, err := r.loadRulePolicy(root)
-	return err
+	if err != nil {
+		return fmt.Errorf("loading custom rules from %s: %w", root, err)
+	}
+	return nil
 }
 
 // AvailableTools returns the names of external tools that are installed and ready to run.

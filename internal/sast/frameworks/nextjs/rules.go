@@ -35,7 +35,7 @@ func Rules() []frameworks.FrameworkRule {
 			Maturity:       frameworks.MaturityBeta,
 			FileTypes:      []string{".js", ".jsx", ".ts", ".tsx"},
 			MatchMode:      frameworks.MatchPattern,
-			Pattern:        regexp.MustCompile(`(NextResponse\.redirect|redirect|router\.push)\s*\([^)]*(req\.query|request\.nextUrl\.searchParams|searchParams\.)`),
+			Pattern:        regexp.MustCompile(`(NextResponse\.redirect|(^|[^\w.])redirect|router\.push)\s*\([^)]*(req\.query|request\.nextUrl\.searchParams|searchParams\.)`),
 			Sanitizers:     Sanitizers,
 			Recommendation: "Constrain redirect targets to known local paths or an allowlist of trusted origins.",
 		},

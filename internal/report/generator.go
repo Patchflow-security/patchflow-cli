@@ -1019,26 +1019,38 @@ func (g *Generator) WriteFile(format, outputPath string) error {
 	switch format {
 	case "markdown", "md":
 		content := g.Markdown()
-		return os.WriteFile(outputPath, []byte(content), 0600)
+		if err := os.WriteFile(outputPath, []byte(content), 0600); err != nil {
+			return fmt.Errorf("writing markdown report to %s: %w", outputPath, err)
+		}
+		return nil
 	case "json":
 		data, err := g.JSON()
 		if err != nil {
-			return err
+			return fmt.Errorf("generating JSON report: %w", err)
 		}
-		return os.WriteFile(outputPath, data, 0600)
+		if err := os.WriteFile(outputPath, data, 0600); err != nil {
+			return fmt.Errorf("writing JSON report to %s: %w", outputPath, err)
+		}
+		return nil
 	case "sarif":
 		report := g.SARIF("0.1.0")
 		data, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
-			return err
+			return fmt.Errorf("marshaling SARIF report: %w", err)
 		}
-		return os.WriteFile(outputPath, data, 0600)
+		if err := os.WriteFile(outputPath, data, 0600); err != nil {
+			return fmt.Errorf("writing SARIF report to %s: %w", outputPath, err)
+		}
+		return nil
 	case "gitlab", "codequality":
 		data, err := g.GitLabCodeQuality()
 		if err != nil {
-			return err
+			return fmt.Errorf("generating GitLab Code Quality report: %w", err)
 		}
-		return os.WriteFile(outputPath, data, 0600)
+		if err := os.WriteFile(outputPath, data, 0600); err != nil {
+			return fmt.Errorf("writing GitLab report to %s: %w", outputPath, err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported format: %s (supported: markdown, json, sarif, gitlab)", format)
 	}

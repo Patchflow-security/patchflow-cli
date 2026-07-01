@@ -13,18 +13,20 @@ import (
 // ExpectedFindings.
 func Aggregate(results []RepoResult, cfg *Config) *Summary {
 	s := &Summary{
-		Suite:  cfg.Suite,
-		Date:   cfg.Date,
-		PerRepo: make([]Metrics, 0, len(results)),
+		Suite:          cfg.Suite,
+		Date:           cfg.Date,
+		PerRepo:        make([]Metrics, 0, len(results)),
 		ToolComparison: map[string]int{},
 	}
 
 	var totalScanTime time.Duration
 	var speedups []float64
 	var recalls []float64
+	var frameworkRecalls []float64
 	var precisions []float64
 	var noiseRates []float64
 	reposWithRecall := 0
+	reposWithFrameworkRecall := 0
 	reposWithTriage := 0
 
 	for _, res := range results {
@@ -33,6 +35,7 @@ func Aggregate(results []RepoResult, cfg *Config) *Summary {
 		s.ReposScanned++
 		s.TotalLOC += m.LOC
 		s.TotalFindings += m.TotalFindings
+		s.TotalFrameworkFindings += m.FrameworkFindings
 
 		s.ConfirmedTruePos += m.TruePositives
 		s.FalsePositives += m.FalsePositives
@@ -53,6 +56,10 @@ func Aggregate(results []RepoResult, cfg *Config) *Summary {
 			reposWithRecall++
 			recalls = append(recalls, m.Recall)
 		}
+		if len(res.Repo.ExpectedFrameworkFindings) > 0 {
+			reposWithFrameworkRecall++
+			frameworkRecalls = append(frameworkRecalls, m.FrameworkRecall)
+		}
 		if m.TruePositives+m.FalsePositives > 0 {
 			reposWithTriage++
 			precisions = append(precisions, m.Precision)
@@ -69,6 +76,7 @@ func Aggregate(results []RepoResult, cfg *Config) *Summary {
 	}
 	s.CacheWarmSpeedup = avg(speedups)
 	s.AvgRecall = avg(recalls)
+	s.AvgFrameworkRecall = avg(frameworkRecalls)
 	s.AvgPrecision = avg(precisions)
 	s.AvgNoiseRate = avg(noiseRates)
 
@@ -79,6 +87,9 @@ func Aggregate(results []RepoResult, cfg *Config) *Summary {
 
 	if reposWithRecall == 0 {
 		s.Limitations = append(s.Limitations, "Recall not computed: no repos declared expected_findings.")
+	}
+	if reposWithFrameworkRecall == 0 {
+		s.Limitations = append(s.Limitations, "Framework recall not computed: no repos declared expected_framework_findings.")
 	}
 	if reposWithTriage == 0 {
 		s.Limitations = append(s.Limitations, "Precision/noise not computed: no triaged findings. Run `benchmark triage` or supply a review file.")
