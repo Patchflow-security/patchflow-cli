@@ -103,8 +103,6 @@ jobs:
         run: |
           cosign sign --yes ghcr.io/patchflow-security/cli:latest
           cosign sign --yes ghcr.io/patchflow-security/cli:${{ steps.meta.outputs.version }}
-          cosign sign --yes ghcr.io/patchflow-security/cli:latest-amd64
-          cosign sign --yes ghcr.io/patchflow-security/cli:latest-arm64
 
       - name: Sign checksums with cosign
         if: steps.meta.outputs.publish == 'true'
