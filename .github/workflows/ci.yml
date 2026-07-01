@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify go.mod tidy
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -ldflags "-s -w" -o patchflow .
+
+      - name: Test
+        run: go test $(go list ./... | grep -v /internal/integration) -timeout 5m
+
+      - name: Smoke test (version)
+        shell: bash
+        run: |
+          ./patchflow version
+          ./patchflow --help > /dev/null
+
+      - name: Upload binary artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: patchflow-ci-${{ github.sha }}
+          path: patchflow
+          retention-days: 7
+
+  release-dry-run:
+    name: GoReleaser Dry-Run
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install syft (SBOM generation)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: GoReleaser snapshot (no publish, validates config)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: v2
+          args: release --snapshot --clean --skip=publish
+        env:
+          # Skip publishing to taps/registries during dry-run
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify dist artifacts
+        run: |
+          ls -la dist/
+          test -f dist/checksums.txt
+          echo "Checksums preview:"
+          head -5 dist/checksums.txt
