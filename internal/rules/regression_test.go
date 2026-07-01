@@ -27,25 +27,25 @@ func TestRuleRegressionCorpus(t *testing.T) {
 		requireBlocking bool
 	}{
 		// Go SAST rules — should be stable with CWE mapping
-		{"G101", MaturityStable, true, true, true},   // Hardcoded credentials (high)
-		{"G104", MaturityStable, true, true, false},  // Unhandled errors (medium)
-		{"G115", MaturityStable, true, true, false},  // Integer overflow (medium)
-		{"G116", MaturityStable, true, true, false},  // Trojan Source (medium)
-		{"G201", MaturityStable, true, true, false},  // SQL injection concat (medium)
-		{"G202", MaturityStable, true, true, false},  // SQL injection format (medium)
-		{"G204", MaturityStable, true, true, false},  // Subprocess with variable (medium)
-		{"G402", MaturityStable, true, true, false},  // TLS settings (medium)
+		{"G101", MaturityStable, true, true, true},  // Hardcoded credentials (high)
+		{"G104", MaturityStable, true, true, false}, // Unhandled errors (medium)
+		{"G115", MaturityStable, true, true, false}, // Integer overflow (medium)
+		{"G116", MaturityStable, true, true, false}, // Trojan Source (medium)
+		{"G201", MaturityStable, true, true, false}, // SQL injection concat (medium)
+		{"G202", MaturityStable, true, true, false}, // SQL injection format (medium)
+		{"G204", MaturityStable, true, true, false}, // Subprocess with variable (medium)
+		{"G402", MaturityStable, true, true, false}, // TLS settings (medium)
 
 		// Taint SSA rules — should be stable with CWE mapping
-		{"G701", MaturityStable, true, true, false},  // SQL injection (medium)
-		{"G702", MaturityStable, true, true, false},  // Command injection (medium)
-		{"G703", MaturityStable, true, true, false},  // Path traversal (medium)
-		{"G704", MaturityStable, true, true, false},  // SSRF (medium)
+		{"G701", MaturityStable, true, true, false}, // SQL injection (medium)
+		{"G702", MaturityStable, true, true, false}, // Command injection (medium)
+		{"G703", MaturityStable, true, true, false}, // Path traversal (medium)
+		{"G704", MaturityStable, true, true, false}, // SSRF (medium)
 
 		// Secrets rules — should be stable (high severity = blocking)
-		{"SECRET-AWS Access Key ID", MaturityStable, true, true, true},
-		{"SECRET-GitHub Personal Access Token", MaturityStable, true, true, true},
-		{"SECRET-RSA Private Key", MaturityStable, true, true, true},
+		{"SECRET-AWS-Access-Key-ID", MaturityStable, true, true, true},
+		{"SECRET-GitHub-Personal-Access-Token", MaturityStable, true, true, true},
+		{"SECRET-RSA-Private-Key", MaturityStable, true, true, true},
 	}
 
 	for _, tc := range productionRules {
@@ -359,11 +359,11 @@ func TestFilterFindingsByProfile(t *testing.T) {
 
 	// Mix of rule IDs from different engines/maturities
 	ruleIDs := []string{
-		"G101",       // stable, Go SAST — active in dev
-		"G701",       // stable, taint SSA — active in dev
-		"PY001",      // beta, patterns — NOT active in dev (beta requires PR+)
-		"TS-PY001",   // beta, tree-sitter — NOT active in dev
-		"SECRET-AWS Access Key ID", // stable, secrets — active in dev
+		"G101",                     // stable, Go SAST — active in dev
+		"G701",                     // stable, taint SSA — active in dev
+		"PY001",                    // beta, patterns — NOT active in dev (beta requires PR+)
+		"TS-PY001",                 // beta, tree-sitter — NOT active in dev
+		"SECRET-AWS-Access-Key-ID", // stable, secrets — active in dev
 	}
 
 	// Dev profile: should keep G101, G701, SECRET-* but not PY001 or TS-PY001

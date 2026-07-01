@@ -207,7 +207,7 @@ func (g *gitleaksTool) Available() bool { _, err := exec.LookPath("gitleaks"); r
 
 func (g *gitleaksTool) Run(ctx context.Context, repoPath, outDir string) (ToolResult, error) {
 	outFile := filepath.Join(outDir, "gitleaks-"+filepath.Base(repoPath)+".json")
-	args := []string{"detect", "--source", repoPath, "--report-format", "json", "--report-path", outFile, "--no-banner"}
+	args := []string{"detect", "--source", repoPath, "--no-git", "--report-format", "json", "--report-path", outFile, "--no-banner"}
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, "gitleaks", args...)
 	var stderr strings.Builder

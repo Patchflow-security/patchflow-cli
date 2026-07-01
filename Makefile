@@ -34,7 +34,7 @@ install-tools:
 	@echo "Installing goreleaser..."
 	@which goreleaser >/dev/null 2>&1 || brew install goreleaser 2>/dev/null || go install github.com/goreleaser/goreleaser/v2@latest
 	@echo "Installing syft (SBOM)..."
-	@which syft >/dev/null 2>&1 || brew install syft 2>/dev/null || curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+	@which syft >/dev/null 2>&1 || brew install syft 2>/dev/null || INSTALL_DIR="$$(go env GOPATH)/bin" ./scripts/install-syft.sh
 	@echo "Installing cosign (signing)..."
 	@which cosign >/dev/null 2>&1 || brew install cosign 2>/dev/null || go install github.com/sigstore/cosign/v2/cmd/cosign@latest
 	@echo "Done."

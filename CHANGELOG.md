@@ -7,30 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- CI workflow (`.github/workflows/ci.yml`) with multi-OS build, vet, test, and goreleaser dry-run on PRs
-- Release process documentation (`RELEASE.md`)
-- `make install-tools` target for local release tooling setup
-- `make release-check` target to validate goreleaser config
-- Snapshot/dry-run release support via `workflow_dispatch` on the Release workflow
-- Cosign signature verification step in the release pipeline
-- SPDX SBOM upload to GitHub releases
-- Patchflow-security GitHub org repos: `patchflow-cli`, `homebrew-tap`, `scoop-bucket`, `patchflow-benchmarks`
+## [0.1.1] - 2025-07-01
+
+### Security
+- Pinned all GitHub Actions to immutable SHA commits (preplies mutable-action supply-chain attacks)
+- Removed `curl | sh` syft install in release workflow — replaced with pinned download script
+- Fixed composite-action shell injection risk in `action.yml`
+- Hardened Docker runtime: non-root user, read-only filesystem, minimal base image
+- Token retrieval now uses OS keychain with 0600-permission file fallback
+- Report file permissions set to 0600 (was 0644)
+- Gitleaks behavior fixed: `.gitleaks.toml` added for allowlist control
+- Secret rule IDs normalized for consistent SARIF reporting
 
 ### Changed
-- Go module path: `github.com/patchflow/patchflow-cli` → `github.com/Patchflow-security/patchflow-cli`
-- Docker images: `ghcr.io/patchflow/cli` → `ghcr.io/patchflow-security/cli`
-- Homebrew tap: `patchflow/homebrew-tap` → `Patchflow-security/homebrew-tap`
-- Scoop bucket: `patchflow/scoop-bucket` → `Patchflow-security/scoop-bucket`
-- `patchflow-scan.yml` now builds from source instead of `go install @latest` (scans actual PR code)
-- `scripts/install.sh` now supports `shasum -a 256` fallback for macOS checksum verification
-- Release workflow handles both tag pushes and manual `workflow_dispatch` triggers
-- Release workflow uploads cosign signatures and SBOMs to the GitHub release
+- GoReleaser pinned to v2.15.4 (avoids `brews` deprecation as failing config in newer versions)
+- Go version updated to 1.26.4 in all workflows
+- `scripts/install.sh` hardened with better error handling and checksum verification
+- Container image validation improved in `internal/container/scanner.go`
 
 ### Fixed
-- Broken `go install` path in `patchflow-scan.yml` (referenced non-existent `cmd/patchflow` subpath)
-- Broken relative benchmark path in goreleaser release header (now uses absolute GitHub URL)
-- `sha256sum` not available on macOS in `scripts/install.sh`
+- pnpm workspaces under `packages/` were skipped during manifest detection
+- Golden tests expected stale rule IDs that no longer match the registry
+- PR artifact tests wrote outside the validated project path
+- Bare `return err` wrapped with context in critical paths (SAST runner, report generator, benchmark, OSV DB)
+- Hardcoded `/usr/bin/time` path in benchmark now tries PATH first, then absolute fallback
 
 ## [0.1.0] - 2025-06-27
 

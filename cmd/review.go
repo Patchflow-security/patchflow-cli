@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/Patchflow-security/patchflow-cli/internal/api"
@@ -69,11 +68,12 @@ func runReviewPR(cmd *cobra.Command, _ []string) error {
 	}
 
 	cfg := ConfigFromContext(cmd.Context())
-	if cfg.Token == "" {
-		return formatter.PrintError(errors.New("Not authenticated. Run 'patchflow login --token <token>' first."))
+	token, err := requireAuthToken(cmd)
+	if err != nil {
+		return formatter.PrintError(err)
 	}
 
-	client := api.NewClient(cfg.APIURL, cfg.Token)
+	client := api.NewClient(cfg.APIURL, token)
 	payload := api.ReviewPayload{
 		RepoRoot:     ctx.RepoRoot,
 		RemoteURL:    ctx.RemoteURL,

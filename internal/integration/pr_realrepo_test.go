@@ -132,7 +132,7 @@ func TestRealPRSummaryToFileOnNodeGoat(t *testing.T) {
 	skipIfShort(t)
 	repoDir := cloneRepoForPR(t, "https://github.com/OWASP/NodeGoat.git", "NodeGoat")
 
-	outputFile := filepath.Join(t.TempDir(), "pr-summary.md")
+	outputFile := filepath.Join(repoDir, "pr-summary.md")
 	runPRReview(t, repoDir, "--format", "pr-summary", "--output", outputFile)
 
 	data, err := os.ReadFile(outputFile)
@@ -153,7 +153,7 @@ func TestRealAnnotationsOnNodeGoat(t *testing.T) {
 	skipIfShort(t)
 	repoDir := cloneRepoForPR(t, "https://github.com/OWASP/NodeGoat.git", "NodeGoat")
 
-	outputFile := filepath.Join(t.TempDir(), "annotations.json")
+	outputFile := filepath.Join(repoDir, "annotations.json")
 	output := runPRReview(t, repoDir, "--format", "annotations", "--output", outputFile)
 
 	if !strings.Contains(output, "annotations written") {

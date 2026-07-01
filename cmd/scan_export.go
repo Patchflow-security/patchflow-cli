@@ -141,7 +141,7 @@ func runScanExport(cmd *cobra.Command, _ []string) error {
 	var data []byte
 	switch format {
 	case "sarif":
-		sarifReport := gen.SARIF("0.1.0")
+		sarifReport := gen.SARIF("0.1.1")
 		data, err = json.MarshalIndent(sarifReport, "", "  ")
 		if err != nil {
 			return formatter.PrintError(err)

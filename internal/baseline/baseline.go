@@ -16,11 +16,11 @@ import (
 
 // Baseline represents a snapshot of findings at a point in time.
 type Baseline struct {
-	Name      string             `json:"name"`
-	CreatedAt time.Time          `json:"created_at"`
-	Commit    string             `json:"commit,omitempty"`
-	FindingKeys map[string]bool  `json:"finding_keys"`
-	Findings  []analysis.Finding `json:"findings"`
+	Name        string             `json:"name"`
+	CreatedAt   time.Time          `json:"created_at"`
+	Commit      string             `json:"commit,omitempty"`
+	FindingKeys map[string]bool    `json:"finding_keys"`
+	Findings    []analysis.Finding `json:"findings"`
 }
 
 // Manager handles baseline storage and comparison.
@@ -48,7 +48,7 @@ func (m *Manager) baselinePath(name string) string {
 // subsequent comparisons are resilient to line-number shifts.
 func (m *Manager) Create(name string, findings []analysis.Finding, commit string) error {
 	dir := m.baselinesDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create baselines directory: %w", err)
 	}
 
@@ -122,13 +122,13 @@ func (m *Manager) Delete(name string) error {
 
 // Diff represents the difference between a baseline and current findings.
 type Diff struct {
-	BaselineName string             `json:"baseline_name"`
-	New          []analysis.Finding `json:"new_findings"`
-	Resolved     []analysis.Finding `json:"resolved_findings"`
-	Unchanged    []analysis.Finding `json:"unchanged_findings"`
-	NewCount     int                `json:"new_count"`
-	ResolvedCount int               `json:"resolved_count"`
-	UnchangedCount int              `json:"unchanged_count"`
+	BaselineName   string             `json:"baseline_name"`
+	New            []analysis.Finding `json:"new_findings"`
+	Resolved       []analysis.Finding `json:"resolved_findings"`
+	Unchanged      []analysis.Finding `json:"unchanged_findings"`
+	NewCount       int                `json:"new_count"`
+	ResolvedCount  int                `json:"resolved_count"`
+	UnchangedCount int                `json:"unchanged_count"`
 }
 
 // Compare diffs current findings against a saved baseline.

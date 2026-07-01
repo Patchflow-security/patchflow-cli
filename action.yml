@@ -22,20 +22,31 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
-        go-version: '1.25'
+        go-version: '1.26.4'
 
     - name: Install PatchFlow CLI
       shell: bash
-      run: go install github.com/Patchflow-security/patchflow-cli@${{ github.action_ref || 'main' }}
+      env:
+        PATCHFLOW_ACTION_REF: ${{ github.action_ref || 'main' }}
+      run: go install "github.com/Patchflow-security/patchflow-cli@${PATCHFLOW_ACTION_REF}"
 
     - name: Run PatchFlow scan
       shell: bash
-      run: patchflow scan run --format sarif --output patchflow-results.sarif --profile ${{ inputs.scan-profile }} ${{ inputs.extra-args }}
+      env:
+        PATCHFLOW_SCAN_PROFILE: ${{ inputs.scan-profile }}
+        PATCHFLOW_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        set -euo pipefail
+        extra_args=()
+        if [ -n "$PATCHFLOW_EXTRA_ARGS" ]; then
+          read -r -a extra_args <<< "$PATCHFLOW_EXTRA_ARGS"
+        fi
+        patchflow scan run --format sarif --output patchflow-results.sarif --profile "$PATCHFLOW_SCAN_PROFILE" "${extra_args[@]}"
 
     - name: Upload SARIF to GitHub Code Scanning
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
       with:
         sarif_file: patchflow-results.sarif
         category: patchflow
@@ -43,9 +54,30 @@ runs:
     - name: Check risk threshold
       if: ${{ inputs.fail-on-risk != '0' }}
       shell: bash
+      env:
+        PATCHFLOW_SCAN_PROFILE: ${{ inputs.scan-profile }}
+        PATCHFLOW_EXTRA_ARGS: ${{ inputs.extra-args }}
+        PATCHFLOW_FAIL_ON_RISK: ${{ inputs.fail-on-risk }}
       run: |
-        RISK=$(patchflow scan run --format json --output /dev/stdout --profile ${{ inputs.scan-profile }} 2>/dev/null | jq '.risk_score // 0')
-        if [ "$RISK" -gt ${{ inputs.fail-on-risk }} ]; then
-          echo "::error::Risk score $RISK exceeds threshold ${{ inputs.fail-on-risk }}"
+        set -euo pipefail
+        if ! [[ "$PATCHFLOW_FAIL_ON_RISK" =~ ^[0-9]+$ ]]; then
+          echo "::error::fail-on-risk must be an integer from 0 to 100"
+          exit 1
+        fi
+        if [ "$PATCHFLOW_FAIL_ON_RISK" -gt 100 ]; then
+          echo "::error::fail-on-risk must be an integer from 0 to 100"
+          exit 1
+        fi
+        extra_args=()
+        if [ -n "$PATCHFLOW_EXTRA_ARGS" ]; then
+          read -r -a extra_args <<< "$PATCHFLOW_EXTRA_ARGS"
+        fi
+        RISK=$(patchflow scan run --format json --output /dev/stdout --profile "$PATCHFLOW_SCAN_PROFILE" "${extra_args[@]}" 2>/dev/null | jq -r '.risk_score // 0')
+        if ! [[ "$RISK" =~ ^[0-9]+$ ]]; then
+          echo "::error::PatchFlow returned a non-integer risk score: $RISK"
+          exit 1
+        fi
+        if [ "$RISK" -gt "$PATCHFLOW_FAIL_ON_RISK" ]; then
+          echo "::error::Risk score $RISK exceeds threshold $PATCHFLOW_FAIL_ON_RISK"
           exit 1
         fi

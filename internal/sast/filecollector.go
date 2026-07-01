@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/odvcencio/gotreesitter/grammars"
 	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
 	fwpatterns "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
@@ -19,6 +18,7 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/secrets"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/taintpatterns"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/treesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 // fileTask represents a single file to be scanned by one or more scanners.
@@ -84,7 +84,6 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 		"bower_components": true,
 		"jspm_packages":    true,
 		"webjars":          true,
-		"packages":         true, // NuGet packages dir
 		"Content":          true, // ASP.NET MVC Content dir (static assets)
 		"Scripts":          true, // ASP.NET MVC Scripts dir (jQuery, bootstrap, etc.)
 		// Test fixture directories — skip all scanners for these.

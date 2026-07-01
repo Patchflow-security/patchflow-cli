@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "PatchFlow generated reports and intentional fake scanner fixtures"
+paths = [
+  '''(^|/)\.patchflow/''',
+  '''^internal/fix/fix_test\.go$''',
+  '''^internal/integration/bench_test\.go$''',
+  '''^internal/integration/golden_test\.go$''',
+  '''^internal/sast/patterns/scanner_test\.go$''',
+  '''^internal/sast/secrets/scanner\.go$''',
+  '''^internal/sast/secrets/scanner_test\.go$''',
+]

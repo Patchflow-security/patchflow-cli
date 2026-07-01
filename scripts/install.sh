@@ -2,7 +2,7 @@
 # PatchFlow CLI install script
 # Usage: curl -fsSL https://patchflow.dev/install.sh | bash
 #   or: curl -fsSL https://patchflow.dev/install.sh | bash -s -- --version v0.1.0
-set -e
+set -eu
 
 # --- defaults ---
 VERSION="latest"
@@ -13,10 +13,18 @@ REPO="Patchflow-security/patchflow-cli"
 while [ $# -gt 0 ]; do
     case "$1" in
         --version)
+            if [ $# -lt 2 ]; then
+                echo "--version requires a value"
+                exit 1
+            fi
             VERSION="$2"
             shift 2
             ;;
         --install-dir)
+            if [ $# -lt 2 ]; then
+                echo "--install-dir requires a value"
+                exit 1
+            fi
             INSTALL_DIR="$2"
             shift 2
             ;;
@@ -58,7 +66,7 @@ esac
 # --- resolve version ---
 if [ "$VERSION" = "latest" ]; then
     echo "Fetching latest release version..."
-    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+    VERSION=$(curl --proto '=https' --tlsv1.2 -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
     if [ -z "$VERSION" ]; then
         echo "Failed to determine latest version."
         echo "Specify explicitly: --version v0.1.0"
@@ -81,37 +89,78 @@ echo "  ${URL}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-if ! curl -fsSL -o "${TMPDIR}/${ARCHIVE}" "$URL"; then
+if ! curl --proto '=https' --tlsv1.2 -fsSL -o "${TMPDIR}/${ARCHIVE}" "$URL"; then
     echo "Download failed. Check that version ${VERSION} exists."
     exit 1
 fi
 
 # --- verify checksum ---
 CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
-if curl -fsSL -o "${TMPDIR}/checksums.txt" "$CHECKSUM_URL"; then
-    echo "Verifying checksum..."
-    # sha256sum on Linux, shasum -a 256 on macOS/BSD
-    if command -v sha256sum >/dev/null 2>&1; then
-        SHA_CMD="sha256sum -c -"
-    else
-        SHA_CMD="shasum -a 256 -c -"
-    fi
-    (cd "$TMPDIR" && grep "${ARCHIVE}" checksums.txt | $SHA_CMD) || {
+if ! curl --proto '=https' --tlsv1.2 -fsSL -o "${TMPDIR}/checksums.txt" "$CHECKSUM_URL"; then
+    echo "Checksum file not found; refusing to install an unverified archive."
+    exit 1
+fi
+
+echo "Verifying checksum..."
+if ! awk -v archive="$ARCHIVE" '$2 == archive { print; found = 1 } END { exit found ? 0 : 1 }' "${TMPDIR}/checksums.txt" > "${TMPDIR}/checksum.expected"; then
+    echo "Checksum entry for ${ARCHIVE} not found."
+    exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$TMPDIR" && sha256sum -c checksum.expected) || {
         echo "Checksum verification failed!"
         exit 1
     }
 else
-    echo "Warning: checksums file not found. Skipping verification."
+    (cd "$TMPDIR" && shasum -a 256 -c checksum.expected) || {
+        echo "Checksum verification failed!"
+        exit 1
+    }
+fi
+
+# Verify the signed checksum when cosign is available. Checksum verification is
+# still mandatory above so installs work on hosts without cosign.
+if command -v cosign >/dev/null 2>&1; then
+    SIG_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt.sig"
+    CERT_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt.pem"
+    if curl --proto '=https' --tlsv1.2 -fsSL -o "${TMPDIR}/checksums.txt.sig" "$SIG_URL" &&
+       curl --proto '=https' --tlsv1.2 -fsSL -o "${TMPDIR}/checksums.txt.pem" "$CERT_URL"; then
+        echo "Verifying checksum signature..."
+        cosign verify-blob \
+            --certificate "${TMPDIR}/checksums.txt.pem" \
+            --signature "${TMPDIR}/checksums.txt.sig" \
+            --certificate-identity "https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${TMPDIR}/checksums.txt" >/dev/null
+    else
+        echo "Warning: checksum signature files not found; checksum verification completed without signature verification."
+    fi
 fi
 
 # --- extract ---
 echo "Extracting..."
+if ! tar -tzf "${TMPDIR}/${ARCHIVE}" | awk '
+    /^\/|(^|\/)\.\.($|\/)/ {
+        print "Unsafe archive path: " $0 > "/dev/stderr"
+        bad = 1
+    }
+    END { exit bad ? 1 : 0 }
+'; then
+    echo "Archive contains unsafe paths; refusing to extract."
+    exit 1
+fi
 tar -xzf "${TMPDIR}/${ARCHIVE}" -C "$TMPDIR"
 
 # --- install ---
 mkdir -p "$INSTALL_DIR"
-mv "${TMPDIR}/patchflow" "${INSTALL_DIR}/patchflow"
-chmod +x "${INSTALL_DIR}/patchflow"
+if [ ! -f "${TMPDIR}/patchflow" ]; then
+    echo "Archive did not contain the patchflow binary."
+    exit 1
+fi
+if ! install -m 0755 "${TMPDIR}/patchflow" "${INSTALL_DIR}/patchflow" 2>/dev/null; then
+    cp "${TMPDIR}/patchflow" "${INSTALL_DIR}/patchflow"
+    chmod 0755 "${INSTALL_DIR}/patchflow"
+fi
 
 echo ""
 echo "Installed PatchFlow CLI ${VERSION} to ${INSTALL_DIR}/patchflow"

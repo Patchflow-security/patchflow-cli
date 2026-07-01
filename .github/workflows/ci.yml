@@ -21,12 +21,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.25']
+        go: ['1.26.4']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go }}
           cache: true
@@ -57,7 +57,7 @@ jobs:
 
       - name: Upload binary artifact
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: patchflow-ci-${{ github.sha }}
           path: patchflow
@@ -69,24 +69,31 @@ jobs:
     needs: build-test
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25'
+          go-version: '1.26.4'
 
       - name: Install syft (SBOM generation)
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v1.18.0
+
+      - name: Add syft to PATH
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          mkdir -p "$RUNNER_TEMP/patchflow-bin"
+          ln -sf "${{ steps.syft.outputs.cmd }}" "$RUNNER_TEMP/patchflow-bin/syft"
+          echo "$RUNNER_TEMP/patchflow-bin" >> "$GITHUB_PATH"
 
       - name: GoReleaser snapshot (no publish, validates config)
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
-          version: v2
+          version: v2.15.4
           args: release --snapshot --clean --skip=publish
         env:
           # Skip publishing to taps/registries during dry-run

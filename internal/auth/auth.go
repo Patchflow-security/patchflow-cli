@@ -71,6 +71,18 @@ func (m *Manager) Logout() error {
 	return nil
 }
 
+// Token returns the raw token for authenticated API calls.
+// Secure storage is checked first, then config.Token is used only as a
+// migration/env fallback. Callers must never print the returned value.
+func (m *Manager) Token() string {
+	if token, err := m.storage.Load(); err == nil {
+		if strings.TrimSpace(token) != "" {
+			return strings.TrimSpace(token)
+		}
+	}
+	return strings.TrimSpace(m.config.Token)
+}
+
 // Status returns whether the user is authenticated, a masked token, and the storage type.
 // It checks secure storage first, falling back to config.Token for migration.
 func (m *Manager) Status() (AuthStatus, error) {

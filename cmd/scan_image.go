@@ -200,7 +200,7 @@ func writeImageReportJSON(path string, result *container.ScanResult) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // writeImageReportMarkdown writes a human-readable Markdown report.
@@ -218,5 +218,5 @@ func writeImageReportMarkdown(path string, result *container.ScanResult) error {
 				f.Severity, f.Title, f.PackageName, f.FixedVersion)
 		}
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o600)
 }

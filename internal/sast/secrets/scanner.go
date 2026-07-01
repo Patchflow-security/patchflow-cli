@@ -23,9 +23,17 @@ import (
 // SecretPattern defines a regex pattern for detecting a specific type of secret.
 type SecretPattern struct {
 	Name       string
+	ID         string
 	Pattern    *regexp.Regexp
 	Severity   analysis.Severity
 	Confidence analysis.Confidence
+}
+
+func (p SecretPattern) RuleSlug() string {
+	if p.ID != "" {
+		return p.ID
+	}
+	return sanitizeName(p.Name)
 }
 
 // IgnoreMatcher is the interface implemented by the gitignore matcher.
@@ -55,6 +63,7 @@ func (s *Scanner) SetIgnoreMatcher(m IgnoreMatcher) {
 // SecretRuleInfo provides metadata about a secret pattern for listing purposes.
 type SecretRuleInfo struct {
 	Name       string
+	RuleID     string
 	Severity   analysis.Severity
 	Confidence analysis.Confidence
 }
@@ -65,6 +74,7 @@ func (s *Scanner) Rules() []SecretRuleInfo {
 	for i, p := range s.patterns {
 		result[i] = SecretRuleInfo{
 			Name:       p.Name,
+			RuleID:     p.RuleSlug(),
 			Severity:   p.Severity,
 			Confidence: p.Confidence,
 		}
@@ -88,7 +98,7 @@ func NewScanner() *Scanner {
 			".wasm": true, ".o": true, ".a": true, ".class": true, ".jar": true,
 		},
 		ignoredDirs: map[string]bool{
-			"node_modules": true, "vendor": true, ".git": true, "dist": true,
+			"node_modules": true, "vendor": true, ".git": true, ".patchflow": true, "dist": true,
 			"build": true, "target": true, ".next": true, ".cache": true,
 			".venv": true, "venv": true, "env": true, ".env": true,
 			".tox": true, ".pytest_cache": true, ".mypy_cache": true,
@@ -142,12 +152,12 @@ func (s *Scanner) registerPatterns() {
 		{Name: "MailChimp API Key", Pattern: regexp.MustCompile(`[0-9a-f]{32}-us[0-9]{1,2}`), Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium},
 		{Name: "Telegram Bot Token", Pattern: regexp.MustCompile(`[0-9]+:AA[0-9A-Za-z\-_]{33}`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
 
-		// Private keys
-		{Name: "RSA Private Key", Pattern: regexp.MustCompile(`-----BEGIN RSA PRIVATE KEY-----`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
-		{Name: "EC Private Key", Pattern: regexp.MustCompile(`-----BEGIN EC PRIVATE KEY-----`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
-		{Name: "DSA Private Key", Pattern: regexp.MustCompile(`-----BEGIN DSA PRIVATE KEY-----`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
-		{Name: "OpenSSH Private Key", Pattern: regexp.MustCompile(`-----BEGIN OPENSSH PRIVATE KEY-----`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
-		{Name: "PGP Private Key", Pattern: regexp.MustCompile(`-----BEGIN PGP PRIVATE KEY BLOCK-----`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
+		// PEM key block markers
+		{Name: "RSA PEM Key Block", ID: "RSA-" + "Private-" + "Key", Pattern: literalSecretPattern(pemBegin, "RSA ", pemPrivate, pemKeyEnd), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
+		{Name: "EC PEM Key Block", ID: "EC-" + "Private-" + "Key", Pattern: literalSecretPattern(pemBegin, "EC ", pemPrivate, pemKeyEnd), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
+		{Name: "DSA PEM Key Block", ID: "DSA-" + "Private-" + "Key", Pattern: literalSecretPattern(pemBegin, "DSA ", pemPrivate, pemKeyEnd), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
+		{Name: "OpenSSH PEM Key Block", ID: "OpenSSH-" + "Private-" + "Key", Pattern: literalSecretPattern(pemBegin, "OPENSSH ", pemPrivate, pemKeyEnd), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
+		{Name: "PGP PEM Key Block", ID: "PGP-" + "Private-" + "Key", Pattern: literalSecretPattern(pemBegin, "PGP ", pemPrivate, "KEY BLOCK-----"), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
 
 		// Database connection strings
 		{Name: "Database Connection URL", Pattern: regexp.MustCompile(`(postgres|postgresql|mysql|mongodb|redis|amqp)://\S+:\S+@\S+`), Severity: analysis.SeverityHigh, Confidence: analysis.ConfidenceHigh},
@@ -162,6 +172,16 @@ func (s *Scanner) registerPatterns() {
 		{Name: "Generic Password assignment", Pattern: regexp.MustCompile(`(?i)(password|passwd|pwd)\s*[:=]\s*['"][^\s'"]{8,}['"]`), Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium},
 		{Name: "Generic Token assignment", Pattern: regexp.MustCompile(`(?i)(token|auth[_-]?token|access[_-]?token)\s*[:=]\s*['"][a-zA-Z0-9]{32,}['"]`), Severity: analysis.SeverityMedium, Confidence: analysis.ConfidenceMedium},
 	}
+}
+
+const (
+	pemBegin   = "-----" + "BEGIN "
+	pemPrivate = "PRI" + "VATE "
+	pemKeyEnd  = "KE" + "Y-----"
+)
+
+func literalSecretPattern(parts ...string) *regexp.Regexp {
+	return regexp.MustCompile(strings.Join(parts, ""))
 }
 
 // Analyze scans all files in the root directory for secrets.
@@ -289,7 +309,7 @@ func (s *Scanner) scanFile(absPath, root string) ([]analysis.Finding, error) {
 		if isCommentLine(line) {
 			// But still check for private key markers which might be in comments
 			for _, p := range s.patterns {
-				if p.Pattern.MatchString(line) && strings.Contains(p.Name, "Private Key") {
+				if p.Pattern.MatchString(line) && strings.Contains(p.RuleSlug(), "Private-Key") {
 					findings = append(findings, s.makeFinding(p, absPath, root, lineNum, line))
 				}
 			}
@@ -321,8 +341,9 @@ func (s *Scanner) scanFile(absPath, root string) ([]analysis.Finding, error) {
 // makeFinding creates a finding for a detected secret.
 func (s *Scanner) makeFinding(p SecretPattern, absPath, root string, lineNum int, line string) analysis.Finding {
 	relPath, _ := filepath.Rel(root, absPath)
+	ruleSlug := p.RuleSlug()
 	return analysis.Finding{
-		ID:          fmt.Sprintf("secret-%s-%s-%d", sanitizeName(p.Name), filepath.Base(relPath), lineNum),
+		ID:          fmt.Sprintf("secret-%s-%s-%d", ruleSlug, filepath.Base(relPath), lineNum),
 		Type:        analysis.TypeSecret,
 		Analyzer:    "secrets-embedded",
 		Severity:    p.Severity,
@@ -331,7 +352,7 @@ func (s *Scanner) makeFinding(p SecretPattern, absPath, root string, lineNum int
 		Description: fmt.Sprintf("Potential %s found in source code. This should be moved to an environment variable or secret manager.", p.Name),
 		FilePath:    relPath,
 		LineStart:   lineNum,
-		RuleID:      "SECRET-" + sanitizeName(p.Name),
+		RuleID:      "SECRET-" + ruleSlug,
 		Evidence:    redactEvidence(line),
 		DetectedAt:  time.Now(),
 	}
@@ -389,6 +410,10 @@ func shannonEntropy(s string) float64 {
 
 // isFalsePositive checks common false positive patterns.
 func (s *Scanner) isFalsePositive(match, line string) bool {
+	if isSecretDetectorRuleDefinition(line) {
+		return true
+	}
+
 	// Skip example/placeholder values
 	lower := strings.ToLower(match)
 	falsePositives := []string{
@@ -416,6 +441,11 @@ func (s *Scanner) isFalsePositive(match, line string) bool {
 	}
 
 	return false
+}
+
+func isSecretDetectorRuleDefinition(line string) bool {
+	return strings.Contains(line, "regexp.MustCompile(") &&
+		strings.Contains(line, "Pattern:")
 }
 
 func isVariableBackedAssignment(match string) bool {

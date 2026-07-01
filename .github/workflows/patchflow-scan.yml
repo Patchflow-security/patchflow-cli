@@ -17,12 +17,12 @@ jobs:
   patchflow-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.25'
+          go-version: '1.26.4'
 
       - name: Build PatchFlow from source
         run: |
@@ -38,14 +38,14 @@ jobs:
         continue-on-error: true
 
       - name: Upload SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
         if: always() && hashFiles('patchflow-results.sarif') != ''
         with:
           sarif_file: patchflow-results.sarif
           category: patchflow
 
       - name: Upload scan results artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && hashFiles('patchflow-results.sarif') != ''
         with:
           name: patchflow-sarif

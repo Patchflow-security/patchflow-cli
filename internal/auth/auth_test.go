@@ -92,6 +92,27 @@ func TestStatusAuthenticated(t *testing.T) {
 	}
 }
 
+func TestTokenUsesSecureStorage(t *testing.T) {
+	cfg, storage := setupTempFileStorage(t)
+	cfg.Token = "config-token"
+	mgr := NewManagerWithStorage(cfg, storage)
+
+	_ = mgr.Login("storage-token")
+	if got := mgr.Token(); got != "storage-token" {
+		t.Fatalf("expected storage token, got %q", got)
+	}
+}
+
+func TestTokenFallsBackToConfig(t *testing.T) {
+	cfg, storage := setupTempFileStorage(t)
+	cfg.Token = "config-token"
+	mgr := NewManagerWithStorage(cfg, storage)
+
+	if got := mgr.Token(); got != "config-token" {
+		t.Fatalf("expected config token fallback, got %q", got)
+	}
+}
+
 func TestStatusNotAuthenticated(t *testing.T) {
 	cfg, storage := setupTempFileStorage(t)
 	mgr := NewManagerWithStorage(cfg, storage)

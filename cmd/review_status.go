@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -30,11 +29,12 @@ func runReviewStatus(cmd *cobra.Command, args []string) error {
 	jobID := args[0]
 
 	cfg := ConfigFromContext(cmd.Context())
-	if cfg.Token == "" {
-		return formatter.PrintError(errors.New("Not authenticated. Run 'patchflow login --token <token>' first."))
+	token, err := requireAuthToken(cmd)
+	if err != nil {
+		return formatter.PrintError(err)
 	}
 
-	client := api.NewClient(cfg.APIURL, cfg.Token)
+	client := api.NewClient(cfg.APIURL, token)
 
 	if watchFlag {
 		return watchStatus(cmd.Context(), formatter, client, jobID)

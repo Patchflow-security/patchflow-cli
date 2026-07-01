@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 
 WORKDIR /build
 
@@ -26,5 +26,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /build/patchflow /usr/local/bin/patchflow
 
+USER nonroot:nonroot
+HEALTHCHECK NONE
 ENTRYPOINT ["/usr/local/bin/patchflow"]
 CMD ["--help"]

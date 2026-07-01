@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -531,7 +532,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if dropped > 0 && (!output.IsJSON(formatter) && !QuietFromContext(ctx)) {
-			_ = formatter.Print(fmt.Sprintf("  Governance profile %s: filtered %d findings from inactive rules.", governanceProfile, dropped))
+			_ = formatter.Print("  Governance profile " + string(governanceProfile) + ": excluded " + strconv.Itoa(dropped) + " findings from inactive rules.")
 		}
 		allFindings = filtered
 	}

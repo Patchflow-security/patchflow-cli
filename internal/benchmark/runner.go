@@ -74,16 +74,16 @@ func NewRunner(cfg *Config) *Runner {
 //	  summary.md
 func (r *Runner) Run(ctx context.Context) ([]RepoResult, *Summary, error) {
 	resultsDir := r.Config.ResultsRoot()
-	if err := os.MkdirAll(filepath.Join(resultsDir, "sarif"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(resultsDir, "sarif"), 0750); err != nil {
 		return nil, nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(resultsDir, "raw"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(resultsDir, "raw"), 0750); err != nil {
 		return nil, nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(resultsDir, "markdown"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(resultsDir, "markdown"), 0750); err != nil {
 		return nil, nil, err
 	}
-	if err := os.MkdirAll(r.Config.WorkRoot(), 0755); err != nil {
+	if err := os.MkdirAll(r.Config.WorkRoot(), 0750); err != nil {
 		return nil, nil, err
 	}
 
@@ -139,7 +139,7 @@ func (r *Runner) runRepo(ctx context.Context, spec RepoSpec, resultsDir string) 
 	// Must be absolute because patchflow runs with cmd.Dir = repoPath.
 	absRepo, _ := filepath.Abs(repoPath)
 	tmpDir := filepath.Join(absRepo, ".patchflow", "bench-out")
-	_ = os.MkdirAll(tmpDir, 0755)
+	_ = os.MkdirAll(tmpDir, 0750)
 	tmpSarif := filepath.Join(tmpDir, "out.sarif")
 	tmpJSON := filepath.Join(tmpDir, "out.json")
 	tmpMD := filepath.Join(tmpDir, "out.md")
@@ -310,7 +310,7 @@ func (r *Runner) prepareRepo(ctx context.Context, spec RepoSpec) (string, error)
 	}
 
 	_ = os.RemoveAll(dest)
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0750); err != nil {
 		return "", err
 	}
 	cloneCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -508,8 +508,8 @@ func copyFileIfExists(src, dst string) {
 	if err != nil {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(dst), 0755)
-	_ = os.WriteFile(dst, data, 0644)
+	_ = os.MkdirAll(filepath.Dir(dst), 0750)
+	_ = os.WriteFile(dst, data, 0600)
 }
 
 func copyAutoMarkdown(repoPath, dest string) error {
@@ -544,7 +544,7 @@ func copyAutoMarkdown(repoPath, dest string) error {
 	if err != nil {
 		return fmt.Errorf("reading report %s: %w", newest.Name(), err)
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0750); err != nil {
 		return fmt.Errorf("creating dest dir for %s: %w", dest, err)
 	}
 	if err := os.WriteFile(dest, data, 0600); err != nil {

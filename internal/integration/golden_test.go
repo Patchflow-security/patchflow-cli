@@ -118,7 +118,7 @@ func buildGoGolden(t *testing.T) *goldenRepo {
 import "fmt"
 
 func main() {
-	password := "hardcoded-secret-value"
+	password := "hardcoded-secret-value-123"
 	fmt.Println(password)
 }
 `)
@@ -148,7 +148,7 @@ func buildMixedGolden(t *testing.T) *goldenRepo {
 	g.write("services/api/main.go", `package main
 
 func main() {
-	token := "super-secret-token"
+	token := "super-secret-token-123"
 	_ = token
 }
 `)
@@ -194,6 +194,20 @@ func hasFindingWithRule(findings []analysis.Finding, ruleID string) bool {
 	return false
 }
 
+// hasFindingWithAnyRule returns true if any finding matches one of the rule IDs.
+func hasFindingWithAnyRule(findings []analysis.Finding, ruleIDs ...string) bool {
+	want := make(map[string]bool, len(ruleIDs))
+	for _, ruleID := range ruleIDs {
+		want[ruleID] = true
+	}
+	for _, f := range findings {
+		if want[f.RuleID] {
+			return true
+		}
+	}
+	return false
+}
+
 // countFindingsWithRule returns the number of findings matching the rule ID.
 func countFindingsWithRule(findings []analysis.Finding, ruleID string) int {
 	n := 0
@@ -215,8 +229,8 @@ func TestScanPythonGolden(t *testing.T) {
 	}
 	g := buildPythonGolden(t)
 	findings := runScan(t, g.root)
-	if !hasFindingWithRule(findings, "PY001") {
-		t.Errorf("expected PY001 (eval) finding, got %d findings: %v", len(findings), ruleIDs(findings))
+	if !hasFindingWithAnyRule(findings, "PY001", "TS-PY001") {
+		t.Errorf("expected PY001/TS-PY001 (eval) finding, got %d findings: %v", len(findings), ruleIDs(findings))
 	}
 }
 
@@ -242,8 +256,8 @@ func TestScanNodeGolden(t *testing.T) {
 	}
 	g := buildNodeGolden(t)
 	findings := runScan(t, g.root)
-	if !hasFindingWithRule(findings, "JS001") {
-		t.Errorf("expected JS001 (eval) finding, got %d findings: %v", len(findings), ruleIDs(findings))
+	if !hasFindingWithAnyRule(findings, "JS001", "TS-JS001") {
+		t.Errorf("expected JS001/TS-JS001 (eval) finding, got %d findings: %v", len(findings), ruleIDs(findings))
 	}
 }
 
@@ -255,11 +269,11 @@ func TestScanMixedGolden(t *testing.T) {
 	}
 	g := buildMixedGolden(t)
 	findings := runScan(t, g.root)
-	if !hasFindingWithRule(findings, "PY001") {
-		t.Errorf("expected PY001 in mixed repo, got: %v", ruleIDs(findings))
+	if !hasFindingWithAnyRule(findings, "PY001", "TS-PY001") {
+		t.Errorf("expected PY001/TS-PY001 in mixed repo, got: %v", ruleIDs(findings))
 	}
-	if !hasFindingWithRule(findings, "JS001") {
-		t.Errorf("expected JS001 in mixed repo, got: %v", ruleIDs(findings))
+	if !hasFindingWithAnyRule(findings, "JS001", "TS-JS001") {
+		t.Errorf("expected JS001/TS-JS001 in mixed repo, got: %v", ruleIDs(findings))
 	}
 }
 
@@ -276,7 +290,7 @@ use (
 	g.write("services/api/main.go", `package main
 
 func main() {
-	token := "hardcoded-api-secret"
+	token := "hardcoded-api-secret-123"
 	_ = token
 }
 `)
@@ -284,7 +298,7 @@ func main() {
 	g.write("services/worker/main.go", `package main
 
 func main() {
-	password := "hardcoded-worker-password"
+	password := "hardcoded-worker-password-123"
 	_ = password
 }
 `)
@@ -351,8 +365,8 @@ func TestScanPnpmWorkspaceGolden(t *testing.T) {
 	}
 	g := buildPnpmWorkspaceGolden(t)
 	findings := runScan(t, g.root)
-	if !hasFindingWithRule(findings, "JS001") {
-		t.Errorf("expected JS001 in pnpm workspace, got: %v", ruleIDs(findings))
+	if !hasFindingWithAnyRule(findings, "JS001", "TS-JS001") {
+		t.Errorf("expected JS001/TS-JS001 in pnpm workspace, got: %v", ruleIDs(findings))
 	}
 	// Verify findings come from both packages
 	foundUI := false
@@ -459,7 +473,7 @@ func TestBaselineLineShiftResilience(t *testing.T) {
 	// Insert 50 comment lines above the eval() to shift its line number.
 	g.write("app.py", `import os
 
-` + strings.Repeat("# filler comment line\n", 50) + `
+`+strings.Repeat("# filler comment line\n", 50)+`
 def handler(user_input):
     # vulnerable: eval with user input
     result = eval(user_input)

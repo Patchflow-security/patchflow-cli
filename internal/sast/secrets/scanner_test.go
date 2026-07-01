@@ -146,9 +146,30 @@ func TestSecretScanner_SkipsFalsePositives(t *testing.T) {
 	}
 }
 
+func TestSecretScanner_SkipsRegexRuleDefinitions(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "scanner.go", join(
+		`{Name: "RSA Private Key", Pattern: regexp.MustCompile(`+"`",
+		"-----BEGIN RSA PRIVATE KEY-----",
+		"`"+`), Severity: analysis.SeverityHigh},`,
+	))
+
+	s := NewScanner()
+	findings, err := s.Analyze(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Analyze failed: %v", err)
+	}
+
+	for _, f := range findings {
+		if f.RuleID == "SECRET-RSA-Private-Key" {
+			t.Fatalf("regex rule definitions should not trigger secret findings: %#v", findings)
+		}
+	}
+}
+
 func TestSecretScanner_SkipsIgnoredDirs(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "node_modules/lib.js", `const key = "ghp_1234567890abcdefghijklmnopqrstuvwxyz1234";`)
+	writeFile(t, dir, "node_modules/lib.js", join(`const key = "ghp_`, "1234567890abcdefghijklmnopqrstuvwxyz1234", `";`))
 
 	s := NewScanner()
 	findings, err := s.Analyze(context.Background(), dir)

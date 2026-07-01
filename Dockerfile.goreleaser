@@ -1,5 +1,7 @@
 FROM gcr.io/distroless/static-debian12:nonroot
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/patchflow /usr/local/bin/patchflow
+USER nonroot:nonroot
+HEALTHCHECK NONE
 ENTRYPOINT ["/usr/local/bin/patchflow"]
 CMD ["--help"]

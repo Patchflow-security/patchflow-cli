@@ -249,7 +249,7 @@ func (r *Runner) AllRules() []RuleGroup {
 		entries := make([]RuleEntry, 0, len(secretRules))
 		for _, si := range secretRules {
 			entries = append(entries, RuleEntry{
-				ID:       "SECRET-" + si.Name,
+				ID:       "SECRET-" + si.RuleID,
 				Title:    si.Name,
 				Severity: string(si.Severity),
 			})
@@ -1380,8 +1380,8 @@ type gitleaksFinding struct {
 }
 
 func runGitleaks(ctx context.Context, root string) ([]analysis.Finding, error) {
-	// gitleaks detect --source . --report-format json --report-path -
-	cmd := exec.CommandContext(ctx, "gitleaks", "detect", "--source", root, "--report-format", "json", "--report-path", "-", "--no-banner")
+	// Worktree mode avoids repeatedly reporting historical fixture secrets during normal scans.
+	cmd := exec.CommandContext(ctx, "gitleaks", "detect", "--source", root, "--no-git", "--report-format", "json", "--report-path", "-", "--no-banner")
 	cmd.Dir = root
 	output, err := cmd.Output()
 	if err != nil {

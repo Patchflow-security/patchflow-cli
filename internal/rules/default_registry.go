@@ -31,7 +31,7 @@ func BuildDefaultRegistry() *Registry {
 	for _, si := range secrets.NewScanner().Rules() {
 		r.RegisterEngineRule(
 			EngineSecrets,
-			"SECRET-"+si.Name,
+			"SECRET-"+si.RuleID,
 			si.Name,
 			string(si.Severity),
 			string(si.Confidence),

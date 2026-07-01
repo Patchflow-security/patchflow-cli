@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	githubDeviceCodeURL  = "https://github.com/login/device/code"
-	githubAccessTokenURL = "https://github.com/login/oauth/access_token"
+	githubDeviceCodeURL = "https://github.com/login/device/code"
+	githubOAuthURL      = "https://github.com/login/oauth/access_token"
 )
 
 // HTTPClient is the HTTP client interface used by DeviceFlow.
@@ -21,7 +21,7 @@ type HTTPClient interface {
 }
 
 // defaultClient is the package-level HTTP client.
-var defaultClient HTTPClient = http.DefaultClient
+var defaultClient HTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // DeviceCodeResponse holds the response from GitHub's device code endpoint.
 type DeviceCodeResponse struct {
@@ -107,7 +107,7 @@ func (d *DeviceFlow) Poll(deviceCode string, interval int) (*OAuthTokenResponse,
 		data.Set("device_code", deviceCode)
 		data.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 
-		req, err := http.NewRequest(http.MethodPost, githubAccessTokenURL, strings.NewReader(data.Encode()))
+		req, err := http.NewRequest(http.MethodPost, githubOAuthURL, strings.NewReader(data.Encode()))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create access token request: %w", err)
 		}
