@@ -101,6 +101,7 @@ brews:
       owner: Patchflow-security
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_author:
       name: patchflow-bot
       email: bot@patchflow.dev
@@ -118,6 +119,7 @@ scoops:
       owner: Patchflow-security
       name: scoop-bucket
       branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
     commit_author:
       name: patchflow-bot
       email: bot@patchflow.dev
