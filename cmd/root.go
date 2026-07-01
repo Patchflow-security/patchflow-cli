@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
 	"github.com/Patchflow-security/patchflow-cli/internal/config"
 	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/internal/updatecheck"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -25,7 +28,8 @@ var rootCmd = &cobra.Command{
 	Long: `PatchFlow CLI provides change intelligence for engineering teams.
 
 Use this tool to scan, review, and analyze code changes in your repositories.`,
-	PersistentPreRunE: persistentPreRun,
+	PersistentPreRunE:  persistentPreRun,
+	PersistentPostRunE: persistentPostRun,
 }
 
 func persistentPreRun(cmd *cobra.Command, _ []string) error {
@@ -68,6 +72,35 @@ func persistentPreRun(cmd *cobra.Command, _ []string) error {
 	ctx = context.WithValue(ctx, quietKey, quiet)
 	cmd.SetContext(ctx)
 
+	return nil
+}
+
+// persistentPostRun runs after any subcommand. It checks for CLI updates
+// and prints a non-intrusive notice to stderr if a newer version is available.
+// The check is skipped when --json or --quiet is set (to avoid corrupting
+// machine-readable output), and is designed to never fail or block.
+func persistentPostRun(cmd *cobra.Command, _ []string) error {
+	jsonMode, _ := cmd.Flags().GetBool("json")
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	if jsonMode || quiet {
+		return nil
+	}
+
+	// Skip for completion and version commands — no point checking.
+	switch cmd.Name() {
+	case "completion", "version":
+		return nil
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	notice := updatecheck.Check(ctx)
+	if notice != "" {
+		fmt.Fprintf(os.Stderr, "\n%s\n", notice)
+	}
 	return nil
 }
 
