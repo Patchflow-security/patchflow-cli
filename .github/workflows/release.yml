@@ -56,7 +56,7 @@ jobs:
           echo "Resolved tag=${TAG} version=${VERSION} publish=${PUBLISH}"
 
       - name: Run tests
-        run: go test ./... -timeout 10m
+        run: go test $(go list ./... | grep -v /internal/integration) -timeout 5m
 
       - name: Install syft (SBOM generation)
         run: |

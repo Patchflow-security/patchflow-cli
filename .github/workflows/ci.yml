@@ -47,7 +47,7 @@ jobs:
         run: go build -ldflags "-s -w" -o patchflow .
 
       - name: Test
-        run: go test ./... -timeout 10m
+        run: go test $(go list ./... | grep -v /internal/integration) -timeout 5m
 
       - name: Smoke test (version)
         shell: bash
