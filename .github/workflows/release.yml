@@ -61,7 +61,7 @@ jobs:
       - name: Install syft (SBOM generation)
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+            | sh -s -- -b /usr/local/bin v1.18.0
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3

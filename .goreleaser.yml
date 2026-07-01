@@ -76,7 +76,7 @@ sboms:
     documents:
       - "${artifact}.spdx.json"
     cmd: syft
-    args: ["sbom", "--format", "spdx-json", "--output", "${document}", "${artifact}"]
+    args: ["${artifact}", "-o", "spdx-json=${document}"]
 
 release:
   github:
