@@ -108,6 +108,13 @@ type Finding struct {
 	DetectedAt time.Time `json:"detected_at"`
 }
 
+// GetRuleID returns the rule ID for this finding. This satisfies the
+// rulesconfig.FindingLike interface so the mode resolver can filter findings
+// without importing the analysis package (avoiding import cycles).
+func (f Finding) GetRuleID() string {
+	return f.RuleID
+}
+
 // Ecosystem represents a package ecosystem.
 type Ecosystem string
 
