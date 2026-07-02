@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ type Rule struct {
 	CWEID       string // associated CWE ID (e.g., "CWE-89" for SQL injection)
 	Sources     []SourcePattern
 	Sinks       []SinkPattern
+	Sanitizers  []SanitizerPattern
 }
 
 // SourcePattern defines where tainted data comes from.
@@ -54,6 +56,11 @@ type SourcePattern struct {
 type SinkPattern struct {
 	FuncName string // e.g., "cursor.execute", "os.system", "res.send"
 	ArgIndex int    // 0-based; -1 = any argument
+}
+
+// SanitizerPattern defines a function that clears taint when called on tainted data.
+type SanitizerPattern struct {
+	FuncName string // e.g., "htmlspecialchars", "encodeURIComponent", "quote"
 }
 
 // Analyzer performs lightweight taint analysis on Python, JS/TS, Ruby, PHP,
@@ -395,6 +402,13 @@ func (a *Analyzer) checkAssignment(node *gotreesitter.Node, bt *gotreesitter.Bou
 		return
 	}
 
+	// Check if the RHS is a call to a sanitizer — if so, clear taint.
+	rhsFuncName := extractCallName(rhsNode, bt, lang)
+	if rhsFuncName != "" && a.isSanitizer(rhsFuncName, lang) {
+		taintedVars[varName] = false
+		return
+	}
+
 	for _, rule := range a.rules {
 		if rule.Language != lang {
 			continue
@@ -409,6 +423,49 @@ func (a *Analyzer) checkAssignment(node *gotreesitter.Node, bt *gotreesitter.Bou
 
 	if referencesTaintedVar(rhsNode, bt, taintedVars) {
 		taintedVars[varName] = true
+	}
+}
+
+// isSanitizer checks if a function name matches any sanitizer pattern for the
+// given language. Sanitizers can be rule-specific or language-default.
+func (a *Analyzer) isSanitizer(funcName, lang string) bool {
+	// Check rule-specific sanitizers.
+	for _, rule := range a.rules {
+		if rule.Language != lang {
+			continue
+		}
+		for _, san := range rule.Sanitizers {
+			if sinkMatches(funcName, san.FuncName) {
+				return true
+			}
+		}
+	}
+	// Check language-default sanitizers.
+	for _, san := range defaultSanitizers(lang) {
+		if sinkMatches(funcName, san) {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultSanitizers returns the built-in sanitizer function names for a language.
+func defaultSanitizers(lang string) []string {
+	switch lang {
+	case "python":
+		return []string{"quote", "escape", "bleach.clean", "markupsafe.escape", "html.escape", "shlex.quote"}
+	case "javascript", "typescript":
+		return []string{"encodeURIComponent", "DOMPurify.sanitize", "escape", "encodeURI"}
+	case "ruby":
+		return []string{"ERB::Util.html_escape", "sanitize", "CGI.escapeHTML", "h"}
+	case "php":
+		return []string{"htmlspecialchars", "filter_var", "mysql_real_escape_string", "addslashes"}
+	case "java":
+		return []string{"StringEscapeUtils.escapeHtml", "URLEncoder.encode", "org.apache.commons.text.StringEscapeUtils.escapeHtml4"}
+	case "c_sharp":
+		return []string{"HttpUtility.HtmlEncode", "WebUtility.HtmlEncode", "HttpUtility.UrlEncode"}
+	default:
+		return nil
 	}
 }
 
@@ -449,7 +506,7 @@ func (a *Analyzer) checkSinkCall(node *gotreesitter.Node, bt *gotreesitter.Bound
 
 				argText := bt.NodeText(arg)
 				if isArgTainted(arg, bt, taintedVars) {
-					f := a.makeFinding(rule, node, bt, absPath, root, funcName, argText)
+					f := a.makeFinding(rule, node, bt, absPath, root, funcName, argText, taintedVars)
 					*findings = append(*findings, f)
 					break
 				}
@@ -694,7 +751,7 @@ func sinkMatches(funcName, sinkPattern string) bool {
 }
 
 // makeFinding creates a Finding from a taint rule match.
-func (a *Analyzer) makeFinding(rule Rule, node *gotreesitter.Node, bt *gotreesitter.BoundTree, absPath, root, sinkFunc, argText string) analysis.Finding {
+func (a *Analyzer) makeFinding(rule Rule, node *gotreesitter.Node, bt *gotreesitter.BoundTree, absPath, root, sinkFunc, argText string, taintedVars map[string]bool) analysis.Finding {
 	startPoint := node.StartPoint()
 	lineStart := int(startPoint.Row) + 1
 	lineEnd := int(node.EndPoint().Row) + 1
@@ -708,6 +765,18 @@ func (a *Analyzer) makeFinding(rule Rule, node *gotreesitter.Node, bt *gotreesit
 	if len(evidence) > 100 {
 		evidence = evidence[:97] + "..."
 	}
+
+	// Build taint path: collect tainted variable names that appear in the
+	// argument, then prepend the source. This gives a trace like:
+	//   ["request.GET[\"id\"]", "user_id", "cursor.execute()"]
+	var taintPath []string
+	for varName := range taintedVars {
+		if strings.Contains(argText, varName) {
+			taintPath = append(taintPath, varName)
+		}
+	}
+	sort.Strings(taintPath)
+	taintPath = append(taintPath, sinkFunc)
 
 	return analysis.Finding{
 		ID:             fmt.Sprintf("taint-pattern-%s-%s-%d", rule.ID, filepath.Base(relPath), lineStart),
@@ -724,6 +793,7 @@ func (a *Analyzer) makeFinding(rule Rule, node *gotreesitter.Node, bt *gotreesit
 		CWEID:          rule.CWEID,
 		Evidence:       evidence,
 		Recommendation: fmt.Sprintf("Ensure user input flowing into %s is sanitized/validated.", sinkFunc),
+		TaintPath:      taintPath,
 		DetectedAt:     time.Now(),
 	}
 }

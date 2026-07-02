@@ -60,6 +60,13 @@ type PatternRule struct {
 	// true for injection rules that specifically detect patterns inside string
 	// literals (e.g., SQL injection via "$var" interpolation in PHP).
 	SkipQuoteFilter bool
+	// SkipCommentFilter skips matches inside comments. When true, lines that
+	// are entirely comments (//, #, /*, *) are not scanned for this rule.
+	SkipCommentFilter bool
+	// RequiresAssignment, when true, only fires if the pattern match is on the
+	// right-hand side of an assignment (e.g., hardcoded secret = "value").
+	// This prevents false positives in comparisons or string references.
+	RequiresAssignment bool
 	// SuppressFunc, if non-nil, is called after a pattern match. If it returns
 	// true, the finding is suppressed (not reported). This allows post-match
 	// validation that requires inspecting the full line content beyond what
@@ -1383,6 +1390,13 @@ func matchesRule(rule PatternRule, line string, lang Language) bool {
 		return false
 	}
 
+	// RequiresAssignment: only fire when the pattern is on the RHS of an
+	// assignment (contains '=' or ':' as key-value). This prevents FPs in
+	// comparisons or string references for hardcoded-secret rules.
+	if rule.RequiresAssignment && !hasAssignment(line) {
+		return false
+	}
+
 	matches := rule.Pattern.FindAllStringIndex(line, -1)
 	if len(matches) == 0 {
 		return false
@@ -1403,6 +1417,37 @@ func matchesRule(rule PatternRule, line string, lang Language) bool {
 	quoted := quotedOffsets(line)
 	for _, match := range matches {
 		if !quoted[match[0]] {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAssignment checks if a line contains an assignment operator (= or :=),
+// indicating the pattern is on the right-hand side of an assignment.
+func hasAssignment(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	// Look for = or := but not == or != or <= or >=
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] == '=' {
+			// Check it's not ==, !=, <=, >=
+			if i > 0 && (trimmed[i-1] == '!' || trimmed[i-1] == '<' || trimmed[i-1] == '>' || trimmed[i-1] == '=') {
+				continue
+			}
+			if i+1 < len(trimmed) && trimmed[i+1] == '=' {
+				continue
+			}
+			return true
+		}
+		// Check for := (Go-style)
+		if i > 0 && trimmed[i] == '=' && trimmed[i-1] == ':' {
+			return true
+		}
+	}
+	// Also check for YAML-style key: value
+	if idx := strings.Index(trimmed, ":"); idx >= 0 {
+		rest := strings.TrimSpace(trimmed[idx+1:])
+		if rest != "" && !strings.HasPrefix(rest, "//") && !strings.HasPrefix(rest, "/*") {
 			return true
 		}
 	}

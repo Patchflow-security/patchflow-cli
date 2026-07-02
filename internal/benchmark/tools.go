@@ -29,6 +29,7 @@ func allTools() map[string]ComparisonTool {
 		&trivyTool{},
 		&gitleaksTool{},
 		&osvScannerTool{},
+		&patchflowTool{},
 	}
 	m := make(map[string]ComparisonTool, len(tools))
 	for _, t := range tools {
@@ -283,4 +284,90 @@ func countOSVResults(path string) int {
 		}
 	}
 	return count
+}
+
+// --- Patchflow (self-benchmark) ---
+
+// patchflowTool wraps the patchflow CLI itself as a comparison-tool target so
+// that benchmark suites can measure patchflow alongside semgrep, bandit, etc.
+// It runs `patchflow scan run --json --quiet <repo>` and parses the findings
+// count from the JSON output.
+type patchflowTool struct{}
+
+func (p *patchflowTool) Name() string { return "patchflow" }
+
+// Available checks whether the patchflow binary is on PATH or resolvable as
+// ./patchflow relative to the current working directory.
+func (p *patchflowTool) Available() bool {
+	if _, err := exec.LookPath("patchflow"); err == nil {
+		return true
+	}
+	if _, err := os.Stat("./patchflow"); err == nil {
+		return true
+	}
+	return false
+}
+
+func (p *patchflowTool) Run(ctx context.Context, repoPath, outDir string) (ToolResult, error) {
+	outFile := filepath.Join(outDir, "patchflow-"+filepath.Base(repoPath)+".json")
+	// Resolve the binary: prefer PATH, fall back to ./patchflow (built locally).
+	binary := "patchflow"
+	if _, err := exec.LookPath("patchflow"); err != nil {
+		if abs, absErr := filepath.Abs("./patchflow"); absErr == nil {
+			binary = abs
+		}
+	}
+
+	args := []string{"scan", "run", "--json", "--quiet", repoPath}
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	var stdout strings.Builder
+	var stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	dur := time.Since(start)
+	exit := exitCodeFromErr(runErr)
+	// patchflow may exit non-zero when --fail-on triggers; treat exit 1 as
+	// "findings found" rather than a hard error, matching semgrep/gitleaks.
+	if runErr != nil && exit != 1 {
+		return ToolResult{
+			Tool:     "patchflow",
+			Duration: dur,
+			ExitCode: exit,
+			Error:    fmt.Sprintf("%s: %s", runErr, stderr.String()),
+		}, runErr
+	}
+
+	// Parse the JSON output and persist the raw artifact for inspection.
+	count := countPatchflowResults(stdout.String())
+	if writeErr := os.WriteFile(outFile, []byte(stdout.String()), 0600); writeErr != nil {
+		// Non-fatal: we still report the finding count.
+		_ = writeErr
+	}
+	return ToolResult{
+		Tool:       "patchflow",
+		Findings:   count,
+		Duration:   dur,
+		ExitCode:   exit,
+		OutputPath: outFile,
+		Available:  true,
+	}, nil
+}
+
+// countPatchflowResults parses the JSON emitted by `patchflow scan run --json`
+// and returns the number of findings in the analysis.findings array.
+func countPatchflowResults(stdout string) int {
+	if stdout == "" {
+		return 0
+	}
+	var rep struct {
+		Analysis struct {
+			Findings []json.RawMessage `json:"findings"`
+		} `json:"analysis"`
+	}
+	if json.Unmarshal([]byte(stdout), &rep) != nil {
+		return 0
+	}
+	return len(rep.Analysis.Findings)
 }

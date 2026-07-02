@@ -294,3 +294,178 @@ framework_overrides:
 		t.Fatal("expected error for invalid framework severity override")
 	}
 }
+
+func TestLoadPolicyFromBytes_TaintRules(t *testing.T) {
+	yamlData := []byte(`
+taint_rules:
+  - id: CUSTOM-TAINT-001
+    title: Django raw SQL with user input
+    description: Raw SQL query with user-controlled input
+    language: python
+    severity: high
+    confidence: medium
+    cwe: CWE-89
+    taint:
+      sources:
+        - func: request.GET
+          subscript: true
+        - func: request.POST
+          subscript: true
+      sinks:
+        - func: RawSQL
+          arg: 0
+      sanitizers:
+        - func: quote
+`)
+
+	policy, err := LoadPolicyFromBytes(yamlData)
+	if err != nil {
+		t.Fatalf("LoadPolicyFromBytes failed: %v", err)
+	}
+	if len(policy.TaintRules) != 1 {
+		t.Fatalf("expected 1 taint rule, got %d", len(policy.TaintRules))
+	}
+	tr := policy.TaintRules[0]
+	if tr.ID != "CUSTOM-TAINT-001" {
+		t.Errorf("ID = %q, want CUSTOM-TAINT-001", tr.ID)
+	}
+	if tr.Language != "python" {
+		t.Errorf("Language = %q, want python", tr.Language)
+	}
+	if tr.CWEID != "CWE-89" {
+		t.Errorf("CWEID = %q, want CWE-89", tr.CWEID)
+	}
+	if len(tr.Sources) != 2 {
+		t.Fatalf("expected 2 sources, got %d", len(tr.Sources))
+	}
+	if tr.Sources[0].FuncName != "request.GET" {
+		t.Errorf("source[0] FuncName = %q", tr.Sources[0].FuncName)
+	}
+	if !tr.Sources[0].IsSubscript {
+		t.Error("source[0] should be subscript")
+	}
+	if len(tr.Sinks) != 1 {
+		t.Fatalf("expected 1 sink, got %d", len(tr.Sinks))
+	}
+	if tr.Sinks[0].FuncName != "RawSQL" {
+		t.Errorf("sink[0] FuncName = %q", tr.Sinks[0].FuncName)
+	}
+	if tr.Sinks[0].ArgIndex != 0 {
+		t.Errorf("sink[0] ArgIndex = %d, want 0", tr.Sinks[0].ArgIndex)
+	}
+	if len(tr.Sanitizers) != 1 {
+		t.Fatalf("expected 1 sanitizer, got %d", len(tr.Sanitizers))
+	}
+	if tr.Severity != analysis.SeverityHigh {
+		t.Errorf("Severity = %q, want high", tr.Severity)
+	}
+}
+
+func TestLoadPolicyFromBytes_TaintRuleMissingSources(t *testing.T) {
+	yamlData := []byte(`
+taint_rules:
+  - id: CUSTOM-TAINT-002
+    title: Missing sources
+    language: python
+    taint:
+      sinks:
+        - func: execute
+`)
+	_, err := LoadPolicyFromBytes(yamlData)
+	if err == nil {
+		t.Fatal("expected error for taint rule with no sources")
+	}
+}
+
+func TestLoadPolicyFromBytes_TaintRuleMissingSinks(t *testing.T) {
+	yamlData := []byte(`
+taint_rules:
+  - id: CUSTOM-TAINT-003
+    title: Missing sinks
+    language: python
+    taint:
+      sources:
+        - func: request.GET
+`)
+	_, err := LoadPolicyFromBytes(yamlData)
+	if err == nil {
+		t.Fatal("expected error for taint rule with no sinks")
+	}
+}
+
+func TestLoadPolicyFromBytes_TaintRuleUnsupportedLanguage(t *testing.T) {
+	yamlData := []byte(`
+taint_rules:
+  - id: CUSTOM-TAINT-004
+    title: Bad language
+    language: cobol
+    taint:
+      sources:
+        - func: INPUT
+      sinks:
+        - func: EXECUTE
+`)
+	_, err := LoadPolicyFromBytes(yamlData)
+	if err == nil {
+		t.Fatal("expected error for unsupported taint language")
+	}
+}
+
+func TestLoadPolicyFromBytes_TaintRuleInvalidFuncName(t *testing.T) {
+	yamlData := []byte(`
+taint_rules:
+  - id: CUSTOM-TAINT-005
+    title: Regex in func name
+    language: python
+    taint:
+      sources:
+        - func: "request.*"
+      sinks:
+        - func: execute
+`)
+	_, err := LoadPolicyFromBytes(yamlData)
+	if err == nil {
+		t.Fatal("expected error for regex chars in source func name")
+	}
+}
+
+func TestLoadPolicyFromBytes_MixedRules(t *testing.T) {
+	yamlData := []byte(`
+rules:
+  - id: CUSTOM-REGEX-001
+    title: No eval
+    pattern: 'eval\s*\('
+    languages: [python]
+    severity: high
+    confidence: medium
+
+taint_rules:
+  - id: CUSTOM-TAINT-001
+    title: SQL injection
+    language: javascript
+    severity: high
+    confidence: high
+    cwe: CWE-89
+    taint:
+      sources:
+        - func: req.query
+      sinks:
+        - func: db.query
+          arg: 0
+`)
+
+	policy, err := LoadPolicyFromBytes(yamlData)
+	if err != nil {
+		t.Fatalf("LoadPolicyFromBytes failed: %v", err)
+	}
+	if len(policy.PatternRules) != 1 {
+		t.Fatalf("expected 1 pattern rule, got %d", len(policy.PatternRules))
+	}
+	if len(policy.TaintRules) != 1 {
+		t.Fatalf("expected 1 taint rule, got %d", len(policy.TaintRules))
+	}
+	// Verify backward compat: regex rules still work
+	if policy.PatternRules[0].ID != "CUSTOM-REGEX-001" {
+		t.Errorf("pattern rule ID = %q", policy.PatternRules[0].ID)
+	}
+}

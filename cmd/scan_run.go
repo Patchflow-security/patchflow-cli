@@ -871,30 +871,18 @@ func versionString() string {
 }
 
 // enrichFindingsForJSON adds OWASP category, fix suggestion, detection method,
-// and sanitizer status to each finding for JSON output. The original Finding
-// struct is supplemented with extra fields via a wrapper type so existing
-// consumers don't break.
+// and sanitizer status to each finding for JSON output. The Finding struct now
+// has dedicated fields for these, so they appear as first-class JSON keys.
 func enrichFindingsForJSON(findings []analysis.Finding) []analysis.Finding {
-	// We enrich by adding data to the Description/Evidence fields and using
-	// the existing CWEID field. For JSON consumers, we add structured data
-	// via the FindingJSON wrapper.
 	enriched := make([]analysis.Finding, len(findings))
 	for i, f := range findings {
-		// Add OWASP category label to the description if not already present
-		if f.CWEID != "" {
-			if owaspLabel := cwe.OWASPCategoryLabel(f.CWEID); owaspLabel != "" {
-				// Store OWASP category in the description as a prefix
-				if f.Description == "" {
-					f.Description = owaspLabel
-				} else if !strings.Contains(f.Description, owaspLabel) {
-					f.Description = owaspLabel + " — " + f.Description
-				}
-			}
+		// Populate the dedicated OWASPCategory field from CWE mapping.
+		if f.CWEID != "" && f.OWASPCategory == "" {
+			f.OWASPCategory = cwe.OWASPCategoryLabel(f.CWEID)
 		}
-		// Add fix suggestion from the snippet database
+		// Add fix suggestion from the snippet database into Recommendation.
 		if f.RuleID != "" {
 			if snippet := fixsnippet.ForRule(f.RuleID); snippet != nil {
-				// Append fix suggestion to recommendation if not already there
 				fixLine := fmt.Sprintf(" Fix: %s", snippet.Title)
 				if f.Recommendation == "" {
 					f.Recommendation = snippet.Title

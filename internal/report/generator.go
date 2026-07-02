@@ -865,8 +865,28 @@ type SARIFTool struct {
 
 // SARIFDriver is the tool driver component.
 type SARIFDriver struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name    string       `json:"name"`
+	Version string       `json:"version"`
+	Rules   []SARIFRule  `json:"rules,omitempty"`
+}
+
+// SARIFRule describes a single rule that can produce findings. Following the
+// SARIF 2.1.0 spec, shortDescription and fullDescription are message objects
+// with a "text" sub-field, and properties carries rule metadata such as tags.
+type SARIFRule struct {
+	ID               string             `json:"id"`
+	Name             string             `json:"name,omitempty"`
+	ShortDescription *SARIFMessage      `json:"shortDescription,omitempty"`
+	FullDescription  *SARIFMessage      `json:"fullDescription,omitempty"`
+	HelpURI          string             `json:"helpUri,omitempty"`
+	Properties       *SARIFRuleProps    `json:"properties,omitempty"`
+}
+
+// SARIFRuleProps carries rule-level properties (e.g. tags) as defined by the
+// SARIF 2.1.0 spec. Tags are a string bag used by downstream viewers to group
+// and filter rules.
+type SARIFRuleProps struct {
+	Tags []string `json:"tags,omitempty"`
 }
 
 // SARIFResult is a single finding in SARIF format.
@@ -1003,12 +1023,97 @@ func (g *Generator) SARIF(toolVersion string) *SARIFReport {
 					Driver: SARIFDriver{
 						Name:    "PatchFlow CLI",
 						Version: toolVersion,
+						Rules:   g.buildSARIFRules(),
 					},
 				},
 				Results:     results,
 				Invocations: invocations,
 			},
 		},
+	}
+}
+
+// buildSARIFRules produces a deduplicated, sorted list of SARIF rule
+// descriptors from the generator's findings. Every unique rule ID that
+// produced at least one finding gets an entry. Tags are derived from the
+// finding type, CWE, and the OWASP Top 10 mapping.
+func (g *Generator) buildSARIFRules() []SARIFRule {
+	if g.Result == nil || len(g.Result.Findings) == 0 {
+		return nil
+	}
+
+	// Collect the first finding seen for each rule ID so we can derive
+	// metadata (title, description, CWE, type) consistently.
+	byID := make(map[string]analysis.Finding)
+	var order []string
+	for _, f := range g.Result.Findings {
+		rid := f.RuleID
+		if rid == "" {
+			rid = string(f.Type) + "-" + f.Analyzer
+		}
+		if _, ok := byID[rid]; !ok {
+			byID[rid] = f
+			order = append(order, rid)
+		}
+	}
+	sort.Strings(order)
+
+	rules := make([]SARIFRule, 0, len(order))
+	for _, rid := range order {
+		f := byID[rid]
+		short := f.Description
+		if short == "" {
+			short = f.Title
+		}
+		rule := SARIFRule{
+			ID:   rid,
+			Name: f.Title,
+			ShortDescription: &SARIFMessage{Text: short},
+			HelpURI:          "https://patchflow.dev/docs/rules/" + rid,
+			Properties: &SARIFRuleProps{
+				Tags: deriveSARIFRuleTags(f),
+			},
+		}
+		if f.Description != "" && f.Description != f.Title {
+			rule.FullDescription = &SARIFMessage{Text: f.Description}
+		}
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
+// deriveSARIFRuleTags builds the tag bag for a rule from the finding that
+// first triggered it. Tags always include "security" and the finding type.
+// When a CWE is present, "cwe" and the CWE identifier are added, plus an
+// OWASP Top 10 category derived from the CWE via cweToOWASP.
+func deriveSARIFRuleTags(f analysis.Finding) []string {
+	tags := []string{"security"}
+	tags = append(tags, string(f.Type))
+	if f.CWEID != "" {
+		tags = append(tags, "cwe", f.CWEID)
+		if owasp := cweToOWASP(f.CWEID); owasp != "" {
+			tags = append(tags, "owasp", owasp)
+		}
+	}
+	return tags
+}
+
+// cweToOWASP maps a CWE identifier to its OWASP Top 10 (2021) category.
+// Returns "" when no mapping is known.
+func cweToOWASP(cweID string) string {
+	switch cweID {
+	case "CWE-89", "CWE-77", "CWE-78", "CWE-90", "CWE-94":
+		return "A03"
+	case "CWE-79":
+		return "A07"
+	case "CWE-22", "CWE-601":
+		return "A01"
+	case "CWE-502":
+		return "A08"
+	case "CWE-918":
+		return "A10"
+	default:
+		return ""
 	}
 }
 

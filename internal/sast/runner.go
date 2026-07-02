@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/cwe"
 	"github.com/Patchflow-security/patchflow-cli/internal/frameworks"
 	"github.com/Patchflow-security/patchflow-cli/internal/ignore"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/customrules"
@@ -200,6 +201,37 @@ func (r *Runner) loadRulePolicy(root string) (*customrules.Policy, error) {
 	}
 	if len(policy.PatternRules) > 0 {
 		r.patternScanner.AddRules(policy.PatternRules)
+	}
+	// Convert custom taint rules to taintpatterns.Rule and register them.
+	if len(policy.TaintRules) > 0 {
+		customTaintRules := make([]taintpatterns.Rule, 0, len(policy.TaintRules))
+		for _, tr := range policy.TaintRules {
+			sources := make([]taintpatterns.SourcePattern, len(tr.Sources))
+			for i, s := range tr.Sources {
+				sources[i] = taintpatterns.SourcePattern{FuncName: s.FuncName, IsSubscript: s.IsSubscript}
+			}
+			sinks := make([]taintpatterns.SinkPattern, len(tr.Sinks))
+			for i, s := range tr.Sinks {
+				sinks[i] = taintpatterns.SinkPattern{FuncName: s.FuncName, ArgIndex: s.ArgIndex}
+			}
+			sanitizers := make([]taintpatterns.SanitizerPattern, len(tr.Sanitizers))
+			for i, s := range tr.Sanitizers {
+				sanitizers[i] = taintpatterns.SanitizerPattern{FuncName: s.FuncName}
+			}
+			customTaintRules = append(customTaintRules, taintpatterns.Rule{
+				ID:          tr.ID,
+				Title:       tr.Title,
+				Description: tr.Description,
+				Severity:    tr.Severity,
+				Confidence:  tr.Confidence,
+				Language:    tr.Language,
+				CWEID:       tr.CWEID,
+				Sources:     sources,
+				Sinks:       sinks,
+				Sanitizers:  sanitizers,
+			})
+		}
+		r.taintPatternAnalyzer.AddRules(customTaintRules)
 	}
 	return policy, nil
 }
@@ -693,6 +725,13 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			result.SuppressedCount = suppressedCount
 		}
 		result.Findings = filtered
+	}
+
+	// --- Phase 4: Enrich findings with OWASP category ---
+	for i := range result.Findings {
+		if result.Findings[i].CWEID != "" && result.Findings[i].OWASPCategory == "" {
+			result.Findings[i].OWASPCategory = cwe.OWASPCategoryLabel(result.Findings[i].CWEID)
+		}
 	}
 
 	return result, nil

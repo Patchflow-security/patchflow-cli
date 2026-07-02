@@ -75,6 +75,22 @@ type Finding struct {
 	RuleID         string      `json:"rule_id,omitempty"`
 	Evidence       string      `json:"evidence,omitempty"`
 	Recommendation string      `json:"recommendation,omitempty"`
+	OWASPCategory  string      `json:"owasp_category,omitempty"`
+
+	// TaintPath shows the source → intermediate variables → sink flow for
+	// taint-confirmed findings. Empty for non-taint findings.
+	TaintPath       []string `json:"taint_path,omitempty"`
+	SanitizerApplied bool     `json:"sanitizer_applied,omitempty"`
+
+	// Rule mode fields (populated by the rulesconfig resolver).
+	// Mode is the enforcement mode: "block", "inform", or "off".
+	Mode string `json:"mode,omitempty"`
+	// Blocking indicates whether this finding contributes to a non-zero exit code.
+	Blocking bool `json:"blocking,omitempty"`
+	// ModeSource indicates where the mode was determined: "project_config", "cli", or "default".
+	ModeSource string `json:"mode_source,omitempty"`
+	// Maturity is the governance maturity level of the rule (experimental, beta, stable, enterprise).
+	Maturity string `json:"maturity,omitempty"`
 
 	// Reachability fields (populated by the reachability analyzer for SCA findings).
 	Reachability           ReachabilityStatus `json:"reachability,omitempty"`

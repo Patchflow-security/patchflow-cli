@@ -51,6 +51,27 @@ func NewInterproceduralAnalyzer(rules []Rule, depth int) *InterproceduralAnalyze
 	return &InterproceduralAnalyzer{rules: rules, taintDepth: depth}
 }
 
+// isSanitizer checks if a function name matches any sanitizer pattern for the
+// given language (rule-specific or language-default).
+func (ia *InterproceduralAnalyzer) isSanitizer(funcName, lang string) bool {
+	for _, rule := range ia.rules {
+		if rule.Language != lang {
+			continue
+		}
+		for _, san := range rule.Sanitizers {
+			if sinkMatches(funcName, san.FuncName) {
+				return true
+			}
+		}
+	}
+	for _, san := range defaultSanitizers(lang) {
+		if sinkMatches(funcName, san) {
+			return true
+		}
+	}
+	return false
+}
+
 // Analyze performs the two-pass inter-procedural taint analysis on a file.
 //
 // Parameters:
@@ -458,6 +479,14 @@ func (ia *InterproceduralAnalyzer) checkAssignmentIntra(
 
 	varName := bt.NodeText(lhsNode)
 	if varName == "" {
+		return
+	}
+
+	// Check if the RHS is a call to a sanitizer — if so, clear taint.
+	rhsFuncName := extractCallName(rhsNode, bt, lang)
+	if rhsFuncName != "" && ia.isSanitizer(rhsFuncName, lang) {
+		taintedVars[varName] = false
+		delete(varDepth, varName)
 		return
 	}
 

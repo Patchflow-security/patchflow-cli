@@ -58,6 +58,13 @@ type ArtifactLocation struct {
 }
 
 // ExportSARIF converts a scan.Result to a SARIF Report.
+//
+// Deprecated: ExportSARIF is the legacy SARIF exporter and does not emit
+// tool.driver.rules, result fingerprints, or scan metadata. Prefer
+// report.Generator.SARIF() (internal/report), which produces a SARIF 2.1.0
+// report with rule descriptors, stable fingerprints, and invocation metadata
+// for downstream deduplication. This function is retained for backward
+// compatibility and will be removed in a future release.
 func ExportSARIF(scanResult *Result) (*Report, error) {
 	var sarifResults []SARIFResult
 	for _, m := range scanResult.Manifests {

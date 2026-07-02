@@ -38,11 +38,12 @@ import (
 // RuleFile represents the YAML structure of a custom rules file.
 type RuleFile struct {
 	Rules              []YAMLRule                           `yaml:"rules"`
+	TaintRules         []YAMLTaintRule                      `yaml:"taint_rules"`
 	Frameworks         YAMLFrameworkSelection               `yaml:"frameworks"`
 	FrameworkOverrides map[string]YAMLFrameworkPackOverride `yaml:"framework_overrides"`
 }
 
-// YAMLRule represents a single rule definition in the YAML file.
+// YAMLRule represents a single regex pattern rule definition in the YAML file.
 type YAMLRule struct {
 	ID          string   `yaml:"id"`
 	Title       string   `yaml:"title"`
@@ -51,6 +52,40 @@ type YAMLRule struct {
 	Pattern     string   `yaml:"pattern"`
 	Severity    string   `yaml:"severity"`
 	Confidence  string   `yaml:"confidence"`
+}
+
+// YAMLTaintRule represents a taint source-sink rule definition in YAML.
+// Unlike regex rules, taint rules track data flow from sources to sinks.
+type YAMLTaintRule struct {
+	ID          string             `yaml:"id"`
+	Title       string             `yaml:"title"`
+	Description string             `yaml:"description"`
+	Language    string             `yaml:"language"`
+	Severity    string             `yaml:"severity"`
+	Confidence  string             `yaml:"confidence"`
+	CWE         string             `yaml:"cwe"`
+	Taint       YAMLTaintDefinition `yaml:"taint"`
+}
+
+// YAMLTaintDefinition holds the source/sink/sanitizer definitions for a taint rule.
+type YAMLTaintDefinition struct {
+	Sources    []YAMLTaintSource    `yaml:"sources"`
+	Sinks      []YAMLTaintSink      `yaml:"sinks"`
+	Sanitizers []YAMLTaintSanitizer `yaml:"sanitizers"`
+}
+
+type YAMLTaintSource struct {
+	Func       string `yaml:"func"`
+	Subscript  bool   `yaml:"subscript"`
+}
+
+type YAMLTaintSink struct {
+	Func string `yaml:"func"`
+	Arg  int    `yaml:"arg"`
+}
+
+type YAMLTaintSanitizer struct {
+	Func string `yaml:"func"`
 }
 
 // YAMLFrameworkSelection controls framework-pack activation from YAML.
@@ -87,8 +122,37 @@ type YAMLFrameworkSanitizer struct {
 // Policy is the fully parsed user YAML policy.
 type Policy struct {
 	PatternRules       []patterns.PatternRule
+	TaintRules         []TaintRuleSpec
 	FrameworkSelection fwpatterns.SelectionConfig
 	FrameworkOverrides map[string]fwpatterns.PackOverride
+}
+
+// TaintRuleSpec is a validated custom taint rule ready for the taintpatterns engine.
+type TaintRuleSpec struct {
+	ID          string
+	Title       string
+	Description string
+	Language    string
+	Severity    analysis.Severity
+	Confidence  analysis.Confidence
+	CWEID       string
+	Sources     []TaintSourceSpec
+	Sinks       []TaintSinkSpec
+	Sanitizers  []TaintSanitizerSpec
+}
+
+type TaintSourceSpec struct {
+	FuncName    string
+	IsSubscript bool
+}
+
+type TaintSinkSpec struct {
+	FuncName string
+	ArgIndex int
+}
+
+type TaintSanitizerSpec struct {
+	FuncName string
 }
 
 // LoadFromFile loads custom rules from a YAML file.
@@ -147,6 +211,14 @@ func LoadPolicyFromBytes(data []byte) (*Policy, error) {
 			return nil, err
 		}
 		policy.PatternRules = append(policy.PatternRules, rule)
+	}
+
+	for i, yr := range ruleFile.TaintRules {
+		rule, err := convertTaintRule(yr, i)
+		if err != nil {
+			return nil, err
+		}
+		policy.TaintRules = append(policy.TaintRules, rule)
 	}
 
 	policy.FrameworkSelection = convertFrameworkSelection(ruleFile.Frameworks)
@@ -218,6 +290,86 @@ func convertRule(yr YAMLRule, index int) (patterns.PatternRule, error) {
 		Languages:   langs,
 		Pattern:     re,
 	}, nil
+}
+
+// convertTaintRule converts a YAMLTaintRule to a validated TaintRuleSpec.
+func convertTaintRule(yr YAMLTaintRule, index int) (TaintRuleSpec, error) {
+	if yr.ID == "" {
+		return TaintRuleSpec{}, fmt.Errorf("taint rule at index %d: missing required field 'id'", index)
+	}
+	if yr.Title == "" {
+		return TaintRuleSpec{}, fmt.Errorf("taint rule %s: missing required field 'title'", yr.ID)
+	}
+	if yr.Language == "" {
+		return TaintRuleSpec{}, fmt.Errorf("taint rule %s: missing required field 'language'", yr.ID)
+	}
+	if !isSupportedTaintLanguage(yr.Language) {
+		return TaintRuleSpec{}, fmt.Errorf("taint rule %s: unsupported language %q (supported: python, javascript, typescript, ruby, php, java, c_sharp)", yr.ID, yr.Language)
+	}
+	if len(yr.Taint.Sources) == 0 {
+		return TaintRuleSpec{}, fmt.Errorf("taint rule %s: must define at least one source", yr.ID)
+	}
+	if len(yr.Taint.Sinks) == 0 {
+		return TaintRuleSpec{}, fmt.Errorf("taint rule %s: must define at least one sink", yr.ID)
+	}
+
+	spec := TaintRuleSpec{
+		ID:          yr.ID,
+		Title:       yr.Title,
+		Description: yr.Description,
+		Language:    yr.Language,
+		Severity:    parseSeverity(yr.Severity),
+		Confidence:  parseConfidence(yr.Confidence),
+		CWEID:       yr.CWE,
+	}
+
+	for _, src := range yr.Taint.Sources {
+		if src.Func == "" {
+			return TaintRuleSpec{}, fmt.Errorf("taint rule %s: source must define 'func'", yr.ID)
+		}
+		// Reject regex-injection patterns in source names for safety.
+		if strings.ContainsAny(src.Func, `()[]{}*+?|^$\`) {
+			return TaintRuleSpec{}, fmt.Errorf("taint rule %s: source func %q contains invalid characters", yr.ID, src.Func)
+		}
+		spec.Sources = append(spec.Sources, TaintSourceSpec{
+			FuncName:    src.Func,
+			IsSubscript: src.Subscript,
+		})
+	}
+
+	for _, sink := range yr.Taint.Sinks {
+		if sink.Func == "" {
+			return TaintRuleSpec{}, fmt.Errorf("taint rule %s: sink must define 'func'", yr.ID)
+		}
+		if strings.ContainsAny(sink.Func, `()[]{}*+?|^$\`) {
+			return TaintRuleSpec{}, fmt.Errorf("taint rule %s: sink func %q contains invalid characters", yr.ID, sink.Func)
+		}
+		spec.Sinks = append(spec.Sinks, TaintSinkSpec{
+			FuncName: sink.Func,
+			ArgIndex: sink.Arg,
+		})
+	}
+
+	for _, san := range yr.Taint.Sanitizers {
+		if san.Func == "" {
+			return TaintRuleSpec{}, fmt.Errorf("taint rule %s: sanitizer must define 'func'", yr.ID)
+		}
+		spec.Sanitizers = append(spec.Sanitizers, TaintSanitizerSpec{
+			FuncName: san.Func,
+		})
+	}
+
+	return spec, nil
+}
+
+// isSupportedTaintLanguage checks if the language is supported by the taint engine.
+func isSupportedTaintLanguage(lang string) bool {
+	switch lang {
+	case "python", "javascript", "typescript", "ruby", "php", "java", "c_sharp":
+		return true
+	default:
+		return false
+	}
 }
 
 func convertFrameworkSelection(sel YAMLFrameworkSelection) fwpatterns.SelectionConfig {
