@@ -59,6 +59,7 @@ var (
 	scanTaintDepth        int
 	scanFramework         []string
 	scanDisableFramework  []string
+	scanRulesConfigPath   string
 )
 
 var scanRealCmd = &cobra.Command{
