@@ -26,6 +26,7 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/report"
 	"github.com/Patchflow-security/patchflow-cli/internal/risk"
 	"github.com/Patchflow-security/patchflow-cli/internal/rules"
+	"github.com/Patchflow-security/patchflow-cli/internal/rulesconfig"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast"
 	fwpatterns "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
 	"github.com/Patchflow-security/patchflow-cli/internal/sca"
@@ -103,6 +104,7 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanLicensePolicy, "license-policy", "", "License policy: fail on restricted licenses (e.g., 'gpl,agpl,proprietary,unknown')")
 	scanRealCmd.Flags().StringSliceVar(&scanFramework, "framework", nil, "Enable specific framework rule packs (can be repeated, or 'auto' for detection-based activation)")
 	scanRealCmd.Flags().StringSliceVar(&scanDisableFramework, "disable-framework", nil, "Disable specific framework rule packs (can be repeated; takes precedence over --framework)")
+	scanRealCmd.Flags().StringVar(&scanRulesConfigPath, "rules-config", "", "Path to rules config YAML for block/inform/off mode overrides (default: .patchflow/rules.yaml)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
