@@ -1,0 +1,15 @@
+- id: patchflow-scan
+  name: PatchFlow Security Scan
+  description: Run PatchFlow security analysis on staged files
+  entry: patchflow scan run --changed-only
+  language: system
+  pass_filenames: false
+  always_run: true
+
+- id: patchflow-secrets
+  name: PatchFlow Secret Detection
+  description: Run PatchFlow secret detection on staged files
+  entry: patchflow scan run --changed-only --no-sast --no-reachability
+  language: system
+  pass_filenames: false
+  always_run: true

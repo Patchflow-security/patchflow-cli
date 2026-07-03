@@ -1,0 +1,113 @@
+{
+  "_meta": {
+    "description": "B1 clean repo FP baseline — frozen reference for FP regression detection",
+    "created": "2026-07-02",
+    "phase": "post-B2",
+    "tool": "patchflow scan run --json --quiet --offline",
+    "policy": "Fail if: blocking findings increase, SAST count exceeds max_sast, new noisy rule appears, known noisy rule count jumps >20%"
+  },
+  "repos": {
+    "cobra": {
+      "description": "Clean Go CLI library (spf13/cobra)",
+      "language": "go",
+      "total_findings": 18,
+      "blocking": 0,
+      "max_blocking": 0,
+      "sast_findings": 14,
+      "max_sast": 30,
+      "by_analyzer": {
+        "gosast-embedded": 14,
+        "registry-license": 4
+      },
+      "by_rule": {
+        "G104": 7,
+        "G201": 5,
+        "G302": 1,
+        "G304": 1
+      },
+      "notes": "G104 (unhandled errors) and G201 (SQL format) are common in CLI code. No blocking findings."
+    },
+    "flask": {
+      "description": "Clean Python web framework (pallets/flask)",
+      "language": "python",
+      "total_findings": 43,
+      "blocking": 0,
+      "max_blocking": 0,
+      "sast_findings": 6,
+      "max_sast": 15,
+      "by_analyzer": {
+        "patterns-embedded": 2,
+        "treesitter-ast": 4,
+        "osv": 17,
+        "registry-license": 13,
+        "gitleaks": 5,
+        "checkov": 2
+      },
+      "by_rule": {
+        "PY019": 2,
+        "TS-PY019": 2,
+        "TS-PY002": 1,
+        "TS-PY001": 1,
+        "generic-api-key": 5
+      },
+      "notes": "Very low SAST noise. Most findings are SCA/license/secrets."
+    },
+    "django": {
+      "description": "Clean Python web framework (django/django, ~250k LOC)",
+      "language": "python",
+      "total_findings": 143,
+      "blocking": 0,
+      "max_blocking": 0,
+      "sast_findings": 132,
+      "max_sast": 200,
+      "by_analyzer": {
+        "patterns-embedded": 93,
+        "treesitter-ast": 36,
+        "taint-patterns": 3,
+        "gitleaks": 2,
+        "registry-license": 9
+      },
+      "by_rule": {
+        "PY050": 48,
+        "TS-PY018": 12,
+        "HTML002": 11,
+        "TS-PY005": 7,
+        "PY051": 6,
+        "PY001": 6,
+        "PY043": 4,
+        "TS-PY008": 3,
+        "TS-PY017": 3,
+        "TS-PY002": 3,
+        "PY010": 3,
+        "PY011": 3,
+        "PY044": 3,
+        "TP-PY001-IP": 2,
+        "TS-JS020": 2,
+        "TS-PY001": 2,
+        "generic-api-key": 2
+      },
+      "notes": "Large framework codebase. PY050 (subprocess) is the dominant rule — fires on framework internals. No blocking findings."
+    }
+  },
+  "regression_rules": {
+    "cobra": {
+      "fail_if_blocking_increase": true,
+      "fail_if_sast_exceeds": 30,
+      "fail_if_new_rule_appears": true,
+      "fail_if_known_rule_jumps_pct": 20
+    },
+    "flask": {
+      "fail_if_blocking_increase": true,
+      "fail_if_sast_exceeds": 15,
+      "fail_if_new_rule_appears": true,
+      "fail_if_known_rule_jumps_pct": 20
+    },
+    "django": {
+      "fail_if_blocking_increase": true,
+      "fail_if_sast_exceeds": 200,
+      "fail_if_new_rule_appears": true,
+      "fail_if_known_rule_jumps_pct": 20,
+      "known_noisy_rules": ["PY050", "HTML002", "TS-PY018", "TS-PY005"]
+    }
+  }
+}

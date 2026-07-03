@@ -1,0 +1,94 @@
+suite: framework-pack-validation
+date: "2026-07-01"
+
+patchflow:
+  binary: /Users/digitalcenter/patchflow-cli/patchflow
+  profile: standard
+  no_reachability: false
+  extra_args:
+    - --framework
+    - express
+    - --framework
+    - nextjs
+    - --framework
+    - react
+    - --framework
+    - flask
+    - --framework
+    - django
+    - --framework
+    - laravel
+    - --framework
+    - gin
+    - --framework
+    - aspnet
+    - --framework
+    - razor
+    - --framework
+    - spring
+    - --framework
+    - spring-security
+
+tools: []
+results_dir: /Users/digitalcenter/patchflow-benchmarks/results/2026-07-framework-pack-validation
+work_dir: /Users/digitalcenter/patchflow-benchmarks/.bench-work
+
+repos:
+  - name: nodegoat
+    type: intentionally-vulnerable
+    language: javascript
+    expected: high-vulnerability-density
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/nodegoat
+    expected_findings:
+      - CWE-601
+    expected_framework_findings:
+      - PF-EXPRESS-REDIRECT-001
+
+  - name: aspgoat
+    type: intentionally-vulnerable
+    language: csharp
+    expected: high-vulnerability-density
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/aspgoat
+    expected_findings:
+      - CWE-79
+    expected_framework_findings:
+      - PF-RAZOR-XSS-001
+
+  - name: vuln-springboot-app
+    type: intentionally-vulnerable
+    language: java
+    expected: high-vulnerability-density
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/vuln-springboot-app
+    expected_findings:
+      - CWE-352
+    expected_framework_findings:
+      - PF-SPRINGSEC-CSRF-001
+
+  - name: vulnerable-flask-app
+    type: intentionally-vulnerable
+    language: python
+    expected: high-vulnerability-density
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/vulnerable-flask-app
+    expected_findings:
+      - CWE-89
+      - CWE-79
+    expected_framework_findings:
+      - PF-FLASK-SSTI-001
+
+  - name: gin
+    type: clean-real-world
+    language: go
+    expected: low-false-positive-rate
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/gin
+
+  - name: laravel-v5.5.40
+    type: clean-real-world
+    language: php
+    expected: low-false-positive-rate
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/laravel-v5.5.40
+
+  - name: django
+    type: clean-real-world
+    language: python
+    expected: low-false-positive-rate
+    path: /Users/digitalcenter/patchflow-benchmarks/.bench-work/django

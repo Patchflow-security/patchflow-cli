@@ -1,0 +1,168 @@
+{
+  "_meta": {
+    "description": "B1 benchmark baseline — frozen reference for regression detection",
+    "created": "2026-07-02",
+    "phase": "post-B2",
+    "tool": "patchflow scan run --json --quiet --offline"
+  },
+  "repos": {
+    "webgoat": {
+      "language": "java",
+      "category": "vulnerable",
+      "total_findings": 627,
+      "blocking": 7,
+      "high_critical": 351,
+      "by_analyzer": {
+        "osv": 107,
+        "registry-license": 170,
+        "patterns-embedded": 286,
+        "treesitter-ast": 29,
+        "secrets-embedded": 11,
+        "framework-spring-security": 2,
+        "checkov": 7,
+        "gitleaks": 15
+      },
+      "rule_families_expected": ["JAVA*", "TS-JAVA*", "PF-SPRINGSEC-*", "SECRET*"],
+      "rule_families_gap": ["TP-JAVA*"],
+      "gap_reason": "Spring annotation sources not modeled in taint engine"
+    },
+    "dvga": {
+      "language": "python",
+      "category": "vulnerable",
+      "total_findings": 91,
+      "blocking": 0,
+      "high_critical": 36,
+      "by_analyzer": {
+        "osv": 65,
+        "registry-license": 8,
+        "patterns-embedded": 11,
+        "treesitter-ast": 3,
+        "checkov": 4
+      },
+      "rule_families_expected": ["PY*", "TS-PY*"],
+      "rule_families_gap": ["TP-PY*"],
+      "gap_reason": "GraphQL resolver args not modeled as taint sources"
+    },
+    "juice-shop": {
+      "language": "javascript",
+      "category": "vulnerable",
+      "total_findings": 273,
+      "blocking": 0,
+      "high_critical": 183,
+      "by_analyzer": {
+        "osv": 68,
+        "registry-license": 7,
+        "patterns-embedded": 131,
+        "treesitter-ast": 21,
+        "secrets-embedded": 11,
+        "framework-express": 12,
+        "checkov": 19,
+        "gitleaks": 4
+      },
+      "rule_families_expected": ["JS*", "TS-JS*", "PF-EXPRESS-*"],
+      "rule_families_gap": ["TP-JS*"],
+      "gap_reason": "Express req.* sources not modeled in taint engine"
+    },
+    "nodegoat": {
+      "language": "javascript",
+      "category": "vulnerable",
+      "total_findings": 371,
+      "blocking": 2,
+      "high_critical": 252,
+      "by_analyzer": {
+        "osv": 271,
+        "registry-license": 68,
+        "treesitter-ast": 5,
+        "taint-patterns": 2,
+        "secrets-embedded": 2,
+        "framework-express": 1,
+        "patterns-embedded": 16,
+        "checkov": 3,
+        "gitleaks": 3
+      },
+      "rule_families_expected": ["TP-JS005", "TP-JS005-IP", "PF-EXPRESS-*", "JS*", "TS-JS*"]
+    },
+    "dvna": {
+      "language": "javascript",
+      "category": "vulnerable",
+      "total_findings": 66,
+      "blocking": 0,
+      "high_critical": 40,
+      "by_analyzer": {
+        "osv": 30,
+        "registry-license": 2,
+        "patterns-embedded": 20,
+        "treesitter-ast": 9,
+        "taint-patterns": 2,
+        "framework-express": 1,
+        "checkov": 2
+      },
+      "rule_families_expected": ["TP-JS001", "TP-JS001-IP", "PF-EXPRESS-*"]
+    },
+    "laravel-v5.5.40": {
+      "language": "php",
+      "category": "vulnerable",
+      "total_findings": 228,
+      "blocking": 0,
+      "high_critical": 215,
+      "by_analyzer": {
+        "registry-license": 1,
+        "patterns-embedded": 215,
+        "treesitter-ast": 12
+      },
+      "rule_families_expected": ["PHP*", "TS-PHP*"],
+      "rule_families_gap": ["PF-LARAVEL-*"],
+      "gap_reason": "No Laravel framework rules yet (B3 target)"
+    },
+    "railsgoat": {
+      "language": "ruby",
+      "category": "vulnerable",
+      "total_findings": 75,
+      "blocking": 0,
+      "high_critical": 44,
+      "by_analyzer": {
+        "registry-license": 6,
+        "secrets-embedded": 7,
+        "patterns-embedded": 41,
+        "treesitter-ast": 4,
+        "taint-patterns": 9,
+        "checkov": 7,
+        "gitleaks": 1
+      },
+      "rule_families_expected": ["TP-RB*", "PF-RAILS-*", "RB*", "TS-RB*"]
+    },
+    "dvwa": {
+      "language": "php",
+      "category": "vulnerable",
+      "total_findings": 128,
+      "blocking": 0,
+      "high_critical": 91,
+      "by_analyzer": {
+        "taint-patterns": 27,
+        "patterns-embedded": 74,
+        "treesitter-ast": 16,
+        "checkov": 10,
+        "gitleaks": 1
+      },
+      "rule_families_expected": ["TP-PHP*", "PHP*", "TS-PHP*"]
+    }
+  },
+  "sca_baselines": {
+    "log4j-old": {
+      "expected_cves": ["CVE-2021-44228", "CVE-2021-45046", "CVE-2021-45105"],
+      "status": "pass"
+    },
+    "lodash-old": {
+      "expected_cves": ["CVE-2019-10744", "CVE-2020-8203", "CVE-2021-23337"],
+      "status": "pass"
+    },
+    "express-old": {
+      "expected_cves": ["CVE-2024-29041"],
+      "status": "pass"
+    },
+    "requests-old": {
+      "expected_cves": ["CVE-2023-32681"],
+      "status": "pass"
+    }
+  }
+}
