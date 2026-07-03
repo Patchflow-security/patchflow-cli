@@ -328,13 +328,14 @@ func getNodeLocation(n ast.Node, ctx *Context) (string, int, int) {
 }
 
 // makeFinding creates a Finding from a rule match.
-func makeFinding(ruleID, title string, sev Severity, conf Confidence, n ast.Node, ctx *Context) *Finding {
+func makeFinding(ruleID, title string, sev Severity, conf Confidence, cwe string, n ast.Node, ctx *Context) *Finding {
 	file, line, col := getNodeLocation(n, ctx)
 	return &Finding{
 		RuleID:     ruleID,
 		Title:      title,
 		Severity:   sev,
 		Confidence: conf,
+		CWEID:      cwe,
 		File:       file,
 		Line:       line,
 		Col:        col,

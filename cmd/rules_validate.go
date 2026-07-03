@@ -7,6 +7,7 @@ import (
 
 	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/customrules"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/packs"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -45,11 +46,13 @@ type ruleValidationError struct {
 
 // rulesValidateResult is the JSON-serializable result of 'rules validate'.
 type rulesValidateResult struct {
-	Valid              bool                  `json:"valid"`
-	Path               string                `json:"path"`
-	Rules              int                   `json:"rules"`
-	FrameworkOverrides int                   `json:"framework_overrides,omitempty"`
-	Errors             []ruleValidationError `json:"errors,omitempty"`
+	Valid               bool                  `json:"valid"`
+	Path                string                `json:"path"`
+	Rules               int                   `json:"rules"`
+	FrameworkOverrides  int                   `json:"framework_overrides,omitempty"`
+	FrameworkExtensions int                   `json:"framework_extensions,omitempty"`
+	Errors              []ruleValidationError `json:"errors,omitempty"`
+	Warnings            []string              `json:"warnings,omitempty"`
 }
 
 // idPattern enforces the rule ID naming convention: uppercase alphanumeric
@@ -106,6 +109,23 @@ func runRulesValidate(cmd *cobra.Command, args []string) error {
 		return printValidateResult(formatter, result)
 	} else {
 		result.FrameworkOverrides = len(policy.FrameworkOverrides)
+		// Count extensions (overrides that have safe_patterns or came from extensions)
+		// We check the raw YAML for framework_extensions section
+		var rawCheck struct {
+			FrameworkExtensions map[string]yaml.Node `yaml:"framework_extensions"`
+		}
+		_ = yaml.Unmarshal(data, &rawCheck)
+		result.FrameworkExtensions = len(rawCheck.FrameworkExtensions)
+	}
+
+	// Check schema_version (B12.6)
+	var schemaCheck struct {
+		SchemaVersion string `yaml:"schema_version"`
+	}
+	_ = yaml.Unmarshal(data, &schemaCheck)
+	if schemaCheck.SchemaVersion == "" {
+		result.Warnings = append(result.Warnings,
+			"schema_version missing, assuming 1.0 (add 'schema_version: \"1.0\"' to suppress this warning)")
 	}
 
 	result.Rules = len(ruleFile.Rules)
@@ -113,13 +133,109 @@ func runRulesValidate(cmd *cobra.Command, args []string) error {
 		len(ruleFile.Frameworks.Enabled) > 0 ||
 		len(ruleFile.Frameworks.Disabled) > 0
 	hasFrameworkOverrides := len(ruleFile.FrameworkOverrides) > 0
+	hasFrameworkExtensions := len(ruleFile.FrameworkExtensions) > 0
 
-	if len(ruleFile.Rules) == 0 && !hasFrameworkConfig && !hasFrameworkOverrides {
+	if len(ruleFile.Rules) == 0 && !hasFrameworkConfig && !hasFrameworkOverrides && !hasFrameworkExtensions {
 		result.Valid = false
 		result.Errors = append(result.Errors, ruleValidationError{
 			Error: "no rules, framework config, or framework overrides defined",
 		})
 		return printValidateResult(formatter, result)
+	}
+
+	// Validate framework_extensions (B11.5.5 — strong validation)
+	knownFrameworks := getKnownFrameworkNames()
+	for fwName, ext := range ruleFile.FrameworkExtensions {
+		if !knownFrameworks[fwName] {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("framework_extensions.%s: unknown framework (will be ignored at scan time)", fwName))
+		}
+
+		// Track entries for duplicate detection
+		seenSources := map[string]bool{}
+		seenSinks := map[string]bool{}
+		seenSanitizers := map[string]bool{}
+
+		for i, src := range ext.CustomSources {
+			funcName := src.FuncName()
+			if funcName == "" && src.Annotation == "" {
+				result.Errors = append(result.Errors, ruleValidationError{
+					Error: fmt.Sprintf("framework_extensions.%s.custom_sources[%d]: must set func or annotation", fwName, i),
+				})
+				continue
+			}
+			// Check for duplicates
+			key := funcName + src.Annotation
+			if seenSources[key] {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("framework_extensions.%s.custom_sources[%d]: duplicate source %q", fwName, i, key))
+			}
+			seenSources[key] = true
+		}
+
+		for i, sink := range ext.CustomSinks {
+			funcName := sink.FuncName()
+			if funcName == "" {
+				result.Errors = append(result.Errors, ruleValidationError{
+					Error: fmt.Sprintf("framework_extensions.%s.custom_sinks[%d]: must set func or function", fwName, i),
+				})
+				continue
+			}
+			// Warn if sink has no CWE/category — it will attach to ALL rules
+			if sink.CWE == "" && sink.Category == "" {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("framework_extensions.%s.custom_sinks[%d] %s: no cwe or category — will attach to ALL taint rules (potential noise)", fwName, i, funcName))
+			}
+			// Validate CWE format if provided
+			if sink.CWE != "" && !regexp.MustCompile(`^CWE-\d+$`).MatchString(sink.CWE) {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("framework_extensions.%s.custom_sinks[%d] %s: cwe %q does not match CWE-NNN format", fwName, i, funcName, sink.CWE))
+			}
+			// Check for duplicates
+			if seenSinks[funcName] {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("framework_extensions.%s.custom_sinks[%d]: duplicate sink %q", fwName, i, funcName))
+			}
+			seenSinks[funcName] = true
+		}
+
+		for i, san := range ext.CustomSanitizers {
+			funcName := san.FuncName()
+			if funcName == "" && san.Regex == "" {
+				result.Errors = append(result.Errors, ruleValidationError{
+					Error: fmt.Sprintf("framework_extensions.%s.custom_sanitizers[%d]: must set func or regex", fwName, i),
+				})
+				continue
+			}
+			if san.Regex != "" {
+				if _, err := regexp.Compile(san.Regex); err != nil {
+					result.Errors = append(result.Errors, ruleValidationError{
+						Error: fmt.Sprintf("framework_extensions.%s.custom_sanitizers[%d]: invalid regex: %v", fwName, i, err),
+					})
+				}
+			}
+			// Check for duplicates
+			key := funcName + san.Regex
+			if seenSanitizers[key] {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("framework_extensions.%s.custom_sanitizers[%d]: duplicate sanitizer", fwName, i))
+			}
+			seenSanitizers[key] = true
+		}
+
+		for i, sp := range ext.SafePatterns {
+			if sp.Pattern == "" {
+				result.Errors = append(result.Errors, ruleValidationError{
+					Error: fmt.Sprintf("framework_extensions.%s.safe_patterns[%d]: must set pattern", fwName, i),
+				})
+				continue
+			}
+			if _, err := regexp.Compile(sp.Pattern); err != nil {
+				result.Errors = append(result.Errors, ruleValidationError{
+					Error: fmt.Sprintf("framework_extensions.%s.safe_patterns[%d]: invalid regex: %v", fwName, i, err),
+				})
+			}
+		}
 	}
 
 	// Track seen IDs for uniqueness check.
@@ -213,8 +329,11 @@ func printValidateResult(formatter output.Formatter, result rulesValidateResult)
 	}
 
 	if result.Valid {
-		_ = formatter.PrintSuccess(fmt.Sprintf("%d rules and %d framework override blocks validated successfully", result.Rules, result.FrameworkOverrides))
+		_ = formatter.PrintSuccess(fmt.Sprintf("%d rules, %d framework overrides, and %d framework extensions validated successfully", result.Rules, result.FrameworkOverrides, result.FrameworkExtensions))
 		_ = formatter.Print("  File: " + result.Path)
+		for _, w := range result.Warnings {
+			_ = formatter.Print("  \u26a0 " + w)
+		}
 		return nil
 	}
 
@@ -222,13 +341,26 @@ func printValidateResult(formatter output.Formatter, result rulesValidateResult)
 	_ = formatter.Print("")
 	for _, e := range result.Errors {
 		if e.RuleID != "" {
-			_ = formatter.Print(fmt.Sprintf("  [%s] %s", e.RuleID, e.Error))
+			_ = formatter.Print(fmt.Sprintf("  \u2717 [%s] %s", e.RuleID, e.Error))
 		} else {
-			_ = formatter.Print("  " + e.Error)
+			_ = formatter.Print("  \u2717 " + e.Error)
 		}
 	}
+	for _, w := range result.Warnings {
+		_ = formatter.Print("  \u26a0 " + w)
+	}
 	_ = formatter.Print("")
-	_ = formatter.Print(fmt.Sprintf("%d error(s) found.", len(result.Errors)))
+	_ = formatter.Print(fmt.Sprintf("%d error(s), %d warning(s).", len(result.Errors), len(result.Warnings)))
 	// Signal failure to cobra so the process exits with code 1.
 	return fmt.Errorf("rules validation failed: %d error(s)", len(result.Errors))
+}
+
+// getKnownFrameworkNames returns a set of known framework pack names.
+func getKnownFrameworkNames() map[string]bool {
+	fwReg := packs.BuildDefaultRegistry()
+	known := make(map[string]bool)
+	for _, p := range fwReg.All() {
+		known[p.Name()] = true
+	}
+	return known
 }

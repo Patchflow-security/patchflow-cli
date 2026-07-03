@@ -626,6 +626,59 @@ func ExtractCVEID(vuln Vulnerability) string {
 	return ""
 }
 
+// ExtractCWEID extracts CWE identifiers from a vulnerability's database_specific
+// field. NVD and GHSA entries often include CWE IDs in database_specific.cwe
+// or database_specific.cwe_ids. Returns the first CWE found (e.g., "CWE-89").
+func ExtractCWEID(vuln Vulnerability) string {
+	if vuln.DatabaseSpecific == nil {
+		return ""
+	}
+
+	// Try "cwe" field (single string or array)
+	if cwe, ok := vuln.DatabaseSpecific["cwe"]; ok {
+		switch v := cwe.(type) {
+		case string:
+			if strings.HasPrefix(v, "CWE-") {
+				return v
+			}
+			return "CWE-" + v
+		case []interface{}:
+			if len(v) > 0 {
+				if s, ok := v[0].(string); ok {
+					if strings.HasPrefix(s, "CWE-") {
+						return s
+					}
+					return "CWE-" + s
+				}
+			}
+		}
+	}
+
+	// Try "cwe_ids" field (array of strings)
+	if cweIDs, ok := vuln.DatabaseSpecific["cwe_ids"]; ok {
+		if arr, ok := cweIDs.([]interface{}); ok && len(arr) > 0 {
+			if s, ok := arr[0].(string); ok {
+				if strings.HasPrefix(s, "CWE-") {
+					return s
+				}
+				return "CWE-" + s
+			}
+		}
+	}
+
+	// Try "cweId" field (some providers use camelCase)
+	if cweID, ok := vuln.DatabaseSpecific["cweId"]; ok {
+		if s, ok := cweID.(string); ok && s != "" {
+			if strings.HasPrefix(s, "CWE-") {
+				return s
+			}
+			return "CWE-" + s
+		}
+	}
+
+	return ""
+}
+
 // ExtractAdvisoryURL finds the best advisory URL from references.
 func ExtractAdvisoryURL(vuln Vulnerability) string {
 	for _, ref := range vuln.References {

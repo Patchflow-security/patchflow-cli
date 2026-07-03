@@ -8,4 +8,8 @@ var Sources = []frameworks.SourcePattern{
 	{FuncName: "location.search"},
 	{FuncName: "URLSearchParams"},
 	{FuncName: "useSearchParams"},
+	{FuncName: "useParams"},
+	{FuncName: "useLocation"},
+	{FuncName: "response", IsSubscript: true},
+	{FuncName: "data", IsSubscript: true},
 }

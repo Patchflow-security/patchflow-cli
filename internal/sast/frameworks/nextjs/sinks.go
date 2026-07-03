@@ -7,4 +7,6 @@ var Sinks = []frameworks.SinkPattern{
 	{FuncName: "redirect", ArgIndex: 0},
 	{FuncName: "NextResponse.redirect", ArgIndex: 0},
 	{FuncName: "router.push", ArgIndex: 0},
+	{FuncName: "axios.get", ArgIndex: 0},
+	{FuncName: "process.env.NEXT_PUBLIC_", ArgIndex: -1},
 }

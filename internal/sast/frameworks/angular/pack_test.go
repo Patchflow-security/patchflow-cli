@@ -62,3 +62,118 @@ func TestAngularNormalInterpolationSafe(t *testing.T) {
 		t.Fatalf("normal interpolation should not trigger innerHTML rule: %+v", findings)
 	}
 }
+
+func TestAngularBypassSecurityTrustConstantSafe(t *testing.T) {
+	findings := scanFixture(t, "component.ts", `this.html = this.sanitizer.bypassSecurityTrustHtml("<p>static content</p>");`)
+	if hasFinding(findings, "PF-ANGULAR-XSS-001") {
+		t.Fatalf("constant string should not trigger XSS rule: %+v", findings)
+	}
+}
+
+func TestAngularDOMPurifySanitizedSafe(t *testing.T) {
+	findings := scanFixture(t, "component.ts", `this.html = DOMPurify.sanitize(this.route.queryParams["html"]);`)
+	if hasFinding(findings, "PF-ANGULAR-XSS-001") {
+		t.Fatalf("DOMPurify sanitizer should not trigger XSS rule: %+v", findings)
+	}
+}
+
+func TestAngularRedirectVulnerable(t *testing.T) {
+	findings := scanFixture(t, "component.ts", `this.router.navigateByUrl(this.route.queryParams["redirect"]);`)
+	if !hasFinding(findings, "PF-ANGULAR-REDIRECT-001") {
+		t.Fatalf("expected redirect finding, got %+v", findings)
+	}
+}
+
+func TestAngularRedirectStaticPathSafe(t *testing.T) {
+	findings := scanFixture(t, "component.ts", `this.router.navigateByUrl("/dashboard");`)
+	if hasFinding(findings, "PF-ANGULAR-REDIRECT-001") {
+		t.Fatalf("static path should not trigger redirect rule: %+v", findings)
+	}
+}
+
+func TestAngularRuleMaturityAndSeverity(t *testing.T) {
+	// Pattern/template rules should be Beta; MatchTaint rules start as
+	// Experimental and promote to Beta after benchmark validation.
+	for _, rule := range New().Rules() {
+		if rule.MatchMode == frameworks.MatchTaint {
+			if rule.Maturity != frameworks.MaturityExperimental {
+				t.Fatalf("taint rule %s maturity = %s, want experimental", rule.ID, rule.Maturity)
+			}
+		} else {
+			if rule.Maturity != frameworks.MaturityBeta {
+				t.Fatalf("rule %s maturity = %s, want beta", rule.ID, rule.Maturity)
+			}
+		}
+	}
+	for _, rule := range New().Rules() {
+		if rule.ID == "PF-ANGULAR-REDIRECT-001" {
+			if rule.Severity == analysis.SeverityHigh || rule.Severity == analysis.SeverityCritical {
+				t.Fatalf("redirect rule severity = %s, want medium (not high/critical)", rule.ID)
+			}
+			if rule.Severity != analysis.SeverityMedium {
+				t.Fatalf("redirect rule severity = %v, want medium", rule.Severity)
+			}
+		}
+	}
+}
+
+func TestAngularTaintRuleCount(t *testing.T) {
+	pack := New()
+	taintCount := 0
+	for _, rule := range pack.Rules() {
+		if rule.MatchMode == frameworks.MatchTaint {
+			taintCount++
+		}
+	}
+	if taintCount < 2 {
+		t.Fatalf("expected at least 2 MatchTaint rules, got %d", taintCount)
+	}
+}
+
+func TestAngularSourceCoverage(t *testing.T) {
+	pack := New()
+	// Verify key Angular source patterns are present
+	sourceNames := map[string]bool{}
+	for _, s := range pack.Sources() {
+		sourceNames[s.FuncName] = true
+	}
+	required := []string{
+		"route.snapshot.paramMap",
+		"route.snapshot.queryParams",
+		"route.queryParams",
+		"route.params",
+		"FormControl.value",
+		"FormGroup.value",
+		"@Input",
+	}
+	for _, req := range required {
+		if !sourceNames[req] {
+			t.Errorf("missing source pattern: %s", req)
+		}
+	}
+}
+
+func TestAngularSinkCoverage(t *testing.T) {
+	pack := New()
+	// Verify key Angular sink patterns are present
+	sinkNames := map[string]bool{}
+	for _, s := range pack.Sinks() {
+		sinkNames[s.FuncName] = true
+	}
+	required := []string{
+		"bypassSecurityTrustHtml",
+		"bypassSecurityTrustUrl",
+		"bypassSecurityTrustResourceUrl",
+		"innerHTML",
+		"nativeElement.innerHTML",
+		"insertAdjacentHTML",
+		"navigateByUrl",
+		"window.location",
+		"document.location",
+	}
+	for _, req := range required {
+		if !sinkNames[req] {
+			t.Errorf("missing sink pattern: %s", req)
+		}
+	}
+}

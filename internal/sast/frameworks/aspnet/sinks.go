@@ -9,4 +9,7 @@ var Sinks = []frameworks.SinkPattern{
 	{FuncName: "Redirect", ArgIndex: 0},
 	{FuncName: "HtmlString", ArgIndex: 0},
 	{FuncName: "Content", ArgIndex: 0},
+	{FuncName: "BinaryFormatter.Deserialize", ArgIndex: 0},
+	{FuncName: "Process.Start", ArgIndex: 0},
+	{FuncName: "Path.Combine", ArgIndex: 1},
 }

@@ -9,4 +9,7 @@ var Sources = []frameworks.SourcePattern{
 	{FuncName: "cookies"},
 	{FuncName: "headers"},
 	{FuncName: "request.nextUrl.searchParams"},
+	{FuncName: "request.nextUrl"},
+	{FuncName: "NextRequest"},
+	{FuncName: "formData"},
 }

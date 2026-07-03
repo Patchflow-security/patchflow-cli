@@ -54,5 +54,20 @@ func Rules() []frameworks.FrameworkRule {
 			Sanitizers:     Sanitizers,
 			Recommendation: "Avoid dangerouslySetInnerHTML for request-controlled data. Render text normally or sanitize with a trusted HTML sanitizer.",
 		},
+		{
+			ID:             "PF-NEXTJS-SECRET-001",
+			Framework:      "nextjs",
+			Language:       "javascript",
+			CWE:            "CWE-200",
+			Title:          "Next.js secret exposed to client component or NEXT_PUBLIC misuse",
+			Severity:       analysis.SeverityMedium,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".js", ".jsx", ".ts", ".tsx"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`process\.env\.NEXT_PUBLIC_\w*(SECRET|PRIVATE_KEY|API_KEY|PASSWORD|TOKEN|JWT)`),
+			Sanitizers:     Sanitizers,
+			Recommendation: "Do not use NEXT_PUBLIC_ prefix for secret values. NEXT_PUBLIC_ variables are inlined into client-side JavaScript and visible to users. Use server-only environment variables for secrets.",
+		},
 	}
 }

@@ -8,4 +8,7 @@ var Sources = []frameworks.SourcePattern{
 	{FuncName: "request.COOKIES", IsSubscript: true},
 	{FuncName: "request.headers", IsSubscript: true},
 	{FuncName: "request.body"},
+	{FuncName: "request.data"},
+	{FuncName: "request.FILES", IsSubscript: true},
+	{FuncName: "request.META", IsSubscript: true},
 }

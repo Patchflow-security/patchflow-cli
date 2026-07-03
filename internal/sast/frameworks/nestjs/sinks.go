@@ -8,4 +8,6 @@ var Sinks = []frameworks.SinkPattern{
 	{FuncName: "HttpService.get", ArgIndex: 0},
 	{FuncName: "axios.get", ArgIndex: 0},
 	{FuncName: "exec", ArgIndex: 0},
+	{FuncName: "spawn", ArgIndex: 0},
+	{FuncName: "HttpService.post", ArgIndex: 0},
 }

@@ -79,6 +79,9 @@ Each rule carries `Sources`, `Sinks`, `Sanitizers`, `SafePatterns`, `Exclusions`
 # Scan with auto-detected framework packs (default)
 patchflow scan run
 
+# Scan with unified config flag (B11.5.4)
+patchflow scan run --config .patchflow/rules.yaml
+
 # Force-enable a specific pack
 patchflow scan run --framework rails
 
@@ -93,8 +96,76 @@ patchflow rules list --framework rails
 
 # Explain a framework rule (shows sources/sinks/sanitizers)
 patchflow explain --rule PF-RAILS-XSS-001
+
+# Validate rules config (B11.5.5 + B12.6)
+patchflow rules validate .patchflow/rules.yaml
+
+# Config management (B12.5)
+patchflow config validate
+patchflow config migrate
+
+# CI templates (B12.7)
+patchflow ci init github
+patchflow ci init gitlab --profile ci-blocking
+
+# Version with full metadata (B12.1)
+patchflow version --json
+
+# Doctor diagnostic (B12.8)
+patchflow doctor --json
 ```
+
+## Release Hardening (B12)
+
+- **Version**: `patchflow version --json` outputs version, commit, go_version, ruleset_version, schema_version, sarif_version
+- **Doctor**: `patchflow doctor` checks version, git, config, cache, SARIF output, embedded scanners, external tools
+- **Config migration**: `patchflow config migrate` adds schema_version and suggests framework_extensions
+- **CI templates**: `patchflow ci init {github,gitlab,circleci,azure,pre-commit}` with audit/starter/ci-blocking profiles
+- **Smoke fixtures**: `internal/testdata/release-smoke/` with 5 fixtures (spring, graphql, express, clean-go, clean-python)
+- **GoReleaser**: 6 targets (linux/darwin/windows × amd64/arm64), checksums, SBOMs, cosign signing, Homebrew, Scoop, Docker
+- **Release process**: See `RELEASE.md` and `PATCHFLOW_CLI_RC1_BASELINE.md`
 
 ## Governance
 
 Framework rules register under `EngineFrameworks` in the governance registry. Default maturity is `experimental` (audit profile only, non-blocking). Promote rules to `beta`/`stable` as they gain test fixtures and regression coverage, which activates them in PR/CI profiles and makes high/critical findings blocking-eligible.
+
+## Dedup and Grouping (B10)
+
+The SAST runner has a multi-phase dedup pipeline:
+
+1. **Cross-scanner dedup** (`dedupFindings`) — same file+line+rule, prefer AST/taint over regex.
+2. **Semantic dedup** (`semanticDedupFindings`) — same rule+file+evidence across different lines.
+3. **Base/IP dedup** (`dedupBaseVsInterprocedural`) — merge `TP-JS001` base with `TP-JS001-IP` interprocedural variant on same line. IP variant kept (longer taint path).
+4. **Issue grouping** (`groupIssues`) — group related findings in same function. Uses function boundary detection (reads source files for `def`/`class`/`function`/`func` patterns) as primary strategy. Proximity (10-line window) is fallback only. Methods with same name in different classes are separated using `name@startLine` keys. Findings are NOT dropped — primary carries `OccurrenceCount` and `RelatedLocations`.
+
+Finding fingerprints:
+- `SemanticFingerprint` — line-number independent (rule+analyzer+file+evidence).
+- `LocationFingerprint` — includes line number (SARIF partialFingerprints).
+- `DedupFingerprint` — groups base/IP variants (strips -IP suffix, includes line).
+- `IssueGroupID` — groups same-function findings (rule+file+function+line).
+
+## Performance
+
+- All regex patterns are precompiled at scanner initialization (`regexp.MustCompile` in `NewScanner()`/`registerRules()`). No recompilation on each scan.
+- Framework registry is a package-level singleton (`sync.Once`), shared across all Runner instances.
+- Framework detection is ~12ms, called once per scan.
+- Dedup/grouping overhead is ~0.4ms.
+- Engine timings are collected in `engine_timings` JSON field.
+
+## Custom Framework Extensions (B11 + B11.5)
+
+Users can extend official framework packs with organization-specific sources, sinks, sanitizers, and safe patterns via `framework_extensions` in `.patchflow/rules.yaml`.
+
+Key points:
+- Extensions are merged into the same `PackOverride` pipeline as `framework_overrides`.
+- Extensions add `safe_patterns` and CWE metadata on sinks (not available in overrides).
+- Both sections are combined if they define entries for the same framework.
+- Extensions only **add** — they never remove official sources/sinks/sanitizers.
+- **B11.5.1**: Custom sinks are scoped by CWE/category — a sink with `cwe: "CWE-89"` only attaches to SQLi rules, not SSRF/redirect/deser. Unscoped sinks attach to all rules (backward compatible).
+- **B11.5.2**: Custom sources can be scoped by `categories` — a source with `categories: [sql_injection]` only attaches to SQLi rules.
+- **B11.5.3**: Safe patterns suppress taint-mode findings when the pattern matches in the same function (uses function boundary detection from B10.9).
+- **B11.5.4**: `--config` flag is the unified config entry point; `--rules` and `--rules-config` are legacy aliases.
+- **B11.5.5**: `rules validate` catches noisy extension mistakes (unscoped sinks, duplicates, unknown frameworks, bad regex).
+- YAML accepts both `func` and `function` as field names for user-friendliness.
+- `patchflow explain --rule <id>` shows project extensions.
+- See `docs/CUSTOM_FRAMEWORK_EXTENSIONS.md` for the full schema reference.

@@ -9,4 +9,6 @@ var Sources = []frameworks.SourcePattern{
 	{FuncName: "@Headers", Annotation: "@Headers"},
 	{FuncName: "req.query", IsSubscript: true},
 	{FuncName: "req.body", IsSubscript: true},
+	{FuncName: "@Req", Annotation: "@Req"},
+	{FuncName: "Request"},
 }

@@ -130,3 +130,75 @@ func TestFingerprintHexOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestDedupFingerprintBaseIPSameLine(t *testing.T) {
+	base := Finding{RuleID: "TP-JS001", FilePath: "src/app.js", LineStart: 42, Evidence: "eval(req.body)"}
+	ip := Finding{RuleID: "TP-JS001-IP", FilePath: "src/app.js", LineStart: 42, Evidence: "eval(req.body)"}
+	fpBase := ComputeDedupFingerprint(base)
+	fpIP := ComputeDedupFingerprint(ip)
+	if fpBase != fpIP {
+		t.Errorf("base and IP variants on same line should have same dedup fingerprint: %s vs %s", fpBase, fpIP)
+	}
+}
+
+func TestDedupFingerprintDifferentLinesNotEqual(t *testing.T) {
+	f1 := Finding{RuleID: "TP-JS001", FilePath: "src/app.js", LineStart: 42, Evidence: "eval(x)"}
+	f2 := Finding{RuleID: "TP-JS001", FilePath: "src/app.js", LineStart: 100, Evidence: "eval(x)"}
+	if ComputeDedupFingerprint(f1) == ComputeDedupFingerprint(f2) {
+		t.Error("findings on different lines should have different dedup fingerprints")
+	}
+}
+
+func TestDedupFingerprintStableAcrossLineShift(t *testing.T) {
+	// Semantic fingerprint should NOT include line number (stable across shifts)
+	f1 := Finding{RuleID: "TP-JS001", FilePath: "src/app.js", LineStart: 42, Evidence: "eval(req.body)"}
+	f2 := Finding{RuleID: "TP-JS001", FilePath: "src/app.js", LineStart: 45, Evidence: "eval(req.body)"}
+	if ComputeSemanticFingerprint(f1) != ComputeSemanticFingerprint(f2) {
+		t.Error("semantic fingerprint should be stable across line shifts")
+	}
+}
+
+func TestIssueGroupIDSameFileSameRule(t *testing.T) {
+	f1 := Finding{RuleID: "PF-GRAPHQL-AUTH-001", FilePath: "core/views.py", LineStart: 141, Title: "GraphQL IDOR"}
+	f2 := Finding{RuleID: "PF-GRAPHQL-AUTH-001", FilePath: "core/views.py", LineStart: 148, Title: "GraphQL IDOR"}
+	// Same rule + file should produce same base group ID
+	gid1 := ComputeIssueGroupID(f1)
+	gid2 := ComputeIssueGroupID(f2)
+	if gid1 != gid2 {
+		t.Errorf("same rule+file should produce same base group ID: %s vs %s", gid1, gid2)
+	}
+}
+
+func TestIssueGroupIDDifferentRules(t *testing.T) {
+	f1 := Finding{RuleID: "PF-GRAPHQL-AUTH-001", FilePath: "core/views.py", LineStart: 141}
+	f2 := Finding{RuleID: "PF-GRAPHQL-SQLI-001", FilePath: "core/views.py", LineStart: 142}
+	if ComputeIssueGroupID(f1) == ComputeIssueGroupID(f2) {
+		t.Error("different rules should produce different group IDs")
+	}
+}
+
+func TestExtractFunctionName(t *testing.T) {
+	cases := map[string]string{
+		"GraphQL IDOR in EditPaste.mutate":        "editpaste.mutate",
+		"SQL injection in resolve_pastes":         "resolve_pastes",
+		"XSS in render_template (Jinja)":          "render_template",
+		"No function name here":                   "",
+		"":                                        "",
+	}
+	for input, want := range cases {
+		got := ExtractFunctionName(input, "")
+		if got != want {
+			t.Errorf("ExtractFunctionName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestPopulateFingerprintsIncludesDedup(t *testing.T) {
+	findings := []Finding{
+		{RuleID: "TP-JS001", FilePath: "src/app.js", LineStart: 42, Evidence: "eval(x)"},
+	}
+	PopulateFingerprints(findings)
+	if findings[0].DedupFingerprint == "" {
+		t.Error("PopulateFingerprints should set DedupFingerprint")
+	}
+}

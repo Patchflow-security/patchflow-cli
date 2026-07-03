@@ -180,3 +180,260 @@ func TestRailsDeserSafeLoadNoFinding(t *testing.T) {
 		}
 	}
 }
+
+// === Command injection (PF-RAILS-CMDI-001) ===
+
+func TestRailsCMDISystemInterpVulnerable(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	content := `system("ls #{params[:dir]}")`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCMDI bool
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CMDI-001" {
+			sawCMDI = true
+		}
+	}
+	if !sawCMDI {
+		t.Fatalf("expected PF-RAILS-CMDI-001 finding for system() with params interpolation, got %+v", findings)
+	}
+}
+
+func TestRailsCMDIBackticksInterpVulnerable(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	content := "`rm #{params[:file]}`"
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCMDI bool
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CMDI-001" {
+			sawCMDI = true
+		}
+	}
+	if !sawCMDI {
+		t.Fatalf("expected PF-RAILS-CMDI-001 finding for backticks with params interpolation, got %+v", findings)
+	}
+}
+
+func TestRailsCMDISeparateArgsSafe(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	// system with separate arguments and no interpolation is safe.
+	content := `system("ls", "-la")`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CMDI-001" {
+			t.Fatalf("PF-RAILS-CMDI-001 should not fire on system() with separate args, got %+v", f)
+		}
+	}
+}
+
+func TestRailsCMDIShellwordsSanitizedSafe(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	// Shellwords.escape sanitizer suppresses the finding even though the
+	// pattern matches (interpolated params inside system()).
+	content := `system("ls #{Shellwords.escape(params[:dir])}")`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CMDI-001" {
+			t.Fatalf("PF-RAILS-CMDI-001 should not fire when Shellwords.escape sanitizer is applied, got %+v", f)
+		}
+	}
+}
+
+// === SSRF (PF-RAILS-SSRF-001) ===
+
+func TestRailsSSRFNetHTTPGetInterpVulnerable(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	content := `Net::HTTP.get(URI.parse("https://#{params[:host]}"))`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawSSRF bool
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-SSRF-001" {
+			sawSSRF = true
+		}
+	}
+	if !sawSSRF {
+		t.Fatalf("expected PF-RAILS-SSRF-001 finding for Net::HTTP.get with params interpolation, got %+v", findings)
+	}
+}
+
+func TestRailsSSRFNetHTTPStartInterpVulnerable(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	content := `Net::HTTP.start("https://#{params[:host]}")`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawSSRF bool
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-SSRF-001" {
+			sawSSRF = true
+		}
+	}
+	if !sawSSRF {
+		t.Fatalf("expected PF-RAILS-SSRF-001 finding for Net::HTTP.start with params interpolation, got %+v", findings)
+	}
+}
+
+func TestRailsSSRFStaticURLSafe(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "controller.rb")
+	// Static URL with no interpolation — no finding expected.
+	content := `Net::HTTP.get(URI.parse("https://example.com"))`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-SSRF-001" {
+			t.Fatalf("PF-RAILS-SSRF-001 should not fire on a static URL, got %+v", f)
+		}
+	}
+}
+
+// === Weak crypto (PF-RAILS-CRYPTO-001) ===
+
+func TestRailsCryptoMD5HexdigestVulnerable(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "model.rb")
+	content := `Digest::MD5.hexdigest(password)`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCrypto bool
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CRYPTO-001" {
+			sawCrypto = true
+		}
+	}
+	if !sawCrypto {
+		t.Fatalf("expected PF-RAILS-CRYPTO-001 finding for Digest::MD5.hexdigest, got %+v", findings)
+	}
+}
+
+func TestRailsCryptoSHA1Base64Vulnerable(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "model.rb")
+	content := `Digest::SHA1.base64digest(data)`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawCrypto bool
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CRYPTO-001" {
+			sawCrypto = true
+		}
+	}
+	if !sawCrypto {
+		t.Fatalf("expected PF-RAILS-CRYPTO-001 finding for Digest::SHA1.base64digest, got %+v", findings)
+	}
+}
+
+func TestRailsCryptoChecksumSafePatternSuppressed(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "model.rb")
+	// MD5 used for a cache checksum is a non-security context — the
+	// SafePattern (cache|checksum|etag|fingerprint) suppresses the finding.
+	content := `Digest::MD5.hexdigest(content) # for cache checksum`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CRYPTO-001" {
+			t.Fatalf("PF-RAILS-CRYPTO-001 should not fire on a cache checksum context, got %+v", f)
+		}
+	}
+}
+
+func TestRailsCryptoBCryptSafe(t *testing.T) {
+	pack := New()
+	matcher := frameworks.NewMatcher(pack.Rules())
+	root := t.TempDir()
+	target := filepath.Join(root, "model.rb")
+	// BCrypt is a strong password hashing algorithm — no weak-hash finding.
+	content := `BCrypt::Password.create(password)`
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := matcher.ScanFile(target, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range findings {
+		if f.RuleID == "PF-RAILS-CRYPTO-001" {
+			t.Fatalf("PF-RAILS-CRYPTO-001 should not fire on BCrypt, got %+v", f)
+		}
+	}
+}

@@ -41,6 +41,7 @@ type RuleFile struct {
 	TaintRules         []YAMLTaintRule                      `yaml:"taint_rules"`
 	Frameworks         YAMLFrameworkSelection               `yaml:"frameworks"`
 	FrameworkOverrides map[string]YAMLFrameworkPackOverride `yaml:"framework_overrides"`
+	FrameworkExtensions map[string]YAMLFrameworkExtension   `yaml:"framework_extensions"`
 }
 
 // YAMLRule represents a single regex pattern rule definition in the YAML file.
@@ -105,18 +106,83 @@ type YAMLFrameworkPackOverride struct {
 
 type YAMLFrameworkSource struct {
 	Func        string `yaml:"func"`
+	Function    string `yaml:"function"` // alias for func (user-friendly)
 	IsSubscript bool   `yaml:"is_subscript"`
 	Annotation  string `yaml:"annotation"`
+	// Categories limits this source to specific vulnerability categories.
+	// Empty means "applies to all categories" (backward compatible).
+	// Only used by framework_extensions, ignored by framework_overrides.
+	Categories []string `yaml:"categories"`
+}
+
+// FuncName returns the function name from either Func or Function field.
+func (s YAMLFrameworkSource) FuncName() string {
+	if s.Func != "" {
+		return s.Func
+	}
+	return s.Function
 }
 
 type YAMLFrameworkSink struct {
 	Func     string `yaml:"func"`
+	Function string `yaml:"function"` // alias for func (user-friendly)
 	ArgIndex int    `yaml:"arg_index"`
 }
 
+// FuncName returns the function name from either Func or Function field.
+func (s YAMLFrameworkSink) FuncName() string {
+	if s.Func != "" {
+		return s.Func
+	}
+	return s.Function
+}
+
 type YAMLFrameworkSanitizer struct {
-	Func  string `yaml:"func"`
-	Regex string `yaml:"regex"`
+	Func     string `yaml:"func"`
+	Function string `yaml:"function"` // alias for func (user-friendly)
+	Regex    string `yaml:"regex"`
+}
+
+// FuncName returns the function name from either Func or Function field.
+func (s YAMLFrameworkSanitizer) FuncName() string {
+	if s.Func != "" {
+		return s.Func
+	}
+	return s.Function
+}
+
+// YAMLFrameworkExtension is the B11 extension schema. It extends the
+// override schema with safe_patterns and CWE metadata on custom sinks.
+type YAMLFrameworkExtension struct {
+	CustomSources    []YAMLFrameworkSource    `yaml:"custom_sources"`
+	CustomSinks      []YAMLExtensionSink      `yaml:"custom_sinks"`
+	CustomSanitizers []YAMLFrameworkSanitizer `yaml:"custom_sanitizers"`
+	SafePatterns     []YAMLSafePattern        `yaml:"safe_patterns"`
+}
+
+// YAMLExtensionSink extends YAMLFrameworkSink with CWE/category/severity.
+type YAMLExtensionSink struct {
+	Func     string `yaml:"func"`
+	Function string `yaml:"function"` // alias for func (user-friendly)
+	ArgIndex int    `yaml:"arg_index"`
+	CWE      string `yaml:"cwe"`
+	Category string `yaml:"category"`
+	Severity string `yaml:"severity"`
+}
+
+// FuncName returns the function name from either Func or Function field.
+func (s YAMLExtensionSink) FuncName() string {
+	if s.Func != "" {
+		return s.Func
+	}
+	return s.Function
+}
+
+// YAMLSafePattern declares a pattern that suppresses a finding when found
+// on the same line (e.g., an internal auth helper).
+type YAMLSafePattern struct {
+	Pattern string `yaml:"pattern"`
+	Reason  string `yaml:"reason"`
 }
 
 // Policy is the fully parsed user YAML policy.
@@ -228,6 +294,28 @@ func LoadPolicyFromBytes(data []byte) (*Policy, error) {
 		return nil, err
 	}
 	policy.FrameworkOverrides = overrides
+
+	// Convert framework_extensions and merge into overrides (B11).
+	// Extensions are merged on top of overrides — if both sections define
+	// sources for the same framework, they are combined.
+	extOverrides, err := convertFrameworkExtensions(ruleFile.FrameworkExtensions)
+	if err != nil {
+		return nil, err
+	}
+	for name, ext := range extOverrides {
+		if existing, ok := policy.FrameworkOverrides[name]; ok {
+			existing.Sources = append(existing.Sources, ext.Sources...)
+			existing.Sinks = append(existing.Sinks, ext.Sinks...)
+			existing.Sanitizers = append(existing.Sanitizers, ext.Sanitizers...)
+			existing.SafePatterns = append(existing.SafePatterns, ext.SafePatterns...)
+			for ruleID, sev := range ext.SeverityOverrides {
+				existing.SeverityOverrides[ruleID] = sev
+			}
+			policy.FrameworkOverrides[name] = existing
+		} else {
+			policy.FrameworkOverrides[name] = ext
+		}
+	}
 
 	return policy, nil
 }
@@ -400,29 +488,32 @@ func convertFrameworkOverrides(raw map[string]YAMLFrameworkPackOverride) (map[st
 		}
 
 		for _, src := range override.CustomSources {
-			if src.Func == "" && src.Annotation == "" {
+			funcName := src.FuncName()
+			if funcName == "" && src.Annotation == "" {
 				return nil, fmt.Errorf("framework %s: custom source must set func or annotation", name)
 			}
 			packOverride.Sources = append(packOverride.Sources, fwpatterns.SourcePattern{
-				FuncName:    src.Func,
+				FuncName:    funcName,
 				IsSubscript: src.IsSubscript,
 				Annotation:  src.Annotation,
 			})
 		}
 		for _, sink := range override.CustomSinks {
-			if sink.Func == "" {
+			funcName := sink.FuncName()
+			if funcName == "" {
 				return nil, fmt.Errorf("framework %s: custom sink must set func", name)
 			}
 			packOverride.Sinks = append(packOverride.Sinks, fwpatterns.SinkPattern{
-				FuncName: sink.Func,
+				FuncName: funcName,
 				ArgIndex: sink.ArgIndex,
 			})
 		}
 		for _, sanitizer := range override.CustomSanitizers {
-			if sanitizer.Func == "" && sanitizer.Regex == "" {
+			funcName := sanitizer.FuncName()
+			if funcName == "" && sanitizer.Regex == "" {
 				return nil, fmt.Errorf("framework %s: custom sanitizer must set func or regex", name)
 			}
-			sp := fwpatterns.SanitizerPattern{FuncName: sanitizer.Func}
+			sp := fwpatterns.SanitizerPattern{FuncName: funcName}
 			if sanitizer.Regex != "" {
 				re, err := regexp.Compile(sanitizer.Regex)
 				if err != nil {
@@ -445,7 +536,95 @@ func convertFrameworkOverrides(raw map[string]YAMLFrameworkPackOverride) (map[st
 	return out, nil
 }
 
-// parseLanguage converts a string language name to a patterns.Language.
+// convertFrameworkExtensions converts the B11 framework_extensions YAML schema
+// into PackOverride entries. Extensions support safe_patterns and CWE metadata
+// on sinks, which overrides do not. The result is merged into the same
+// FrameworkOverrides map so the SAST runner applies them uniformly.
+func convertFrameworkExtensions(raw map[string]YAMLFrameworkExtension) (map[string]fwpatterns.PackOverride, error) {
+	if len(raw) == 0 {
+		return map[string]fwpatterns.PackOverride{}, nil
+	}
+	out := make(map[string]fwpatterns.PackOverride, len(raw))
+	for frameworkName, ext := range raw {
+		name := strings.TrimSpace(frameworkName)
+		if name == "" {
+			return nil, fmt.Errorf("framework extension name cannot be empty")
+		}
+
+		packOverride := fwpatterns.PackOverride{
+			SeverityOverrides: make(map[string]analysis.Severity),
+		}
+
+		// Custom sources — extensions support categories for scoping.
+		// A source with categories is only attached to rules whose category
+		// matches. A source without categories is attached to all rules.
+		for _, src := range ext.CustomSources {
+			funcName := src.FuncName()
+			if funcName == "" && src.Annotation == "" {
+				return nil, fmt.Errorf("framework extension %s: custom source must set func or annotation", name)
+			}
+			packOverride.Sources = append(packOverride.Sources, fwpatterns.SourcePattern{
+				FuncName:    funcName,
+				IsSubscript: src.IsSubscript,
+				Annotation:  src.Annotation,
+				Categories:  src.Categories,
+			})
+		}
+
+		// Custom sinks — extensions support CWE/category/severity for scoping.
+		// A sink with CWE/category is only attached to rules with a matching
+		// CWE/category. A sink without CWE/category is attached to all rules
+		// (backward compatible).
+		for _, sink := range ext.CustomSinks {
+			funcName := sink.FuncName()
+			if funcName == "" {
+				return nil, fmt.Errorf("framework extension %s: custom sink must set func or function", name)
+			}
+			packOverride.Sinks = append(packOverride.Sinks, fwpatterns.SinkPattern{
+				FuncName: funcName,
+				ArgIndex: sink.ArgIndex,
+				CWE:      sink.CWE,
+				Category: sink.Category,
+			})
+		}
+
+		// Custom sanitizers — same as overrides
+		for _, sanitizer := range ext.CustomSanitizers {
+			funcName := sanitizer.FuncName()
+			if funcName == "" && sanitizer.Regex == "" {
+				return nil, fmt.Errorf("framework extension %s: custom sanitizer must set func or regex", name)
+			}
+			sp := fwpatterns.SanitizerPattern{FuncName: funcName}
+			if sanitizer.Regex != "" {
+				re, err := regexp.Compile(sanitizer.Regex)
+				if err != nil {
+					return nil, fmt.Errorf("framework extension %s: invalid sanitizer regex %q: %w", name, sanitizer.Regex, err)
+				}
+				sp.Regex = re
+			}
+			packOverride.Sanitizers = append(packOverride.Sanitizers, sp)
+		}
+
+		// Safe patterns — B11 addition. These suppress findings when the
+		// pattern is found on the same line as a would-be match.
+		for _, sp := range ext.SafePatterns {
+			if sp.Pattern == "" {
+				return nil, fmt.Errorf("framework extension %s: safe pattern must set pattern", name)
+			}
+			re, err := regexp.Compile(sp.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("framework extension %s: invalid safe pattern regex %q: %w", name, sp.Pattern, err)
+			}
+			packOverride.SafePatterns = append(packOverride.SafePatterns, fwpatterns.SafePattern{
+				Regex:  re,
+				Reason: sp.Reason,
+			})
+		}
+
+		out[name] = packOverride
+	}
+	return out, nil
+}
 func parseLanguage(s string) (patterns.Language, error) {
 	switch s {
 	case "python", "py":

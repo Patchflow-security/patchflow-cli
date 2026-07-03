@@ -9,6 +9,8 @@ import (
 var Sanitizers = []frameworks.SanitizerPattern{
 	{FuncName: "escapeHtml"},
 	{FuncName: "validator.escape"},
+	{FuncName: "DOMPurify.sanitize"},
+	{FuncName: "express-validator"},
 	{FuncName: "encodeURIComponent"},
 	{FuncName: "isSafeRedirect"},
 	{FuncName: "allowlistedHost"},

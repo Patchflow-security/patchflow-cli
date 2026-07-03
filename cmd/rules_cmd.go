@@ -9,6 +9,7 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/frameworks"
 	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/Patchflow-security/patchflow-cli/internal/rules"
+	"github.com/Patchflow-security/patchflow-cli/internal/rulesconfig"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/packs"
 	"github.com/spf13/cobra"
@@ -76,6 +77,7 @@ var (
 	rulesListJSON       bool
 	rulesListAll        bool
 	rulesListFrameworks []string
+	rulesListMode       bool
 	rulesMaturityJSON   bool
 	rulesMaturityAll    bool
 	rulesDocsOutput     string
@@ -98,16 +100,48 @@ Use --json for machine-readable output.`,
 	Run: runRulesListFrameworks,
 }
 
+var rulesInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Generate a .patchflow/rules.yaml with all known rules commented out",
+	Long: `Generate a .patchflow/rules.yaml configuration file with all registered rules
+listed and commented out. Uncomment lines to override the default mode for a rule.
+
+Modes:
+  block  — finding is reported and fails CI (non-zero exit code)
+  inform — finding is reported but does not fail CI
+  off    — finding is suppressed entirely
+
+Profiles:
+  --profile starter         Stable high-confidence rules block, beta/experimental inform
+  --profile strict          Stable + beta injection/auth-critical rules block
+  --profile audit           Everything inform, nothing blocks
+  --profile framework-heavy Enable framework packs and template rules
+  --profile ci-blocking     Block on all high/critical findings (stable + beta)
+  --profile enterprise      Stable rules block, beta inform, experimental off
+
+The generated file also includes templates for custom rules, taint rules,
+and framework pack controls.
+
+If .patchflow/rules.yaml already exists, this command does nothing.`,
+	Run: runRulesInit,
+}
+
+func init() {
+	rulesInitCmd.Flags().String("profile", "", "Configuration profile: starter, strict, audit, framework-heavy, ci-blocking, enterprise")
+}
+
 func init() {
 	rootCmd.AddCommand(rulesCmd)
 	rulesCmd.AddCommand(rulesListCmd)
 	rulesCmd.AddCommand(rulesMaturityCmd)
 	rulesCmd.AddCommand(rulesDocsCmd)
 	rulesCmd.AddCommand(rulesFrameworksCmd)
+	rulesCmd.AddCommand(rulesInitCmd)
 	rulesListCmd.Flags().BoolVar(&rulesListJSON, "json", false, "Output in JSON format")
 	rulesListCmd.Flags().BoolVar(&rulesListAll, "all", false, "Show all rules (default: summary only)")
 	rulesListCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file")
 	rulesListCmd.Flags().StringSliceVar(&rulesListFrameworks, "framework", nil, "Filter to one or more framework packs (repeat flag or use comma-separated values)")
+	rulesListCmd.Flags().BoolVar(&rulesListMode, "mode", false, "Show effective mode (block/inform/off) for each rule based on .patchflow/rules.yaml and maturity defaults")
 	rulesMaturityCmd.Flags().BoolVar(&rulesMaturityJSON, "json", false, "Output in JSON format")
 	rulesMaturityCmd.Flags().BoolVar(&rulesMaturityAll, "all", false, "List every rule with maturity and CWE")
 	rulesDocsCmd.Flags().StringVar(&rulesDocsOutput, "output", "", "Write docs to file (stdout if omitted)")
@@ -155,6 +189,11 @@ func runRulesList(cmd *cobra.Command, args []string) {
 
 	if rulesListJSON {
 		printRulesJSON(groups)
+		return
+	}
+
+	if rulesListMode {
+		printRulesModeTable(groups)
 		return
 	}
 
@@ -242,6 +281,27 @@ func printFrameworkRules(names []string, asJSON bool) {
 		}
 		w.Flush()
 	}
+}
+
+// runRulesInit implements `patchflow rules init`.
+func runRulesInit(cmd *cobra.Command, _ []string) {
+	formatter := FormatterFromContext(cmd.Context())
+	cwd, _ := os.Getwd()
+	reg := buildGovernanceRegistry()
+	profile, _ := cmd.Flags().GetString("profile")
+	path, err := rulesconfig.InitConfig(cwd, reg, profile)
+	if err != nil {
+		_ = formatter.PrintError(fmt.Errorf("failed to create rules config: %w", err))
+		return
+	}
+	_ = formatter.PrintSuccess("Created " + path)
+	_ = formatter.Print("")
+	if profile != "" {
+		_ = formatter.Print(fmt.Sprintf("Profile: %s — see file header for what this means.", profile))
+	} else {
+		_ = formatter.Print("Edit the file to override rule modes (block/inform/off).")
+	}
+	_ = formatter.Print("Run 'patchflow rules list --mode' to see effective modes.")
 }
 
 // buildGovernanceRegistry builds the default rules registry and registers
@@ -355,6 +415,53 @@ func printRulesTable(groups []sast.RuleGroup) {
 	}
 
 	fmt.Printf("\nUse --all to see individual rule details\n")
+}
+
+// printRulesModeTable prints all rules with their effective mode (block/inform/off)
+// based on .patchflow/rules.yaml overrides and maturity-based defaults.
+func printRulesModeTable(groups []sast.RuleGroup) {
+	cwd, _ := os.Getwd()
+	cfg, _ := rulesconfig.LoadFromDir(cwd)
+	resolver := rulesconfig.NewResolver(cfg, buildGovernanceRegistry())
+
+	fmt.Printf("PatchFlow SAST Rules — Effective Modes\n")
+	fmt.Printf("======================================\n\n")
+
+	configuredCount := 0
+	if cfg != nil {
+		configuredCount = len(cfg.RuleModes)
+	}
+	fmt.Printf("Rules config: .patchflow/rules.yaml (%d explicit overrides)\n\n", configuredCount)
+
+	for _, g := range groups {
+		fmt.Printf("\n[%s] (%s) — %d rules\n", g.Scanner, g.Language, g.RuleCount)
+		fmt.Printf("%s\n", strings.Repeat("-", len(fmt.Sprintf("[%s] (%s) — %d rules", g.Scanner, g.Language, g.RuleCount))))
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(w, "  ID\tSEVERITY\tMODE\tSOURCE\tMATURITY\tTITLE\n")
+		fmt.Fprintf(w, "  --\t--------\t----\t------\t--------\t-----\n")
+		for _, r := range g.Rules {
+			entry := resolver.Resolve(r.ID)
+			modeStr := string(entry.Mode)
+			if modeStr == "" {
+				modeStr = "inform"
+			}
+			blockingStr := ""
+			if entry.Blocking {
+				blockingStr = " (blocking)"
+			}
+			fmt.Fprintf(w, "  %s\t%s\t%s%s\t%s\t%s\t%s\n",
+				r.ID, r.Severity, modeStr, blockingStr, entry.Source, entry.Maturity, r.Title)
+		}
+		w.Flush()
+	}
+
+	if configuredCount == 0 {
+		fmt.Printf("\nNo explicit overrides — all modes are maturity-based defaults.\n")
+		fmt.Printf("Run 'patchflow rules init' to create a .patchflow/rules.yaml.\n")
+	} else {
+		fmt.Printf("\n%d rule(s) have explicit mode overrides in .patchflow/rules.yaml.\n", configuredCount)
+	}
 }
 
 func printRulesJSON(groups []sast.RuleGroup) {

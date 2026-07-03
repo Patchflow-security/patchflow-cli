@@ -7,4 +7,5 @@ var Sanitizers = []frameworks.SanitizerPattern{
 	{FuncName: "sanitizeHtml"},
 	{FuncName: "encodeURIComponent"},
 	{FuncName: "isSafeRedirect"},
+	{FuncName: "textContent"},
 }

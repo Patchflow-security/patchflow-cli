@@ -13,5 +13,7 @@ var Sanitizers = []frameworks.SanitizerPattern{
 	{FuncName: "route("},
 	{FuncName: "url("},
 	{FuncName: "Validator::make"},
+	{FuncName: "validator"},
+	{FuncName: "bcrypt"},
 	{Regex: regexp.MustCompile(`DB::select\s*\([^,]+,\s*\[[^\]]+\]`)},
 }

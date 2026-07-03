@@ -31,6 +31,7 @@ type integerConversionRule struct {
 	what string
 	sev  Severity
 	conf Confidence
+	cwe  string
 }
 
 func (r *integerConversionRule) ID() string          { return r.id }
@@ -90,7 +91,7 @@ func (r *integerConversionRule) Match(n ast.Node, ctx *Context) (*Finding, error
 
 	// Check if the conversion is potentially narrowing
 	if isNarrowingConversion(sourceBasic.Kind(), targetBasic.Kind()) {
-		return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+		return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 	}
 
 	return nil, nil
@@ -102,6 +103,7 @@ func newIntegerConversion() Rule {
 		what: "Potential integer overflow when converting between integer types",
 		sev:  SeverityLow, // demoted: most conversions are safe in practice
 		conf: ConfidenceMedium,
+		cwe:  "CWE-190",
 	}
 }
 
@@ -192,6 +194,7 @@ type secretSerializationRule struct {
 	what string
 	sev  Severity
 	conf Confidence
+	cwe  string
 }
 
 func (r *secretSerializationRule) ID() string          { return r.id }
@@ -236,7 +239,7 @@ func (r *secretSerializationRule) Match(n ast.Node, ctx *Context) (*Finding, err
 	arg := callExpr.Args[0]
 	if ident, ok := arg.(*ast.Ident); ok {
 		if isSensitiveName(ident.Name) {
-			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+			return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 		}
 	}
 
@@ -246,7 +249,7 @@ func (r *secretSerializationRule) Match(n ast.Node, ctx *Context) (*Finding, err
 			if kv, ok := elt.(*ast.KeyValueExpr); ok {
 				if key, ok := kv.Key.(*ast.Ident); ok {
 					if isSensitiveName(key.Name) {
-						return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+						return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 					}
 				}
 			}
@@ -297,6 +300,7 @@ func newSecretSerialization() Rule {
 		what: "Secret serialization to text-based format without masking",
 		sev:  SeverityMedium,
 		conf: ConfidenceLow,
+		cwe:  "CWE-312",
 	}
 }
 
@@ -315,6 +319,7 @@ type sliceBoundsRule struct {
 	what string
 	sev  Severity
 	conf Confidence
+	cwe  string
 }
 
 func (r *sliceBoundsRule) ID() string          { return r.id }
@@ -339,14 +344,14 @@ func (r *sliceBoundsRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 			// Check high index
 			if node.High != nil {
 				if highVal, err := getIntConstant(node.High, ctx); err == nil && highVal > int64(knownLen) {
-					return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+					return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 				}
 			}
 
 			// Check low index
 			if node.Low != nil {
 				if lowVal, err := getIntConstant(node.Low, ctx); err == nil && lowVal > int64(knownLen) {
-					return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+					return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 				}
 			}
 		}
@@ -359,7 +364,7 @@ func (r *sliceBoundsRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 				return nil, nil
 			}
 			if idxVal, err := getIntConstant(node.Index, ctx); err == nil && idxVal >= int64(knownLen) {
-				return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+				return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 			}
 		}
 	}
@@ -394,5 +399,6 @@ func newSliceBounds() Rule {
 		what: "Slice access out of range",
 		sev:  SeverityMedium,
 		conf: ConfidenceLow,
+		cwe:  "CWE-119",
 	}
 }

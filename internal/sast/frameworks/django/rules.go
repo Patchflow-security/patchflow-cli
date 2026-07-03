@@ -94,5 +94,44 @@ func Rules() []frameworks.FrameworkRule {
 			Exclusions:     frameworkSourceExclusions,
 			Recommendation: "Do not deserialize untrusted request data with pickle. Use JSON with schema validation.",
 		},
+
+		// === CSRF exemption on state-changing view ===
+		{
+			ID:             "PF-DJANGO-CSRF-001",
+			Framework:      "django",
+			Language:       "python",
+			CWE:            "CWE-352",
+			Title:          "Django CSRF: @csrf_exempt on view",
+			Severity:       analysis.SeverityMedium,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".py"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`@csrf_exempt`),
+			Sanitizers:     Sanitizers,
+			Exclusions:     frameworkSourceExclusions,
+			SafePatterns: []frameworks.SafePattern{
+				{Regex: regexp.MustCompile(`(?i)GET|HEAD|OPTIONS`), Reason: "read-only HTTP methods are not state-changing"},
+			},
+			Recommendation: "Remove @csrf_exempt. If needed for webhooks, validate the request origin or use a signature-based verification instead.",
+		},
+
+		// === SSRF via requests/httpx with user-controlled URL ===
+		{
+			ID:             "PF-DJANGO-SSRF-001",
+			Framework:      "django",
+			Language:       "python",
+			CWE:            "CWE-918",
+			Title:          "Django SSRF: requests.get/httpx.get with user-controlled URL",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".py"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`(requests|httpx)\.(get|post|put|delete|head|patch)\s*\(\s*[^)]*request\.(GET|POST|body|headers|META)`),
+			Sanitizers:     Sanitizers,
+			Exclusions:     frameworkSourceExclusions,
+			Recommendation: "Validate and restrict URLs before making HTTP requests. Use an allow-list of permitted domains and validate the URL scheme.",
+		},
 	}
 }

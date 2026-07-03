@@ -313,6 +313,127 @@ func TestSpringPathTraversalVulnerablePathsGet(t *testing.T) {
 	}
 }
 
+// === Missing authorization on endpoint ===
+
+func TestSpringAuthMissingPreAuthorize(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`@RequestMapping("/admin") public String adminPanel() { return "admin"; }`)
+	if !hasFinding(findings, "PF-SPRING-AUTH-003") {
+		t.Fatalf("expected PF-SPRING-AUTH-003, got %+v", findings)
+	}
+}
+
+func TestSpringAuthSafePreAuthorize(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`@RequestMapping("/admin") @PreAuthorize("hasRole('ADMIN')") public String adminPanel() { return "admin"; }`)
+	if hasFinding(findings, "PF-SPRING-AUTH-003") {
+		t.Fatal("PF-SPRING-AUTH-003 should not fire when @PreAuthorize is present")
+	}
+}
+
+// === Weak crypto: BCrypt low rounds ===
+
+func TestSpringCryptoBCryptLowRounds(t *testing.T) {
+	// BCrypt.gensalt with rounds < 10 is insufficient.
+	findings := scanFixture(t, ".java",
+		`String hash = BCrypt.hashpw(password, BCrypt.gensalt(4));`)
+	if !hasFinding(findings, "PF-SPRING-CRYPTO-001") {
+		t.Fatalf("expected PF-SPRING-CRYPTO-001, got %+v", findings)
+	}
+}
+
+func TestSpringCryptoBCryptSafeRounds(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`String hash = BCrypt.hashpw(password, BCrypt.gensalt(12));`)
+	if hasFinding(findings, "PF-SPRING-CRYPTO-001") {
+		t.Fatal("PF-SPRING-CRYPTO-001 should not fire when rounds >= 10")
+	}
+}
+
+// === Weak crypto: MD5/SHA1 in security context ===
+
+func TestSpringCryptoMD5MessageDigest(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`MessageDigest md = MessageDigest.getInstance("MD5");`)
+	if !hasFinding(findings, "PF-SPRING-CRYPTO-002") {
+		t.Fatalf("expected PF-SPRING-CRYPTO-002, got %+v", findings)
+	}
+}
+
+func TestSpringCryptoMD5DigestUtils(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`String hash = DigestUtils.md5Hex(password);`)
+	if !hasFinding(findings, "PF-SPRING-CRYPTO-002") {
+		t.Fatalf("expected PF-SPRING-CRYPTO-002, got %+v", findings)
+	}
+}
+
+func TestSpringCryptoMD5SafeEtag(t *testing.T) {
+	// SafePattern suppresses when "etag" appears on the same line.
+	findings := scanFixture(t, ".java",
+		`String etag = DigestUtils.md5Hex(content); // for cache etag`)
+	if hasFinding(findings, "PF-SPRING-CRYPTO-002") {
+		t.Fatal("PF-SPRING-CRYPTO-002 should not fire in a non-security context (etag)")
+	}
+}
+
+// === Deserialization: Jackson default typing ===
+
+func TestSpringDeserJacksonEnableDefaultTyping(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`objectMapper.enableDefaultTyping();`)
+	if !hasFinding(findings, "PF-SPRING-DESER-004") {
+		t.Fatalf("expected PF-SPRING-DESER-004, got %+v", findings)
+	}
+}
+
+func TestSpringDeserJacksonActivateDefaultTyping(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`objectMapper.activateDefaultTyping(ptv);`)
+	if !hasFinding(findings, "PF-SPRING-DESER-004") {
+		t.Fatalf("expected PF-SPRING-DESER-004, got %+v", findings)
+	}
+}
+
+func TestSpringDeserJacksonSafeTypeValidator(t *testing.T) {
+	// SafePattern suppresses when BasicPolymorphicTypeValidator is on the same line.
+	findings := scanFixture(t, ".java",
+		`objectMapper.activateDefaultTyping(BasicPolymorphicTypeValidator.builder().build());`)
+	if hasFinding(findings, "PF-SPRING-DESER-004") {
+		t.Fatal("PF-SPRING-DESER-004 should not fire when BasicPolymorphicTypeValidator is used")
+	}
+}
+
+// === SSTI: Thymeleaf template expression injection ===
+
+func TestSpringSSTIVulnerableThymeleafProcess(t *testing.T) {
+	// The regex requires "SpringTemplateEngine" and "process(" with "request"
+	// in the first argument, all on the same line.
+	findings := scanFixture(t, ".java",
+		`SpringTemplateEngine templateEngine = new SpringTemplateEngine(); templateEngine.process(request.getParameter("template"), context);`)
+	if !hasFinding(findings, "PF-SPRING-SSTI-001") {
+		t.Fatalf("expected PF-SPRING-SSTI-001, got %+v", findings)
+	}
+}
+
+// === Log injection ===
+
+func TestSpringLogInjectionVulnerableConcat(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`logger.info("User input: " + request.getParameter("input"));`)
+	if !hasFinding(findings, "PF-SPRING-LOGI-001") {
+		t.Fatalf("expected PF-SPRING-LOGI-001, got %+v", findings)
+	}
+}
+
+func TestSpringLogInjectionSafeParameterized(t *testing.T) {
+	findings := scanFixture(t, ".java",
+		`logger.info("User logged in: {}", username);`)
+	if hasFinding(findings, "PF-SPRING-LOGI-001") {
+		t.Fatal("PF-SPRING-LOGI-001 should not fire when using parameterized logging without request concatenation")
+	}
+}
+
 // === Normal Spring code (no noise) ===
 
 func TestSpringNormalControllerNoNoise(t *testing.T) {

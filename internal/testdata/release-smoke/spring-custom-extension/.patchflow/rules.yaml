@@ -1,0 +1,10 @@
+schema_version: "1.0"
+framework_extensions:
+  spring:
+    custom_sinks:
+      - function: "LegacySql.run"
+        cwe: "CWE-89"
+        category: "sql_injection"
+    safe_patterns:
+      - pattern: "TenantAuth.requireOwner"
+        reason: "Ownership validation"

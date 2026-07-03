@@ -18,6 +18,7 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/git"
 	"github.com/Patchflow-security/patchflow-cli/internal/output"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/customrules"
 	"github.com/spf13/cobra"
 )
 
@@ -144,13 +145,17 @@ func explainByRuleID(formatter output.Formatter, root, ruleID string) error {
 	runner := sast.NewRunner()
 	runner.RespectGitignore = true
 
+	// Load project extensions (framework_extensions from .patchflow/rules.yaml)
+	// to show additional sources/sinks/sanitizers/safe patterns in the explanation.
+	projectExt := loadProjectExtensions(root)
+
 	// First, check framework pack rules (they carry richer source/sink/
 	// sanitizer metadata than the core RuleEntry).
 	fwReg := packs.BuildDefaultRegistry()
 	for _, p := range fwReg.All() {
 		for _, r := range p.Rules() {
 			if r.ID == ruleID {
-				return outputFrameworkRuleExplanation(formatter, r)
+				return outputFrameworkRuleExplanation(formatter, r, projectExt)
 			}
 		}
 	}
@@ -223,8 +228,15 @@ func explainByRuleID(formatter output.Formatter, root, ruleID string) error {
 
 // outputFrameworkRuleExplanation renders a typed framework rule with its
 // source/sink/sanitizer metadata, making the scanner feel intelligent instead
-// of like it found a string and got excited.
-func outputFrameworkRuleExplanation(formatter output.Formatter, r fwpatterns.FrameworkRule) error {
+// of like it found a string and got excited. If projectExt contains extensions
+// for this rule's framework, they are displayed as "Project extensions".
+func outputFrameworkRuleExplanation(formatter output.Formatter, r fwpatterns.FrameworkRule, projectExt map[string]fwpatterns.PackOverride) error {
+	// Compute default mode from maturity + severity.
+	defaultMode := defaultModeForMaturity(r.Maturity, r.Severity)
+
+	// Get project extensions for this framework (if any)
+	ext, hasExt := projectExt[r.Framework]
+
 	if output.IsJSON(formatter) {
 		result := map[string]interface{}{
 			"rule_id":    r.ID,
@@ -234,8 +246,10 @@ func outputFrameworkRuleExplanation(formatter output.Formatter, r fwpatterns.Fra
 			"severity":   string(r.Severity),
 			"confidence": string(r.Confidence),
 			"cwe":        r.CWE,
+			"owasp":      owaspCategoryForCWE(r.CWE),
 			"match_mode": r.MatchMode.String(),
 			"maturity":   r.Maturity.String(),
+			"default_mode": defaultMode,
 			"recommendation": r.Recommendation,
 			"suppression": map[string]interface{}{
 				"allowed": true,
@@ -251,33 +265,185 @@ func outputFrameworkRuleExplanation(formatter output.Formatter, r fwpatterns.Fra
 		if len(r.Sanitizers) > 0 {
 			result["sanitizers"] = sanitizerNames(r.Sanitizers)
 		}
+		if len(r.SafePatterns) > 0 {
+			safePatterns := make([]map[string]string, 0, len(r.SafePatterns))
+			for _, sp := range r.SafePatterns {
+				safePatterns = append(safePatterns, map[string]string{
+					"reason": sp.Reason,
+				})
+			}
+			result["safe_patterns"] = safePatterns
+		}
+		// Show project extensions if present
+		if hasExt {
+			extInfo := map[string]interface{}{}
+			if len(ext.Sources) > 0 {
+				extInfo["additional_sources"] = sourceNames(ext.Sources)
+			}
+			if len(ext.Sinks) > 0 {
+				extInfo["additional_sinks"] = sinkNames(ext.Sinks)
+			}
+			if len(ext.Sanitizers) > 0 {
+				extInfo["additional_sanitizers"] = sanitizerNames(ext.Sanitizers)
+			}
+			if len(ext.SafePatterns) > 0 {
+				safePatterns := make([]map[string]string, 0, len(ext.SafePatterns))
+				for _, sp := range ext.SafePatterns {
+					safePatterns = append(safePatterns, map[string]string{
+						"reason": sp.Reason,
+					})
+				}
+				extInfo["additional_safe_patterns"] = safePatterns
+			}
+			if len(extInfo) > 0 {
+				result["project_extensions"] = extInfo
+			}
+		}
 		return formatter.Print(result)
 	}
 
 	_ = formatter.Print("Rule: " + r.ID)
-	_ = formatter.Print("  Framework:  " + r.Framework)
-	_ = formatter.Print("  Title:      " + r.Title)
-	_ = formatter.Print("  Severity:   " + string(r.Severity) + " (confidence: " + string(r.Confidence) + ")")
-	_ = formatter.Print("  Language:   " + r.Language)
-	_ = formatter.Print("  CWE:        " + r.CWE)
-	_ = formatter.Print("  Match mode: " + r.MatchMode.String())
-	_ = formatter.Print("  Maturity:   " + r.Maturity.String())
+	_ = formatter.Print("  Framework:    " + r.Framework)
+	_ = formatter.Print("  Title:        " + r.Title)
+	_ = formatter.Print("  Severity:     " + string(r.Severity) + " (confidence: " + string(r.Confidence) + ")")
+	_ = formatter.Print("  Language:     " + r.Language)
+	_ = formatter.Print("  CWE:          " + r.CWE)
+	if owasp := owaspCategoryForCWE(r.CWE); owasp != "" {
+		_ = formatter.Print("  OWASP:        " + owasp)
+	}
+	_ = formatter.Print("  Match mode:   " + r.MatchMode.String())
+	_ = formatter.Print("  Maturity:     " + r.Maturity.String())
+	_ = formatter.Print("  Default mode: " + defaultMode)
 	if len(r.Sources) > 0 {
-		_ = formatter.Print("  Sources:    " + strings.Join(sourceNames(r.Sources), ", "))
+		_ = formatter.Print("  Sources:      " + strings.Join(sourceNames(r.Sources), ", "))
 	}
 	if len(r.Sinks) > 0 {
-		_ = formatter.Print("  Sinks:      " + strings.Join(sinkNames(r.Sinks), ", "))
+		_ = formatter.Print("  Sinks:        " + strings.Join(sinkNames(r.Sinks), ", "))
 	}
 	if len(r.Sanitizers) > 0 {
-		_ = formatter.Print("  Sanitizers: " + strings.Join(sanitizerNames(r.Sanitizers), ", "))
+		_ = formatter.Print("  Sanitizers:   " + strings.Join(sanitizerNames(r.Sanitizers), ", "))
+	}
+	if len(r.SafePatterns) > 0 {
+		_ = formatter.Print("  Safe patterns:")
+		for _, sp := range r.SafePatterns {
+			_ = formatter.Print("    - " + sp.Reason)
+		}
 	}
 	if r.Recommendation != "" {
 		_ = formatter.Print("")
 		_ = formatter.Print("  Fix: " + r.Recommendation)
 	}
+	// Show project extensions if present
+	if hasExt {
+		_ = formatter.Print("")
+		_ = formatter.Print("  Project extensions:")
+		if len(ext.Sources) > 0 {
+			_ = formatter.Print("    Additional sources:")
+			for _, s := range ext.Sources {
+				name := s.FuncName
+				if s.Annotation != "" {
+					name = s.Annotation
+				}
+				_ = formatter.Print("      " + name)
+			}
+		}
+		if len(ext.Sinks) > 0 {
+			_ = formatter.Print("    Additional sinks:")
+			for _, s := range ext.Sinks {
+				_ = formatter.Print("      " + s.FuncName)
+			}
+		}
+		if len(ext.Sanitizers) > 0 {
+			_ = formatter.Print("    Additional sanitizers:")
+			for _, s := range ext.Sanitizers {
+				if s.FuncName != "" {
+					_ = formatter.Print("      " + s.FuncName)
+				}
+			}
+		}
+		if len(ext.SafePatterns) > 0 {
+			_ = formatter.Print("    Additional safe patterns:")
+			for _, sp := range ext.SafePatterns {
+				_ = formatter.Print("      - " + sp.Reason)
+			}
+		}
+	}
 	_ = formatter.Print("")
 	_ = formatter.Print("  Suppress: // patchflow:ignore " + r.ID + " -- reason")
+	_ = formatter.Print("  Override: In .patchflow/rules.yaml:")
+	_ = formatter.Print("    rule_modes:")
+	_ = formatter.Print("      " + r.ID + ": block  # or inform, off")
 	return nil
+}
+
+// defaultModeForMaturity computes the default mode based on maturity and severity.
+func defaultModeForMaturity(maturity fwpatterns.Maturity, severity analysis.Severity) string {
+	switch maturity {
+	case fwpatterns.MaturityExperimental:
+		return "inform"
+	case fwpatterns.MaturityBeta:
+		return "inform"
+	case fwpatterns.MaturityStable, fwpatterns.MaturityEnterprise:
+		if severity == analysis.SeverityHigh || severity == analysis.SeverityCritical {
+			return "block"
+		}
+		return "inform"
+	}
+	return "inform"
+}
+
+// loadProjectExtensions loads framework_extensions from .patchflow/rules.yaml
+// and returns them as a map of framework name → PackOverride. Returns empty
+// map if no extensions are configured or the file doesn't exist.
+func loadProjectExtensions(root string) map[string]fwpatterns.PackOverride {
+	result := make(map[string]fwpatterns.PackOverride)
+	policy, err := customrules.LoadPolicyFromDir(root)
+	if err != nil {
+		return result
+	}
+	for name, override := range policy.FrameworkOverrides {
+		// Only include overrides that have content (extensions or overrides)
+		if len(override.Sources) > 0 || len(override.Sinks) > 0 ||
+			len(override.Sanitizers) > 0 || len(override.SafePatterns) > 0 {
+			result[name] = override
+		}
+	}
+	return result
+}
+
+// owaspCategoryForCWE maps common CWEs to OWASP Top 10 categories.
+func owaspCategoryForCWE(cwe string) string {
+	switch cwe {
+	case "CWE-79":
+		return "A03:2021 - Injection (XSS)"
+	case "CWE-89":
+		return "A03:2021 - Injection (SQLi)"
+	case "CWE-78":
+		return "A03:2021 - Injection (OS Command)"
+	case "CWE-94", "CWE-1336":
+		return "A03:2021 - Injection (Template/SSTI)"
+	case "CWE-918":
+		return "A10:2021 - SSRF"
+	case "CWE-601":
+		return "A01:2021 - Broken Access Control (Open Redirect)"
+	case "CWE-22":
+		return "A01:2021 - Broken Access Control (Path Traversal)"
+	case "CWE-639":
+		return "A01:2021 - Broken Access Control (IDOR)"
+	case "CWE-862":
+		return "A01:2021 - Broken Access Control (Missing Auth)"
+	case "CWE-400":
+		return "A05:2021 - Security Misconfiguration (DoS)"
+	case "CWE-489", "CWE-798":
+		return "A05:2021 - Security Misconfiguration (Debug/Secrets)"
+	case "CWE-922":
+		return "A02:2021 - Cryptographic Failures (Insecure Storage)"
+	case "CWE-502":
+		return "A08:2021 - Software and Data Integrity Failures (Deserialization)"
+	case "CWE-352":
+		return "A01:2021 - Broken Access Control (CSRF)"
+	}
+	return ""
 }
 
 func sourceNames(srcs []fwpatterns.SourcePattern) []string {

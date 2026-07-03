@@ -135,6 +135,7 @@ func (a *Analyzer) Analyze(ctx context.Context, root string) (*Result, error) {
 func vulnToFinding(vuln osvclient.Vulnerability, dep analysis.Dependency) analysis.Finding {
 	severity := osvclient.ExtractSeverity(vuln)
 	cveID := osvclient.ExtractCVEID(vuln)
+	cweID := osvclient.ExtractCWEID(vuln)
 	fixedVer := osvclient.ExtractFixedVersion(vuln, dep.Name, dep.Version)
 	advisoryURL := osvclient.ExtractAdvisoryURL(vuln)
 
@@ -175,6 +176,7 @@ func vulnToFinding(vuln osvclient.Vulnerability, dep analysis.Dependency) analys
 		PackageVersion: dep.Version,
 		FixedVersion:   fixedVer,
 		CVEID:          cveID,
+		CWEID:          cweID,
 		AdvisoryURL:    advisoryURL,
 		Evidence:       evidence,
 		Recommendation: recommendation,

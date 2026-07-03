@@ -9,11 +9,130 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/rules"
 )
 
+// Profile defines a named configuration preset for `patchflow rules init --profile <name>`.
+type Profile struct {
+	Name        string
+	Description string
+	// RuleModeOverride returns the mode to set for a rule, or empty to leave commented out.
+	RuleModeOverride func(meta rules.RuleMetadata) string
+}
+
+// Profiles returns all available configuration profiles.
+func Profiles() []Profile {
+	return []Profile{
+		{
+			Name:        "starter",
+			Description: "Stable high-confidence rules block, beta/experimental inform (commented out)",
+			RuleModeOverride: func(meta rules.RuleMetadata) string {
+				if meta.Maturity == rules.MaturityStable || meta.Maturity == rules.MaturityEnterprise {
+					if meta.Severity == "high" || meta.Severity == "critical" {
+						return "block"
+					}
+				}
+				return ""
+			},
+		},
+		{
+			Name:        "strict",
+			Description: "Stable + beta injection/auth-critical rules block, heuristics stay inform",
+			RuleModeOverride: func(meta rules.RuleMetadata) string {
+				if meta.Maturity == rules.MaturityStable || meta.Maturity == rules.MaturityEnterprise {
+					if meta.Severity == "high" || meta.Severity == "critical" {
+						return "block"
+					}
+				}
+				if meta.Maturity == rules.MaturityBeta {
+					// Block on injection and auth-critical CWEs only
+					if isInjectionCWE(meta.CWE) || isAuthCriticalCWE(meta.CWE) {
+						if meta.Severity == "high" || meta.Severity == "critical" {
+							return "block"
+						}
+					}
+				}
+				return ""
+			},
+		},
+		{
+			Name:        "audit",
+			Description: "Everything inform, nothing blocks — for visibility without CI gates",
+			RuleModeOverride: func(meta rules.RuleMetadata) string {
+				return "inform"
+			},
+		},
+		{
+			Name:        "framework-heavy",
+			Description: "Enable framework packs and template rules, stable rules block",
+			RuleModeOverride: func(meta rules.RuleMetadata) string {
+				if meta.Maturity == rules.MaturityStable || meta.Maturity == rules.MaturityEnterprise {
+					if meta.Severity == "high" || meta.Severity == "critical" {
+						return "block"
+					}
+				}
+				return ""
+			},
+		},
+		{
+			Name:        "ci-blocking",
+			Description: "Block on all high/critical findings (stable + beta), experimental off",
+			RuleModeOverride: func(meta rules.RuleMetadata) string {
+				if meta.Maturity == rules.MaturityExperimental {
+					return "off"
+				}
+				if meta.Severity == "high" || meta.Severity == "critical" {
+					return "block"
+				}
+				return "inform"
+			},
+		},
+		{
+			Name:        "enterprise",
+			Description: "Stable rules block, beta inform, experimental off — conservative CI gate",
+			RuleModeOverride: func(meta rules.RuleMetadata) string {
+				if meta.Maturity == rules.MaturityExperimental {
+					return "off"
+				}
+				if meta.Maturity == rules.MaturityStable || meta.Maturity == rules.MaturityEnterprise {
+					if meta.Severity == "high" || meta.Severity == "critical" {
+						return "block"
+					}
+					return "inform"
+				}
+				return ""
+			},
+		},
+	}
+}
+
+// ProfileByName returns the profile with the given name, or nil if not found.
+func ProfileByName(name string) *Profile {
+	for _, p := range Profiles() {
+		if p.Name == name {
+			return &p
+		}
+	}
+	return nil
+}
+
+func isInjectionCWE(cwe string) bool {
+	switch cwe {
+	case "CWE-79", "CWE-89", "CWE-78", "CWE-94", "CWE-1336", "CWE-95":
+		return true
+	}
+	return false
+}
+
+func isAuthCriticalCWE(cwe string) bool {
+	switch cwe {
+	case "CWE-22", "CWE-918", "CWE-502":
+		return true
+	}
+	return false
+}
+
 // InitConfig generates a commented .patchflow/rules.yaml with all known rules
 // from the governance registry, showing their ID, name, CWE, and default mode.
-// Rules are commented out so the generated file is a no-op until the user
-// uncomment lines they want to override.
-func InitConfig(dir string, reg *rules.Registry) (string, error) {
+// If profile is non-empty, rules are uncommented with the profile's mode overrides.
+func InitConfig(dir string, reg *rules.Registry, profile string) (string, error) {
 	configDir := filepath.Join(dir, ".patchflow")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create .patchflow directory: %w", err)
@@ -26,7 +145,15 @@ func InitConfig(dir string, reg *rules.Registry) (string, error) {
 		return "", fmt.Errorf("rules.yaml already exists at %s", configPath)
 	}
 
-	content := generateInitYAML(reg)
+	var prof *Profile
+	if profile != "" {
+		prof = ProfileByName(profile)
+		if prof == nil {
+			return "", fmt.Errorf("unknown profile: %s (available: starter, strict, audit, framework-heavy, ci-blocking, enterprise)", profile)
+		}
+	}
+
+	content := generateInitYAML(reg, prof)
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("failed to write rules.yaml: %w", err)
 	}
@@ -35,7 +162,7 @@ func InitConfig(dir string, reg *rules.Registry) (string, error) {
 }
 
 // generateInitYAML produces the full YAML content for `patchflow rules init`.
-func generateInitYAML(reg *rules.Registry) string {
+func generateInitYAML(reg *rules.Registry, prof *Profile) string {
 	var sb strings.Builder
 
 	sb.WriteString(`# PatchFlow Rules Configuration
@@ -53,8 +180,13 @@ func generateInitYAML(reg *rules.Registry) string {
 #   stable + medium/low severity    → inform
 #   beta                            → inform
 #   experimental                    → inform (never blocks unless you set it)
-
 `)
+
+	if prof != nil {
+		sb.WriteString(fmt.Sprintf("#\n# Profile: %s\n# %s\n#\n# Rules below are pre-configured for this profile.\n# Adjust as needed for your project.\n", prof.Name, prof.Description))
+	}
+
+	sb.WriteString("\n")
 
 	if reg == nil || reg.Count() == 0 {
 		sb.WriteString("# No rules registered — run `patchflow scan run` first to populate the registry.\n")
@@ -93,7 +225,18 @@ func generateInitYAML(reg *rules.Registry) string {
 				comment += fmt.Sprintf("  %s", meta.CWE)
 			}
 			sb.WriteString(comment + "\n")
-			sb.WriteString(fmt.Sprintf("# %s: %s\n\n", meta.ID, defaultMode))
+
+			// If a profile is active, uncomment rules that the profile sets
+			if prof != nil {
+				overrideMode := prof.RuleModeOverride(meta)
+				if overrideMode != "" {
+					sb.WriteString(fmt.Sprintf("%s: %s\n\n", meta.ID, overrideMode))
+				} else {
+					sb.WriteString(fmt.Sprintf("# %s: %s\n\n", meta.ID, defaultMode))
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("# %s: %s\n\n", meta.ID, defaultMode))
+			}
 		}
 	}
 

@@ -50,6 +50,7 @@ type Rule struct {
 type SourcePattern struct {
 	FuncName     string // e.g., "request.GET", "req.query", "input"
 	IsSubscript  bool   // involves subscript access (e.g., request.GET["key"])
+	Annotation   string // e.g., "@RequestParam", "@PathVariable" — for Java/C# annotation-based sources
 }
 
 // SinkPattern defines where tainted data should not flow.
@@ -142,6 +143,11 @@ func (a *Analyzer) Analyze(ctx context.Context, root string) ([]analysis.Finding
 			return nil
 		}
 		lang := entry.Name
+		// TypeScript and TSX share the same taint rules as JavaScript.
+		// Normalize to "javascript" so TP-JS* rules apply to .ts/.tsx files.
+		if lang == "typescript" || lang == "tsx" {
+			lang = "javascript"
+		}
 		if !a.hasRulesForLanguage(lang) {
 			return nil
 		}
@@ -166,6 +172,10 @@ func (a *Analyzer) ScanFilePublic(absPath, root string, entry *grammars.LangEntr
 		return nil, nil
 	}
 	lang := entry.Name
+	// TypeScript and TSX share the same taint rules as JavaScript.
+	if lang == "typescript" || lang == "tsx" {
+		lang = "javascript"
+	}
 	if !a.hasRulesForLanguage(lang) {
 		return nil, nil
 	}
@@ -283,7 +293,228 @@ func isFunctionDef(nodeType, lang string) bool {
 // analyzeFunction performs intra-procedural taint analysis on a single function.
 func (a *Analyzer) analyzeFunction(fnNode *gotreesitter.Node, bt *gotreesitter.BoundTree, lang, absPath, root string, src []byte, findings *[]analysis.Finding) {
 	taintedVars := make(map[string]bool)
+
+	// Pre-taint parameters that carry framework annotations (e.g., Spring
+	// @RequestParam, @PathVariable, @RequestBody). This bridges the gap between
+	// framework source models and the taint engine: annotation-based sources
+	// are not assignment-based, so they need to be seeded before walking the
+	// function body.
+	a.seedAnnotatedParams(fnNode, bt, lang, src, taintedVars)
+
+	// Pre-taint parameters for GraphQL resolver functions (Python). In GraphQL
+	// resolvers, parameters after root/parent/info are user-controlled.
+	a.seedGraphQLResolverParams(fnNode, bt, lang, src, taintedVars)
+
 	a.walkFunctionBody(fnNode, bt, lang, absPath, root, src, taintedVars, findings)
+}
+
+// seedAnnotatedParams scans a method declaration's parameter list for framework
+// annotations (e.g., @RequestParam, @PathVariable) and marks the corresponding
+// parameter variables as tainted. This enables Spring/C# annotation-based
+// source modeling in the taint engine.
+func (a *Analyzer) seedAnnotatedParams(fnNode *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string, src []byte, taintedVars map[string]bool) {
+	if lang != "java" && lang != "c_sharp" {
+		return
+	}
+
+	// Collect all annotation-based source patterns for this language
+	annotationSources := map[string]bool{}
+	for _, rule := range a.rules {
+		if rule.Language != lang {
+			continue
+		}
+		for _, source := range rule.Sources {
+			if source.Annotation != "" {
+				annotationSources[source.Annotation] = true
+			}
+		}
+	}
+	if len(annotationSources) == 0 {
+		return
+	}
+
+	// Find the parameter list in the method declaration
+	// Java: method_declaration → formal_parameters → formal_parameter
+	// C#: method_declaration → parameter_list → parameter
+	paramsNode := findChildByType(fnNode, bt, "formal_parameters")
+	if paramsNode == nil {
+		paramsNode = findChildByType(fnNode, bt, "parameters")
+	}
+	if paramsNode == nil {
+		paramsNode = findChildByType(fnNode, bt, "parameter_list")
+	}
+	if paramsNode == nil {
+		return
+	}
+
+	for i := 0; i < int(paramsNode.ChildCount()); i++ {
+		param := paramsNode.Child(i)
+		if param == nil {
+			continue
+		}
+		paramText := bt.NodeText(param)
+		// Check if this parameter has any annotation we care about
+		for ann := range annotationSources {
+			if strings.Contains(paramText, ann) {
+				// Extract the parameter variable name
+				// The name is typically the last identifier in the parameter
+				varName := extractParamName(param, bt)
+				if varName != "" {
+					taintedVars[varName] = true
+				}
+				break
+			}
+		}
+	}
+}
+
+// seedGraphQLResolverParams detects Python GraphQL resolver functions and
+// marks user-controlled parameters as tainted. In GraphQL resolvers, the
+// first 1-2 parameters are typically root/parent/info (not user input), and
+// subsequent parameters are user-controlled resolver arguments.
+func (a *Analyzer) seedGraphQLResolverParams(fnNode *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string, src []byte, taintedVars map[string]bool) {
+	if lang != "python" {
+		return
+	}
+
+	// Get function name to check for resolver patterns
+	nameNode := bt.ChildByField(fnNode, "name")
+	if nameNode == nil {
+		return
+	}
+	funcName := bt.NodeText(nameNode)
+
+	// Check if this looks like a GraphQL resolver:
+	// - Function name starts with "resolve_" (Graphene/Ariadne convention)
+	//   AND has an "info" parameter (GraphQL convention)
+	// - OR function name is "mutate" (GraphQL mutation convention)
+	//   AND has an "info" parameter
+	// Both conditions (name pattern + info param) must be true to avoid
+	// false positives on functions that happen to start with "resolve_"
+	// (e.g., Django ORM methods like resolve_expression_parameter).
+	isResolver := strings.HasPrefix(funcName, "resolve_") || funcName == "mutate"
+
+	// Get parameters
+	paramsNode := bt.ChildByField(fnNode, "parameters")
+	if paramsNode == nil {
+		return
+	}
+
+	paramNames := []string{}
+	for i := 0; i < int(paramsNode.ChildCount()); i++ {
+		param := paramsNode.Child(i)
+		if param == nil {
+			continue
+		}
+		pt := bt.NodeType(param)
+		if pt == "identifier" {
+			paramNames = append(paramNames, bt.NodeText(param))
+		}
+		// Python parameters with default values are wrapped in
+		// "default_parameter" nodes (e.g., "filter=None"). The actual
+		// parameter name is the first "identifier" child.
+		if pt == "default_parameter" || pt == "typed_parameter" {
+			nameNode := bt.ChildByField(param, "name")
+			if nameNode != nil {
+				paramNames = append(paramNames, bt.NodeText(nameNode))
+			} else {
+				// Fall back to first identifier child
+				for j := 0; j < int(param.ChildCount()); j++ {
+					child := param.Child(j)
+					if child != nil && bt.NodeType(child) == "identifier" {
+						paramNames = append(paramNames, bt.NodeText(child))
+						break
+					}
+				}
+			}
+		}
+		// *args and **kwargs
+		if pt == "list_splat_pattern" || pt == "dictionary_splat_pattern" {
+			for j := 0; j < int(param.ChildCount()); j++ {
+				child := param.Child(j)
+				if child != nil && bt.NodeType(child) == "identifier" {
+					paramNames = append(paramNames, bt.NodeText(child))
+					break
+				}
+			}
+		}
+	}
+
+	// Check for "info" parameter (GraphQL convention)
+	hasInfoParam := false
+	for _, p := range paramNames {
+		if p == "info" {
+			hasInfoParam = true
+			break
+		}
+	}
+
+	// Require BOTH conditions to reduce false positives.
+	// "resolve_" alone matches Django ORM methods like resolve_expression_parameter.
+	// "info" alone is too generic.
+	if !(isResolver && hasInfoParam) {
+		return
+	}
+
+	// In GraphQL resolvers, the first 1-2 params are root/parent and info.
+	// Parameters after those are user-controlled resolver arguments.
+	// Common patterns:
+	//   def resolve_user(parent, info, id):  → id is tainted
+	//   def resolve_search(root, info, query): → query is tainted
+	//   def resolve_item(info, id): → id is tainted (only info as non-user)
+	skipParams := 0
+	if len(paramNames) >= 2 {
+		// Typical: root/parent/self, info, then user args
+		first := paramNames[0]
+		if first == "root" || first == "parent" || first == "_" ||
+			first == "obj" || first == "self" || first == "cls" {
+			skipParams = 2 // skip root/self + info
+		} else if first == "info" {
+			skipParams = 1 // skip just info
+		}
+	} else if len(paramNames) >= 1 && paramNames[0] == "info" {
+		skipParams = 1
+	}
+
+	// Mark all parameters after the skip count as tainted
+	for i := skipParams; i < len(paramNames); i++ {
+		taintedVars[paramNames[i]] = true
+	}
+}
+
+// findChildByType finds the first direct child of a node with the given type.
+func findChildByType(node *gotreesitter.Node, bt *gotreesitter.BoundTree, nodeType string) *gotreesitter.Node {
+	for i := 0; i < int(node.ChildCount()); i++ {
+		child := node.Child(i)
+		if child != nil && bt.NodeType(child) == nodeType {
+			return child
+		}
+	}
+	return nil
+}
+
+// extractParamName extracts the variable name from a parameter declaration.
+// For Java: formal_parameter → type + name (e.g., "String name" → "name")
+// For C#: parameter → type + name
+func extractParamName(param *gotreesitter.Node, bt *gotreesitter.BoundTree) string {
+	// Try the "name" field first (works for some grammars)
+	nameNode := bt.ChildByField(param, "name")
+	if nameNode != nil {
+		return bt.NodeText(nameNode)
+	}
+
+	// Fall back to finding the last identifier child
+	var lastName string
+	for i := 0; i < int(param.ChildCount()); i++ {
+		child := param.Child(i)
+		if child == nil {
+			continue
+		}
+		if bt.NodeType(child) == "identifier" {
+			lastName = bt.NodeText(child)
+		}
+	}
+	return lastName
 }
 
 // walkFunctionBody walks the function body collecting taint assignments and
@@ -510,6 +741,16 @@ func (a *Analyzer) checkSinkCall(node *gotreesitter.Node, bt *gotreesitter.Bound
 					*findings = append(*findings, f)
 					break
 				}
+				// Also check for direct source-to-sink flows where the source
+				// is used inline in the sink argument without being assigned to
+				// a variable first (e.g., query(`SELECT ... ${req.body.email}`)).
+				// This catches template literals and inline expressions that
+				// contain source patterns directly.
+				if argContainsSource(arg, bt, src, rule.Sources) {
+					f := a.makeFinding(rule, node, bt, absPath, root, funcName, argText, taintedVars)
+					*findings = append(*findings, f)
+					break
+				}
 				argIdx++
 			}
 		}
@@ -698,6 +939,35 @@ func matchesSource(node *gotreesitter.Node, bt *gotreesitter.BoundTree, src []by
 		return true
 	}
 	return strings.Contains(text, source.FuncName+"(")
+}
+
+// argContainsSource checks if a sink argument directly contains a taint
+// source pattern (without going through a variable assignment). This catches
+// inline source usage like:
+//   query(`SELECT * FROM Users WHERE email = '${req.body.email}'`)
+//   exec(req.body.command)
+//   cursor.execute("SELECT * FROM users WHERE id = " + request.args["id"])
+//
+// Only subscript sources (property access patterns like "req.body", "request.args")
+// are checked inline to avoid false positives from function-call sources.
+func argContainsSource(arg *gotreesitter.Node, bt *gotreesitter.BoundTree, src []byte, sources []SourcePattern) bool {
+	if arg == nil {
+		return false
+	}
+	argText := bt.NodeText(arg)
+	for _, source := range sources {
+		if source.Annotation != "" {
+			continue // annotations are handled by seedAnnotatedParams
+		}
+		if source.IsSubscript && strings.Contains(argText, source.FuncName) {
+			return true
+		}
+		// Also check non-subscript function-call sources (e.g., request.getParameter)
+		if !source.IsSubscript && strings.Contains(argText, source.FuncName+"(") {
+			return true
+		}
+	}
+	return false
 }
 
 // referencesTaintedVar checks if a node references any tainted variable.

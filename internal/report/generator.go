@@ -904,6 +904,9 @@ type SARIFResult struct {
 type SARIFProperties struct {
 	SemanticFingerprint string `json:"semantic_fingerprint,omitempty"`
 	LocationFingerprint string `json:"location_fingerprint,omitempty"`
+	DedupFingerprint    string `json:"dedup_fingerprint,omitempty"`
+	IssueGroupID        string `json:"issue_group_id,omitempty"`
+	OccurrenceCount     int    `json:"occurrence_count,omitempty"`
 	Analyzer            string `json:"analyzer,omitempty"`
 	Severity            string `json:"severity,omitempty"`
 	Confidence          string `json:"confidence,omitempty"`
@@ -912,6 +915,10 @@ type SARIFProperties struct {
 	PackageVersion      string `json:"package_version,omitempty"`
 	FixedVersion        string `json:"fixed_version,omitempty"`
 	Reachability        string `json:"reachability,omitempty"`
+	Mode                string `json:"mode,omitempty"`
+	Blocking            bool   `json:"blocking,omitempty"`
+	ModeSource          string `json:"mode_source,omitempty"`
+	Maturity            string `json:"maturity,omitempty"`
 }
 
 // SARIFMessage is a SARIF message.
@@ -981,6 +988,9 @@ func (g *Generator) SARIF(toolVersion string) *SARIFReport {
 			result.Properties = &SARIFProperties{
 				SemanticFingerprint: f.SemanticFingerprint,
 				LocationFingerprint: f.LocationFingerprint,
+				DedupFingerprint:    f.DedupFingerprint,
+				IssueGroupID:        f.IssueGroupID,
+				OccurrenceCount:     f.OccurrenceCount,
 				Analyzer:            f.Analyzer,
 				Severity:            string(f.Severity),
 				Confidence:          string(f.Confidence),
@@ -989,6 +999,10 @@ func (g *Generator) SARIF(toolVersion string) *SARIFReport {
 				PackageVersion:      f.PackageVersion,
 				FixedVersion:        f.FixedVersion,
 				Reachability:        string(f.Reachability),
+				Mode:                f.Mode,
+				Blocking:            f.Blocking,
+				ModeSource:          f.ModeSource,
+				Maturity:            f.Maturity,
 			}
 
 			results = append(results, result)

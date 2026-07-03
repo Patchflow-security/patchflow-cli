@@ -355,7 +355,7 @@ func TestInitConfig(t *testing.T) {
 	dir := t.TempDir()
 	reg := buildTestRegistry()
 
-	path, err := InitConfig(dir, reg)
+	path, err := InitConfig(dir, reg, "")
 	if err != nil {
 		t.Fatalf("InitConfig failed: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestInitConfigAlreadyExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := InitConfig(dir, buildTestRegistry())
+	_, err := InitConfig(dir, buildTestRegistry(), "")
 	if err == nil {
 		t.Fatal("expected error when config already exists")
 	}
@@ -406,7 +406,7 @@ func TestInitConfigAlreadyExists(t *testing.T) {
 
 func TestInitConfigNilRegistry(t *testing.T) {
 	dir := t.TempDir()
-	path, err := InitConfig(dir, nil)
+	path, err := InitConfig(dir, nil, "")
 	if err != nil {
 		t.Fatalf("InitConfig with nil registry failed: %v", err)
 	}
@@ -416,6 +416,59 @@ func TestInitConfigNilRegistry(t *testing.T) {
 	}
 	if !contains(string(content), "custom_rules") {
 		t.Error("expected custom_rules template even with nil registry")
+	}
+}
+
+func TestInitConfigWithProfile(t *testing.T) {
+	dir := t.TempDir()
+	reg := buildTestRegistry()
+
+	// Test audit profile — everything should be inform
+	path, err := InitConfig(dir, reg, "audit")
+	if err != nil {
+		t.Fatalf("InitConfig with audit profile failed: %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	str := string(content)
+	if !contains(str, "Profile: audit") {
+		t.Error("expected profile header in generated config")
+	}
+	// In audit mode, rules should be uncommented with inform
+	if !contains(str, ": inform") {
+		t.Error("expected uncommented inform rules in audit profile")
+	}
+}
+
+func TestInitConfigWithInvalidProfile(t *testing.T) {
+	dir := t.TempDir()
+	reg := buildTestRegistry()
+
+	_, err := InitConfig(dir, reg, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for invalid profile name")
+	}
+}
+
+func TestProfilesList(t *testing.T) {
+	profiles := Profiles()
+	if len(profiles) < 5 {
+		t.Fatalf("expected at least 5 profiles, got %d", len(profiles))
+	}
+	expected := []string{"starter", "strict", "audit", "framework-heavy", "ci-blocking", "enterprise"}
+	for _, exp := range expected {
+		found := false
+		for _, p := range profiles {
+			if p.Name == exp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing profile: %s", exp)
+		}
 	}
 }
 
@@ -486,4 +539,145 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- Edge case tests ---
+
+func TestLoadEmptyYAML(t *testing.T) {
+	cfg, err := LoadFromBytes([]byte(""))
+	if err != nil {
+		t.Fatalf("empty YAML should not error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if len(cfg.RuleModes) != 0 {
+		t.Errorf("expected 0 rule modes for empty YAML")
+	}
+}
+
+func TestLoadOnlyRulesSection(t *testing.T) {
+	cfg, err := LoadFromBytes([]byte("rules:\n  G201: block\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GetMode("G201") != ModeBlock {
+		t.Errorf("expected G201 = block")
+	}
+	if cfg.HasCustomRules() {
+		t.Error("should not have custom rules")
+	}
+	if cfg.HasFrameworkConfig() {
+		t.Error("should not have framework config")
+	}
+}
+
+func TestNilConfigGetMode(t *testing.T) {
+	var cfg *Config
+	if cfg.GetMode("G201") != ModeDefault {
+		t.Error("nil config should return ModeDefault")
+	}
+}
+
+func TestResolverNilConfigAndRegistry(t *testing.T) {
+	r := NewResolver(nil, nil)
+	entry := r.Resolve("ANY-RULE")
+	if entry.Mode != ModeInform {
+		t.Errorf("expected inform for unknown rule with nil config and registry, got %s", entry.Mode)
+	}
+}
+
+func TestResolverFilterFindings(t *testing.T) {
+	cfg := &Config{
+		RuleModes: map[string]Mode{
+			"G104": ModeOff,
+			"G201": ModeBlock,
+		},
+	}
+	r := NewResolver(cfg, buildTestRegistry())
+
+	findings := []FindingLike{
+		fakeFinding{"G201"},
+		fakeFinding{"G104"},
+		fakeFinding{"G304"},
+		fakeFinding{""}, // no rule ID — always kept
+	}
+
+	kept, suppressed := r.FilterFindings(findings)
+	if len(suppressed) != 1 {
+		t.Errorf("expected 1 suppressed, got %d", len(suppressed))
+	}
+	if len(kept) != 3 {
+		t.Errorf("expected 3 kept, got %d", len(kept))
+	}
+}
+
+func TestModeString(t *testing.T) {
+	tests := []struct {
+		mode Mode
+		want string
+	}{
+		{ModeBlock, "block"},
+		{ModeInform, "inform"},
+		{ModeOff, "off"},
+		{ModeDefault, "default"},
+	}
+	for _, tt := range tests {
+		if got := ModeString(tt.mode); got != tt.want {
+			t.Errorf("ModeString(%q) = %s, want %s", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestBackwardCompatibility(t *testing.T) {
+	// Old format with custom_rules at top level (no rules: section)
+	yaml := []byte(`
+custom_rules:
+  - id: CUSTOM-001
+    title: Test
+    pattern: 'test'
+    languages: [go]
+    severity: low
+
+frameworks:
+  auto_detect: true
+`)
+	cfg, err := LoadFromBytes(yaml)
+	if err != nil {
+		t.Fatalf("old format should parse: %v", err)
+	}
+	if !cfg.HasCustomRules() {
+		t.Error("expected custom rules to be present")
+	}
+	if !cfg.HasFrameworkConfig() {
+		t.Error("expected framework config to be present")
+	}
+	if len(cfg.RuleModes) != 0 {
+		t.Error("expected 0 rule modes in old format")
+	}
+}
+
+func TestResolveMany(t *testing.T) {
+	cfg := &Config{RuleModes: map[string]Mode{"G201": ModeBlock, "G104": ModeOff}}
+	r := NewResolver(cfg, buildTestRegistry())
+
+	entries := r.ResolveMany([]string{"G201", "G104", "G304"})
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+	if entries[0].Mode != ModeBlock {
+		t.Errorf("G201: expected block, got %s", entries[0].Mode)
+	}
+	if entries[1].Mode != ModeOff {
+		t.Errorf("G104: expected off, got %s", entries[1].Mode)
+	}
+}
+
+// fakeFinding implements FindingLike for testing.
+type fakeFinding struct {
+	ruleID string
+}
+
+func (f fakeFinding) GetRuleID() string {
+	return f.ruleID
 }

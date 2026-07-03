@@ -109,6 +109,10 @@ type RuleModeEntry struct {
 // It is intentionally separate from the customrules.Policy to keep mode
 // governance decoupled from custom rule definitions.
 type Config struct {
+	// SchemaVersion is the config schema version (B12.6). If empty, the
+	// loader assumes "1.0" and emits a warning via validate.
+	SchemaVersion string `yaml:"schema_version"`
+
 	// RuleModes maps rule IDs to their explicit mode (block/inform/off).
 	// Rules not in this map use maturity-based defaults.
 	RuleModes map[string]Mode `yaml:"rules"`
@@ -124,6 +128,13 @@ type Config struct {
 
 	// FrameworkOverrides extends official framework packs (unchanged).
 	FrameworkOverrides map[string]rawFrameworkOverride `yaml:"framework_overrides"`
+
+	// FrameworkExtensions is the B11 extension point. It allows teams to
+	// add organization-specific sources, sinks, sanitizers, and safe patterns
+	// to official framework packs. Unlike framework_overrides, extensions
+	// support CWE metadata on custom sinks and safe_patterns for suppression.
+	// Both sections are merged into the same pack override pipeline.
+	FrameworkExtensions map[string]rawFrameworkExtension `yaml:"framework_extensions"`
 }
 
 // rawRule is an alias for the customrules YAML rule, kept as raw yaml.Node
@@ -177,6 +188,32 @@ type rawFrameworkSanitizer struct {
 	Regex string `yaml:"regex"`
 }
 
+// rawFrameworkExtension is the B11 extension schema. It extends the
+// framework_overrides schema with safe_patterns and CWE metadata on sinks.
+type rawFrameworkExtension struct {
+	CustomSources    []rawFrameworkSource    `yaml:"custom_sources"`
+	CustomSinks      []rawExtensionSink      `yaml:"custom_sinks"`
+	CustomSanitizers []rawFrameworkSanitizer `yaml:"custom_sanitizers"`
+	SafePatterns     []rawSafePattern        `yaml:"safe_patterns"`
+}
+
+// rawExtensionSink extends rawFrameworkSink with CWE/category/severity so
+// custom sinks can declare what vulnerability category they represent.
+type rawExtensionSink struct {
+	Func     string `yaml:"func"`
+	ArgIndex int    `yaml:"arg_index"`
+	CWE      string `yaml:"cwe"`
+	Category string `yaml:"category"`
+	Severity string `yaml:"severity"`
+}
+
+// rawSafePattern declares a pattern that suppresses a finding when found
+// on the same line (e.g., an internal auth helper that validates ownership).
+type rawSafePattern struct {
+	Pattern string `yaml:"pattern"`
+	Reason  string `yaml:"reason"`
+}
+
 // LoadFromFile loads a rules config from a YAML file.
 func LoadFromFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -204,6 +241,9 @@ func LoadFromBytes(data []byte) (*Config, error) {
 	if cfg.FrameworkOverrides == nil {
 		cfg.FrameworkOverrides = make(map[string]rawFrameworkOverride)
 	}
+	if cfg.FrameworkExtensions == nil {
+		cfg.FrameworkExtensions = make(map[string]rawFrameworkExtension)
+	}
 	return &cfg, nil
 }
 
@@ -215,6 +255,7 @@ func LoadFromDir(dir string) (*Config, error) {
 		return &Config{
 			RuleModes:          make(map[string]Mode),
 			FrameworkOverrides: make(map[string]rawFrameworkOverride),
+			FrameworkExtensions: make(map[string]rawFrameworkExtension),
 		}, nil
 	}
 	return LoadFromFile(path)
@@ -246,7 +287,21 @@ func (c *Config) HasFrameworkConfig() bool {
 	return c.Frameworks.AutoDetect != nil ||
 		len(c.Frameworks.Enabled) > 0 ||
 		len(c.Frameworks.Disabled) > 0 ||
-		len(c.FrameworkOverrides) > 0
+		len(c.FrameworkOverrides) > 0 ||
+		len(c.FrameworkExtensions) > 0
+}
+
+// HasFrameworkExtensions returns true if the config contains framework_extensions.
+func (c *Config) HasFrameworkExtensions() bool {
+	return len(c.FrameworkExtensions) > 0
+}
+
+// GetSchemaVersion returns the config schema version, defaulting to "1.0" if unset.
+func (c *Config) GetSchemaVersion() string {
+	if c.SchemaVersion == "" {
+		return "1.0"
+	}
+	return c.SchemaVersion
 }
 
 // AllConfiguredRuleIDs returns the rule IDs that have an explicit mode set,

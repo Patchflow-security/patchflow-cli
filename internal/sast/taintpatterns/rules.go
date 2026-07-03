@@ -2,6 +2,18 @@ package taintpatterns
 
 import "github.com/Patchflow-security/patchflow-cli/internal/analysis"
 
+// javaAnnotationSources are Spring MVC annotation-based sources shared across
+// all Java taint rules. These enable the taint engine to recognize
+// @RequestParam, @PathVariable, @RequestBody, etc. as taint entry points.
+var javaAnnotationSources = []SourcePattern{
+	{FuncName: "@RequestParam", Annotation: "@RequestParam"},
+	{FuncName: "@PathVariable", Annotation: "@PathVariable"},
+	{FuncName: "@RequestBody", Annotation: "@RequestBody"},
+	{FuncName: "@RequestHeader", Annotation: "@RequestHeader"},
+	{FuncName: "@CookieValue", Annotation: "@CookieValue"},
+	{FuncName: "@ModelAttribute", Annotation: "@ModelAttribute"},
+}
+
 // builtInRules returns the built-in taint pattern rules for Python and JS/TS.
 // These rules define source-sink pairs for common injection vulnerabilities.
 func builtInRules() []Rule {
@@ -9,7 +21,7 @@ func builtInRules() []Rule {
 		// === Python taint rules ===
 		{
 			ID:          "TP-PY001",
-			Title:       "SQL injection (tainted data in cursor.execute)",
+			Title:       "SQL injection (tainted data in cursor.execute / SQLAlchemy text())",
 			Description: "User input flows into a SQL query without parameterization. Use parameterized queries instead of string concatenation.",
 			Severity:    analysis.SeverityHigh,
 			Confidence:  analysis.ConfidenceMedium,
@@ -31,6 +43,10 @@ func builtInRules() []Rule {
 				{FuncName: "execute", ArgIndex: 0},
 				{FuncName: "executemany", ArgIndex: 0},
 				{FuncName: "executescript", ArgIndex: 0},
+				// SQLAlchemy text() — raw SQL text clause. When tainted data
+				// flows into text(), it's SQL injection. The safe pattern is
+				// text("SELECT ... WHERE id = :id") with bound parameters.
+				{FuncName: "text", ArgIndex: 0},
 			},
 		},
 		{
@@ -657,13 +673,13 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-89",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getParameterValues", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
 				{FuncName: "request.getQueryString", IsSubscript: false},
 				{FuncName: "request.getInputStream", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "execute", ArgIndex: 0},
 				{FuncName: "executeQuery", ArgIndex: 0},
@@ -682,10 +698,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-78",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "exec", ArgIndex: 0},
 				{FuncName: "start", ArgIndex: 0},
@@ -699,10 +715,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-22",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "File", ArgIndex: 0},
 				{FuncName: "Paths.get", ArgIndex: 0},
@@ -720,10 +736,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-918",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "openConnection", ArgIndex: 0},
 				{FuncName: "send", ArgIndex: 0},
@@ -740,10 +756,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-502",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getInputStream", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "readObject", ArgIndex: 0},
 				{FuncName: "readUnshared", ArgIndex: 0},
@@ -757,10 +773,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-79",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "write", ArgIndex: 0},
 				{FuncName: "println", ArgIndex: 0},
@@ -776,10 +792,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-601",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "sendRedirect", ArgIndex: 0},
 			},
@@ -792,10 +808,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-611",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getInputStream", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "parse", ArgIndex: 0},
 			},
@@ -808,10 +824,10 @@ func builtInRules() []Rule {
 			Confidence:  analysis.ConfidenceMedium,
 			Language:    "java",
 			CWEID:       "CWE-90",
-			Sources: []SourcePattern{
+			Sources: append([]SourcePattern{
 				{FuncName: "request.getParameter", IsSubscript: false},
 				{FuncName: "request.getHeader", IsSubscript: false},
-			},
+			}, javaAnnotationSources...),
 			Sinks: []SinkPattern{
 				{FuncName: "search", ArgIndex: -1},
 			},

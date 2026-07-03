@@ -25,4 +25,7 @@ var Sanitizers = []frameworks.SanitizerPattern{
 	{FuncName: "sanitize_sql_for"},
 	// Allowlisted redirect target.
 	{FuncName: "url_for"},
+	// Shell escaping for command injection.
+	{FuncName: "Shellwords.escape"},
+	{FuncName: "Shellwords.shellescape"},
 }

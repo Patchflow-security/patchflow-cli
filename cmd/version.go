@@ -13,15 +13,7 @@ var versionCmd = &cobra.Command{
 		jsonMode, _ := cmd.Flags().GetBool("json")
 
 		if jsonMode {
-			return formatter.Print(struct {
-				Version string `json:"version"`
-				Commit  string `json:"commit"`
-				Date    string `json:"date"`
-			}{
-				Version: version.Version,
-				Commit:  version.Commit,
-				Date:    version.Date,
-			})
+			return formatter.Print(version.FullInfo())
 		}
 		return formatter.Print(version.BuildInfo())
 	},

@@ -35,18 +35,20 @@ type callListRule struct {
 	what  string
 	sev   Severity
 	conf  Confidence
+	cwe   string
 	calls CallList
 }
 
 func (r *callListRule) What() string      { return r.what }
 func (r *callListRule) SeverityVal() Severity { return r.sev }
 
-func newCallListRule(id, what string, sev Severity, conf Confidence) callListRule {
+func newCallListRule(id, what string, sev Severity, conf Confidence, cwe string) callListRule {
 	return callListRule{
 		id:    id,
 		what:  what,
 		sev:   sev,
 		conf:  conf,
+		cwe:   cwe,
 		calls: NewCallList(),
 	}
 }
@@ -67,7 +69,7 @@ func (r *callListRule) Nodes() []ast.Node { return []ast.Node{(*ast.CallExpr)(ni
 
 func (r *callListRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 	if r.calls.ContainsPkgCallExpr(n, ctx) != nil {
-		return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+		return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 	}
 	return nil, nil
 }
@@ -103,7 +105,7 @@ func (r *sqlStrFormat) Match(n ast.Node, ctx *Context) (*Finding, error) {
 
 	for _, arg := range callExpr.Args {
 		if str, err := GetStringRecursive(arg); err == nil && r.matchPatterns(str) {
-			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+			return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 		}
 	}
 	return nil, nil
@@ -115,7 +117,7 @@ func (s *sqlStrFormat) matchPatterns(str string) bool {
 
 func newSQLStrFormat() Rule {
 	r := &sqlStrFormat{
-		callListRule: newCallListRule("G201", "SQL query construction using format string", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G201", "SQL query construction using format string", SeverityMedium, ConfidenceHigh, "CWE-89"),
 	}
 	r.AddAll("fmt", "Sprintf", "Printf")
 	return r
@@ -133,14 +135,14 @@ func (r *sqlStrConcat) Match(n ast.Node, ctx *Context) (*Finding, error) {
 		for _, expr := range stmt.Rhs {
 			if call, ok := expr.(*ast.CallExpr); ok {
 				if r.checkQuery(call, ctx) {
-					return makeFinding(r.id, r.what, r.sev, r.conf, stmt, ctx), nil
+					return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, stmt, ctx), nil
 				}
 			}
 		}
 	case *ast.ExprStmt:
 		if call, ok := stmt.X.(*ast.CallExpr); ok {
 			if r.checkQuery(call, ctx) {
-				return makeFinding(r.id, r.what, r.sev, r.conf, stmt, ctx), nil
+				return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, stmt, ctx), nil
 			}
 		}
 	}
@@ -183,7 +185,7 @@ func (r *sqlStrConcat) Nodes() []ast.Node {
 
 func newSQLStrConcat() Rule {
 	r := &sqlStrConcat{
-		callListRule: newCallListRule("G202", "SQL query construction using string concatenation", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G202", "SQL query construction using string concatenation", SeverityMedium, ConfidenceHigh, "CWE-89"),
 	}
 	r.AddAll("*database/sql.DB", "Exec", "Query", "QueryRow", "Prepare")
 	r.AddAll("*database/sql.DB", "ExecContext", "QueryContext", "QueryRowContext", "PrepareContext")
@@ -207,7 +209,7 @@ func (r *subprocessRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 
 	for _, arg := range node.Args {
 		if !TryResolve(arg, ctx) {
-			return makeFinding(r.id, "Subprocess launched with variable", SeverityMedium, ConfidenceHigh, n, ctx), nil
+			return makeFinding(r.id, "Subprocess launched with variable", SeverityMedium, ConfidenceHigh, r.cwe, n, ctx), nil
 		}
 	}
 	return nil, nil
@@ -215,7 +217,7 @@ func (r *subprocessRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 
 func newSubprocess() Rule {
 	r := &subprocessRule{
-		callListRule: newCallListRule("G204", "Subprocess launched with variable", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G204", "Subprocess launched with variable", SeverityMedium, ConfidenceHigh, "CWE-78"),
 	}
 	r.Add("os/exec", "Command")
 	r.Add("os/exec", "CommandContext")
@@ -230,7 +232,7 @@ func newSubprocess() Rule {
 // --- G103: Use of unsafe block ---
 
 func newUsingUnsafe() Rule {
-	r := newCallListRule("G103", "Use of unsafe calls should be audited", SeverityLow, ConfidenceHigh)
+	r := newCallListRule("G103", "Use of unsafe calls should be audited", SeverityLow, ConfidenceHigh, "CWE-758")
 	r.AddAll("unsafe", "Pointer", "String", "StringData", "Slice", "SliceData")
 	return &r
 }
@@ -242,6 +244,7 @@ type filePermissionsRule struct {
 	what  string
 	sev   Severity
 	conf  Confidence
+	cwe   string
 	mode  int64
 	pkgs  []string
 	calls []string
@@ -261,7 +264,7 @@ func (r *filePermissionsRule) Match(n ast.Node, ctx *Context) (*Finding, error) 
 			}
 			modeArg := callExpr.Args[len(callExpr.Args)-1]
 			if mode, err := GetInt(modeArg); err == nil && !modeIsSubset(mode, r.mode) || isOsPerm(modeArg) {
-				return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+				return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 			}
 		}
 	}
@@ -274,6 +277,7 @@ func newMkdirPermissions() Rule {
 		what:  "Expect directory permissions to be 0750 or less",
 		sev:   SeverityMedium,
 		conf:  ConfidenceHigh,
+		cwe:   "CWE-276",
 		mode:  0o750,
 		pkgs:  []string{"os"},
 		calls: []string{"Mkdir", "MkdirAll"},
@@ -288,6 +292,7 @@ func newFilePermissions() Rule {
 		what:  "Expect file permissions to be 0600 or less",
 		sev:   SeverityMedium,
 		conf:  ConfidenceHigh,
+		cwe:   "CWE-276",
 		mode:  0o600,
 		pkgs:  []string{"os"},
 		calls: []string{"OpenFile", "Chmod"},
@@ -302,6 +307,7 @@ func newWritePermissions() Rule {
 		what:  "Expect WriteFile permissions to be 0600 or less",
 		sev:   SeverityMedium,
 		conf:  ConfidenceHigh,
+		cwe:   "CWE-276",
 		mode:  0o600,
 		pkgs:  []string{"io/ioutil", "os"},
 		calls: []string{"WriteFile"},
@@ -321,7 +327,7 @@ func (r *badTempFileRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 	}
 	if len(callExpr.Args) > 0 {
 		if str, err := GetString(callExpr.Args[0]); err == nil && str != "" {
-			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+			return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 		}
 	}
 	return nil, nil
@@ -329,7 +335,7 @@ func (r *badTempFileRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 
 func newBadTempFile() Rule {
 	r := &badTempFileRule{
-		callListRule: newCallListRule("G303", "Creating tempfile using a predictable path", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G303", "Creating tempfile using a predictable path", SeverityMedium, ConfidenceHigh, "CWE-377"),
 	}
 	r.AddAll("os", "Create", "CreateTemp")
 	r.AddAll("io/ioutil", "TempFile")
@@ -354,10 +360,10 @@ func (r *readFileRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 		}
 		// High confidence: argument is a function parameter (taint source).
 		if isFunctionParam(arg, ctx) {
-			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+			return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 		}
 		// Non-constant, non-parameter path — demote to Low (audit-only).
-		return makeFinding(r.id, r.what, SeverityLow, ConfidenceLow, n, ctx), nil
+		return makeFinding(r.id, r.what, SeverityLow, ConfidenceLow, r.cwe, n, ctx), nil
 	}
 	return nil, nil
 }
@@ -383,7 +389,7 @@ func isFunctionParam(expr ast.Expr, ctx *Context) bool {
 
 func newReadFile() Rule {
 	r := &readFileRule{
-		callListRule: newCallListRule("G304", "File path provided as taint input", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G304", "File path provided as taint input", SeverityMedium, ConfidenceHigh, "CWE-22"),
 	}
 	r.AddAll("os", "Open", "OpenFile", "ReadFile")
 	r.AddAll("io/ioutil", "ReadFile")
@@ -393,7 +399,7 @@ func newReadFile() Rule {
 // --- G305: File path traversal when extracting zip archive ---
 
 func newPathTraversal() Rule {
-	r := newCallListRule("G305", "File path traversal when extracting zip archive", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G305", "File path traversal when extracting zip archive", SeverityMedium, ConfidenceHigh, "CWE-22")
 	r.AddAll("archive/zip", "OpenReader", "NewReader")
 	r.AddAll("archive/tar", "OpenReader", "NewReader")
 	return &r
@@ -402,7 +408,7 @@ func newPathTraversal() Rule {
 // --- G401: Detect the usage of MD5 or SHA1 ---
 
 func newWeakCryptoHash() Rule {
-	r := newCallListRule("G401", "Use of weak cryptographic primitive", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G401", "Use of weak cryptographic primitive", SeverityMedium, ConfidenceHigh, "CWE-327")
 	r.AddAll("crypto/md5", "New", "Sum")
 	r.AddAll("crypto/sha1", "New", "Sum")
 	return &r
@@ -411,7 +417,7 @@ func newWeakCryptoHash() Rule {
 // --- G405: Detect the usage of DES or RC4 ---
 
 func newWeakCryptoEncryption() Rule {
-	r := newCallListRule("G405", "Use of weak cryptographic primitive", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G405", "Use of weak cryptographic primitive", SeverityMedium, ConfidenceHigh, "CWE-327")
 	r.AddAll("crypto/des", "NewCipher", "NewTripleDESCipher")
 	r.Add("crypto/rc4", "NewCipher")
 	return &r
@@ -420,7 +426,7 @@ func newWeakCryptoEncryption() Rule {
 // --- G404: Insecure random number source ---
 
 func newWeakRand() Rule {
-	r := newCallListRule("G404", "Use of weak random number generator (math/rand instead of crypto/rand)", SeverityMedium, ConfidenceMedium)
+	r := newCallListRule("G404", "Use of weak random number generator (math/rand instead of crypto/rand)", SeverityMedium, ConfidenceMedium, "CWE-338")
 	r.AddAll("math/rand", "New", "Read", "Float32", "Float64", "Int", "Int31", "Int31n",
 		"Int63", "Int63n", "Intn", "NormFloat64", "Uint32", "Uint64")
 	r.AddAll("math/rand/v2", "New", "Float32", "Float64", "Int", "Int32", "Int32N",
@@ -444,12 +450,12 @@ func (r *bindToAllInterfacesRule) Match(n ast.Node, ctx *Context) (*Finding, err
 		arg := callExpr.Args[1]
 		if bl, ok := arg.(*ast.BasicLit); ok {
 			if val, err := GetString(bl); err == nil && r.pattern.MatchString(val) {
-				return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+				return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 			}
 		} else if ident, ok := arg.(*ast.Ident); ok {
 			for _, val := range GetIdentStringValues(ident) {
 				if r.pattern.MatchString(val) {
-					return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+					return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 				}
 			}
 		}
@@ -459,7 +465,7 @@ func (r *bindToAllInterfacesRule) Match(n ast.Node, ctx *Context) (*Finding, err
 
 func newBindToAllInterfaces() Rule {
 	r := &bindToAllInterfacesRule{
-		callListRule: newCallListRule("G102", "Binds to all network interfaces", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G102", "Binds to all network interfaces", SeverityMedium, ConfidenceHigh, "CWE-605"),
 		pattern:      regexp.MustCompile(`^(0\.0\.0\.0|:).*$`),
 	}
 	r.Add("net", "Listen")
@@ -480,7 +486,7 @@ func (r *ssrfRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 	}
 	if len(callExpr.Args) > 0 {
 		if !TryResolve(callExpr.Args[0], ctx) {
-			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+			return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 		}
 	}
 	return nil, nil
@@ -488,7 +494,7 @@ func (r *ssrfRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 
 func newSSRF() Rule {
 	r := &ssrfRule{
-		callListRule: newCallListRule("G107", "URL provided to HTTP request as taint input", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G107", "URL provided to HTTP request as taint input", SeverityMedium, ConfidenceHigh, "CWE-918"),
 	}
 	r.AddAll("net/http", "Get", "Post", "Head", "Get", "PostForm")
 	return r
@@ -497,7 +503,7 @@ func newSSRF() Rule {
 // --- G114: Use of net/http serve function without timeouts ---
 
 func newHTTPServeWithoutTimeouts() Rule {
-	r := newCallListRule("G114", "Use of net/http serve function that has no support for setting timeouts", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G114", "Use of net/http serve function that has no support for setting timeouts", SeverityMedium, ConfidenceHigh, "")
 	r.AddAll("net/http", "Serve", "ServeTLS", "ListenAndServe", "ListenAndServeTLS")
 	return &r
 }
@@ -509,6 +515,7 @@ type hardcodedCredentialsRule struct {
 	what         string
 	sev          Severity
 	conf         Confidence
+	cwe          string
 	pattern      *regexp.Regexp
 }
 
@@ -533,7 +540,7 @@ func (r *hardcodedCredentialsRule) Match(n ast.Node, ctx *Context) (*Finding, er
 							if isConfigKeyValue(val) || isMockContext(ctx) {
 								continue
 							}
-							return makeFinding(r.id, fmt.Sprintf("%s: hardcoded credential in variable '%s'", r.what, ident.Name), r.sev, r.conf, n, ctx), nil
+							return makeFinding(r.id, fmt.Sprintf("%s: hardcoded credential in variable '%s'", r.what, ident.Name), r.sev, r.conf, r.cwe, n, ctx), nil
 						}
 					}
 				}
@@ -547,7 +554,7 @@ func (r *hardcodedCredentialsRule) Match(n ast.Node, ctx *Context) (*Finding, er
 						if isConfigKeyValue(str) || isMockContext(ctx) {
 							continue
 						}
-						return makeFinding(r.id, fmt.Sprintf("%s: hardcoded credential in variable '%s'", r.what, ident.Name), r.sev, r.conf, n, ctx), nil
+						return makeFinding(r.id, fmt.Sprintf("%s: hardcoded credential in variable '%s'", r.what, ident.Name), r.sev, r.conf, r.cwe, n, ctx), nil
 					}
 				}
 			}
@@ -600,6 +607,7 @@ func newHardcodedCredentials() Rule {
 		what:    "Hardcoded credentials",
 		sev:     SeverityHigh,
 		conf:    ConfidenceHigh,
+		cwe:     "CWE-798",
 		pattern: credentialPattern,
 	}
 }
@@ -611,6 +619,7 @@ type blocklistedImportsRule struct {
 	what      string
 	sev       Severity
 	conf      Confidence
+	cwe       string
 	blocklist map[string]string // import path -> description
 }
 
@@ -630,7 +639,7 @@ func (r *blocklistedImportsRule) Match(n ast.Node, ctx *Context) (*Finding, erro
 		return nil, nil
 	}
 	if desc, found := r.blocklist[path]; found {
-		return makeFinding(r.id, fmt.Sprintf("%s: %s", r.what, desc), r.sev, r.conf, n, ctx), nil
+		return makeFinding(r.id, fmt.Sprintf("%s: %s", r.what, desc), r.sev, r.conf, r.cwe, n, ctx), nil
 	}
 	return nil, nil
 }
@@ -641,6 +650,7 @@ func newBlocklistedImports() Rule {
 		what: "Import blocklist: weak crypto",
 		sev:  SeverityMedium,
 		conf: ConfidenceHigh,
+		cwe:  "CWE-327",
 		blocklist: map[string]string{
 			"crypto/md5":                      "crypto/md5 is weak",
 			"crypto/des":                      "crypto/des is weak",
@@ -668,7 +678,7 @@ func (r *templateCheckRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 	for _, arg := range callExpr.Args {
 		typeStr := resolveTypeOf(arg, ctx)
 		if typeStr == "template.HTML" || typeStr == "template.JS" || typeStr == "template.URL" {
-			return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+			return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 		}
 	}
 	return nil, nil
@@ -676,7 +686,7 @@ func (r *templateCheckRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 
 func newTemplateCheck() Rule {
 	r := &templateCheckRule{
-		callListRule: newCallListRule("G203", "Use of unescaped data in HTML templates", SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G203", "Use of unescaped data in HTML templates", SeverityMedium, ConfidenceHigh, ""),
 	}
 	r.AddAll("html/template", "HTML", "JS", "URL", "HTMLAttr")
 	return r
@@ -685,7 +695,7 @@ func newTemplateCheck() Rule {
 // --- G106: SSH InsecureIgnoreHostKey ---
 
 func newSSHHostKey() Rule {
-	r := newCallListRule("G106", "Use of ssh.InsecureIgnoreHostKey function", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G106", "Use of ssh.InsecureIgnoreHostKey function", SeverityMedium, ConfidenceHigh, "CWE-295")
 	r.Add("golang.org/x/crypto/ssh", "InsecureIgnoreHostKey")
 	return &r
 }
@@ -693,7 +703,7 @@ func newSSHHostKey() Rule {
 // --- G108: Profiling endpoint automatically exposed ---
 
 func newPprofCheck() Rule {
-	r := newCallListRule("G108", "Profiling endpoint is automatically exposed", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G108", "Profiling endpoint is automatically exposed", SeverityMedium, ConfidenceHigh, "CWE-200")
 	r.Add("net/http/pprof", "Index")
 	return &r
 }
@@ -705,6 +715,7 @@ type trojanSourceRule struct {
 	what   string
 	sev    Severity
 	conf   Confidence
+	cwe    string
 	bidiRe *regexp.Regexp
 }
 
@@ -726,7 +737,7 @@ func (r *trojanSourceRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 		return nil, nil
 	}
 	if r.bidiRe.MatchString(str) {
-		return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+		return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 	}
 	return nil, nil
 }
@@ -737,6 +748,7 @@ func newTrojanSource() Rule {
 		what:    "Potential Trojan Source attack: bidirectional Unicode characters detected",
 		sev:     SeverityMedium,
 		conf:    ConfidenceHigh,
+		cwe:     "",
 		bidiRe:  bidiUnicodeRe,
 	}
 }

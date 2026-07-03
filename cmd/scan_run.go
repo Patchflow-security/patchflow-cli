@@ -61,6 +61,7 @@ var (
 	scanFramework         []string
 	scanDisableFramework  []string
 	scanRulesConfigPath   string
+	scanConfigPath        string
 )
 
 var scanRealCmd = &cobra.Command{
@@ -86,7 +87,8 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanOutput, "output", "", "Write report to file (stdout if omitted)")
 	scanRealCmd.Flags().BoolVar(&scanChangedOnly, "changed-only", false, "Only analyze changed files")
 	scanRealCmd.Flags().BoolVar(&scanShowSuppressed, "show-suppressed", false, "Show findings suppressed by //patchflow:ignore comments")
-	scanRealCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file (default: .patchflow/rules.yaml)")
+	scanRealCmd.Flags().StringVar(&scanConfigPath, "config", "", "Path to .patchflow/rules.yaml (unified config: custom rules, framework extensions, rule modes)")
+	scanRealCmd.Flags().StringVar(&scanRulesPath, "rules", "", "Path to custom rules YAML file (legacy alias for --config; default: .patchflow/rules.yaml)")
 	scanRealCmd.Flags().BoolVar(&scanIncludeTests, "include-tests", false, "Include test files in SAST analysis")
 	scanRealCmd.Flags().BoolVar(&scanNoGitignore, "no-gitignore", false, "Do not respect .gitignore patterns (scan all files)")
 	scanRealCmd.Flags().BoolVar(&scanIncremental, "incremental", false, "Only re-scan files changed since last scan (uses global cache sast_state.json)")
@@ -104,7 +106,7 @@ func init() {
 	scanRealCmd.Flags().StringVar(&scanLicensePolicy, "license-policy", "", "License policy: fail on restricted licenses (e.g., 'gpl,agpl,proprietary,unknown')")
 	scanRealCmd.Flags().StringSliceVar(&scanFramework, "framework", nil, "Enable specific framework rule packs (can be repeated, or 'auto' for detection-based activation)")
 	scanRealCmd.Flags().StringSliceVar(&scanDisableFramework, "disable-framework", nil, "Disable specific framework rule packs (can be repeated; takes precedence over --framework)")
-	scanRealCmd.Flags().StringVar(&scanRulesConfigPath, "rules-config", "", "Path to rules config YAML for block/inform/off mode overrides (default: .patchflow/rules.yaml)")
+	scanRealCmd.Flags().StringVar(&scanRulesConfigPath, "rules-config", "", "Path to rules config YAML for block/inform/off mode overrides (legacy alias for --config; default: .patchflow/rules.yaml)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -112,6 +114,18 @@ func init() {
 func runScanReal(cmd *cobra.Command, _ []string) error {
 	formatter := FormatterFromContext(cmd.Context())
 	ctx := cmd.Context()
+
+	// Unify config flags: --config sets both --rules and --rules-config.
+	// --rules and --rules-config are legacy aliases that still work
+	// independently for backward compatibility.
+	if scanConfigPath != "" {
+		if scanRulesPath == "" {
+			scanRulesPath = scanConfigPath
+		}
+		if scanRulesConfigPath == "" {
+			scanRulesConfigPath = scanConfigPath
+		}
+	}
 
 	// Determine scan mode for metadata. --since takes precedence over
 	// --changed-only, which takes precedence over a full scan.
@@ -458,6 +472,8 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		engineTimings = append(engineTimings, analysis.EngineTiming{
 			Engine: "sast", Duration: time.Since(sastStart), Findings: len(sastResult.Findings),
 		})
+		// Merge SAST runner's internal phase timings (framework_detection, dedup_grouping, etc.)
+		engineTimings = append(engineTimings, sastResult.EngineTimings...)
 		allFindings = append(allFindings, sastResult.Findings...)
 		analyzersRun = append(analyzersRun, sastResult.ToolsRun...)
 
@@ -538,6 +554,67 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			_ = formatter.Print("  Governance profile " + string(governanceProfile) + ": excluded " + strconv.Itoa(dropped) + " findings from inactive rules.")
 		}
 		allFindings = filtered
+	}
+
+	// 3c. Rule mode enforcement: load .patchflow/rules.yaml (or --rules-config)
+	//     and apply block/inform/off modes. Findings with mode=off are suppressed.
+	//     Findings with mode=block are marked as blocking (contribute to exit code).
+	//     Findings with mode=inform are kept but do not block. Rules not listed in
+	//     the config default to maturity-based behavior (stable+high → block, etc.).
+	var modeResolver *rulesconfig.Resolver
+	{
+		var rulesCfg *rulesconfig.Config
+		if scanRulesConfigPath != "" {
+			rulesCfg, err = rulesconfig.LoadFromFile(scanRulesConfigPath)
+			if err != nil {
+				return formatter.PrintError(fmt.Errorf("failed to load rules config: %w", err))
+			}
+		} else {
+			rulesCfg, err = rulesconfig.LoadFromDir(repo.Root)
+			if err != nil {
+				return formatter.PrintError(fmt.Errorf("failed to load rules config: %w", err))
+			}
+		}
+
+		// Warn about unknown rule IDs in the config (typos, renamed rules, etc.)
+		if rulesCfg != nil && len(rulesCfg.RuleModes) > 0 {
+			reg := buildGovernanceRegistry()
+			knownIDs := make(map[string]bool, reg.Count())
+			for _, meta := range reg.All() {
+				knownIDs[meta.ID] = true
+			}
+			unknown := rulesCfg.UnknownRules(knownIDs)
+			if len(unknown) > 0 && !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+				_ = formatter.Print("  Warning: unknown rule IDs in rules.yaml (will be ignored): " + strings.Join(unknown, ", "))
+			}
+		}
+
+		modeResolver = rulesconfig.NewResolver(rulesCfg, buildGovernanceRegistry())
+
+		// Apply mode filtering: drop "off" findings, enrich with mode/blocking fields
+		kept := make([]analysis.Finding, 0, len(allFindings))
+		suppressedCount := 0
+		for _, f := range allFindings {
+			if f.RuleID == "" {
+				// Findings without a rule ID (SCA, external tools) are not subject to mode enforcement
+				kept = append(kept, f)
+				continue
+			}
+			entry := modeResolver.Resolve(f.RuleID)
+			if entry.Mode == rulesconfig.ModeOff {
+				suppressedCount++
+				continue
+			}
+			f.Mode = string(entry.Mode)
+			f.Blocking = entry.Blocking
+			f.ModeSource = string(entry.Source)
+			f.Maturity = entry.Maturity
+			kept = append(kept, f)
+		}
+		if suppressedCount > 0 && !output.IsJSON(formatter) && !QuietFromContext(ctx) {
+			_ = formatter.Print("  Rule modes: suppressed " + strconv.Itoa(suppressedCount) + " findings (mode=off).")
+		}
+		allFindings = kept
 	}
 
 	// 4. Populate stable fingerprints on all findings before risk scoring,
@@ -717,7 +794,10 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// 8. Compute exit code. --fail-on uses the (possibly filtered) findings.
+	// 8. Compute exit code.
+	//    --fail-on uses severity threshold (highest priority).
+	//    If no --fail-on is set, use the Blocking field from rule mode enforcement:
+	//    any finding with mode=block contributes to a non-zero exit code.
 	exitCode := exitcode.Success
 	if scanFailOn != "" {
 		threshold := parseSeverityThreshold(scanFailOn)
@@ -733,6 +813,23 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			return &ExitError{
 				Code: exitCode,
 				Msg:  fmt.Sprintf("%d finding(s) at or above %s severity", blockingCount, scanFailOn),
+			}
+		}
+	} else {
+		// No --fail-on: use Blocking field from mode enforcement.
+		// Only block if at least one finding has mode=block.
+		blockingCount := 0
+		for _, f := range allFindings {
+			if f.Blocking {
+				blockingCount++
+			}
+		}
+		if blockingCount > 0 {
+			exitCode = exitcode.FindingsFound
+			result.ExitCode = exitCode
+			return &ExitError{
+				Code: exitCode,
+				Msg:  fmt.Sprintf("%d blocking finding(s) (mode=block)", blockingCount),
 			}
 		}
 	}

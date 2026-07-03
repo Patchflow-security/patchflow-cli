@@ -35,6 +35,7 @@ const (
 	NameNetHTTP     Name = "nethttp"
 	NameSinatra     Name = "sinatra"
 	NameWordPress   Name = "wordpress"
+	NameGraphQL     Name = "graphql"
 )
 
 // SignalKind describes how a detection signal is verified.

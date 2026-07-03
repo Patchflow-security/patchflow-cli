@@ -75,6 +75,24 @@ func Signatures() []Signature {
 			FileExtensions:     []string{".py"},
 			TemplateExtensions: []string{".html", ".jinja", ".jinja2"},
 		},
+		{
+			Name:       NameGraphQL,
+			Language:   "python",
+			MinSignals: 1,
+			Signals: []Signal{
+				{Kind: SignalFileContains, Path: "requirements.txt", Contains: "graphene"},
+				{Kind: SignalFileContains, Path: "requirements.txt", Contains: "ariadne"},
+				{Kind: SignalFileContains, Path: "requirements.txt", Contains: "strawberry-graphql"},
+				{Kind: SignalFileContains, Path: "requirements.txt", Contains: "graphql-core"},
+				{Kind: SignalFileContains, Path: "pyproject.toml", Contains: "graphene"},
+				{Kind: SignalFileContains, Path: "pyproject.toml", Contains: "ariadne"},
+				{Kind: SignalFileContains, Path: "pyproject.toml", Contains: "strawberry"},
+				{Kind: SignalGlobMatch, Glob: "**/*.graphql"},
+				{Kind: SignalGlobMatch, Glob: "**/schema.graphql"},
+			},
+			FileExtensions:     []string{".py"},
+			TemplateExtensions: []string{},
+		},
 
 		// === PHP ===
 		{

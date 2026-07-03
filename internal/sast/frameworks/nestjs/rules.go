@@ -54,5 +54,23 @@ func Rules() []frameworks.FrameworkRule {
 			Sanitizers:     Sanitizers,
 			Recommendation: "Validate redirect targets before redirecting from NestJS controllers.",
 		},
+		{
+			ID:             "PF-NESTJS-AUTH-001",
+			Framework:      "nestjs",
+			Language:       "typescript",
+			CWE:            "CWE-862",
+			Title:          "NestJS missing authorization: sensitive controller/route without auth guard",
+			Severity:       analysis.SeverityMedium,
+			Confidence:     analysis.ConfidenceLow,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".ts"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`@(Get|Post|Put|Delete|Patch)\s*\(\s*["'][^"']*(admin|delete|update|create|manage|user|account|password|settings)[^"']*["']`),
+			SafePatterns: []frameworks.SafePattern{
+				{Regex: regexp.MustCompile(`@UseGuards|@Roles`), Reason: "Auth guard or role decorator present on the route"},
+			},
+			Sanitizers:     Sanitizers,
+			Recommendation: "Add @UseGuards(AuthGuard) or @Roles() to sensitive controller routes. Consider using a global APP_GUARD for consistent authorization.",
+		},
 	}
 }

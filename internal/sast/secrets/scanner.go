@@ -353,6 +353,7 @@ func (s *Scanner) makeFinding(p SecretPattern, absPath, root string, lineNum int
 		FilePath:    relPath,
 		LineStart:   lineNum,
 		RuleID:      "SECRET-" + ruleSlug,
+		CWEID:       "CWE-798",
 		Evidence:    redactEvidence(line),
 		DetectedAt:  time.Now(),
 	}

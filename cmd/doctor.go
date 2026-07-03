@@ -5,6 +5,7 @@ import (
 
 	"github.com/Patchflow-security/patchflow-cli/internal/doctor"
 	"github.com/Patchflow-security/patchflow-cli/internal/output"
+	"github.com/Patchflow-security/patchflow-cli/pkg/version"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +27,7 @@ var doctorCmd = &cobra.Command{
 
 		fmt.Println("PatchFlow Doctor")
 		fmt.Println("================")
+		fmt.Printf("[OK] Version: %s (commit: %s, go: %s)\n", report.Version, report.Commit, report.GoVersion)
 
 		if report.GitVersion != "" {
 			fmt.Printf("[OK] Git installed: %s\n", report.GitVersion)
@@ -43,6 +45,34 @@ var doctorCmd = &cobra.Command{
 			fmt.Printf("[OK] Remote configured: %s\n", report.RemoteURL)
 		} else if report.IsGitRepo {
 			fmt.Println("[!]  No remote origin configured")
+		}
+
+		// Config checks (B12.8)
+		fmt.Println("\nConfiguration:")
+		if report.ConfigFound {
+			if report.ConfigValid {
+				fmt.Printf("[OK] Config found and valid: %s\n", report.ConfigPath)
+			} else {
+				fmt.Printf("[!]  Config found but invalid: %s (%s)\n", report.ConfigPath, report.ConfigError)
+			}
+		} else {
+			fmt.Println("[--] No .patchflow/rules.yaml found (run 'patchflow rules init' to create one)")
+		}
+
+		// Cache checks (B12.8)
+		fmt.Println("\nCache:")
+		if report.CacheWritable {
+			fmt.Printf("[OK] Cache directory writable: %s\n", report.CacheDir)
+		} else {
+			fmt.Printf("[X]  Cache directory not writable: %s\n", report.CacheDir)
+		}
+
+		// SARIF check (B12.8)
+		fmt.Println("\nOutput:")
+		if report.SARIFWritable {
+			fmt.Println("[OK] SARIF output writable")
+		} else {
+			fmt.Printf("[X]  SARIF output not writable: %s\n", report.SARIFError)
 		}
 
 		// Embedded scanners
@@ -68,6 +98,7 @@ var doctorCmd = &cobra.Command{
 			}
 		}
 
+		fmt.Printf("\nOverall status: %s\n", report.Status)
 		return nil
 	},
 }
@@ -75,3 +106,6 @@ var doctorCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(doctorCmd)
 }
+
+// Ensure version package is used (for go vet)
+var _ = version.Short

@@ -32,6 +32,7 @@ type noErrorCheckRule struct {
 	what      string
 	sev       Severity
 	conf      Confidence
+	cwe       string
 	whitelist CallList
 }
 
@@ -53,7 +54,7 @@ func (r *noErrorCheckRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 					continue
 				}
 				if id, ok := stmt.Lhs[pos].(*ast.Ident); ok && id.Name == "_" {
-					return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+					return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 				}
 			}
 		}
@@ -61,7 +62,7 @@ func (r *noErrorCheckRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 		if callExpr, ok := stmt.X.(*ast.CallExpr); ok && r.whitelist.ContainsCallExpr(stmt.X, ctx) == nil {
 			pos := returnsError(callExpr, ctx)
 			if pos >= 0 {
-				return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+				return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 			}
 		}
 	}
@@ -106,6 +107,7 @@ func newNoErrorCheck() Rule {
 		what:      "Errors unhandled",
 		sev:       SeverityInfo, // audit-only: unchecked errors are too noisy for default scan
 		conf:      ConfidenceHigh,
+		cwe:       "CWE-755",
 		whitelist: whitelist,
 	}
 }
@@ -117,6 +119,7 @@ type integerOverflowRule struct {
 	what      string
 	sev       Severity
 	conf      Confidence
+	cwe       string
 	calls     CallList
 	atoiVars  map[*types.Var]struct{}
 }
@@ -160,7 +163,7 @@ func (r *integerOverflowRule) Match(n ast.Node, ctx *Context) (*Finding, error) 
 							if obj := ctx.Info.ObjectOf(idt); obj != nil {
 								if v, ok := obj.(*types.Var); ok {
 									if _, tracked := r.atoiVars[v]; tracked {
-										return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+										return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 									}
 								}
 							}
@@ -179,6 +182,7 @@ func newIntegerOverflow() Rule {
 		what: "Potential integer overflow from strconv.Atoi result conversion to int16/32",
 		sev:  SeverityHigh,
 		conf: ConfidenceMedium,
+		cwe:  "CWE-190",
 		calls: NewCallList(),
 	}
 	r.calls.Add("strconv", "Atoi")
@@ -192,6 +196,7 @@ type decompressionBombRule struct {
 	what        string
 	sev         Severity
 	conf        Confidence
+	cwe         string
 	readerCalls CallList
 	copyCalls   CallList
 	readerVars  map[*types.Var]struct{}
@@ -237,7 +242,7 @@ func (r *decompressionBombRule) Match(n ast.Node, ctx *Context) (*Finding, error
 						if obj := ctx.Info.ObjectOf(idt); obj != nil {
 							if v, ok := obj.(*types.Var); ok {
 								if _, tracked := r.readerVars[v]; tracked {
-									return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+									return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 								}
 							}
 						}
@@ -263,6 +268,7 @@ func newDecompressionBomb() Rule {
 		what:        "Potential DoS vulnerability via decompression bomb",
 		sev:         SeverityMedium,
 		conf:        ConfidenceMedium,
+		cwe:         "CWE-409",
 		readerCalls: NewCallList(),
 		copyCalls:   NewCallList(),
 	}
@@ -285,6 +291,7 @@ type directoryTraversalRule struct {
 	what    string
 	sev     Severity
 	conf    Confidence
+	cwe     string
 	pattern *regexp.Regexp
 }
 
@@ -305,7 +312,7 @@ func (r *directoryTraversalRule) Match(n ast.Node, ctx *Context) (*Finding, erro
 				if x, ok3 := fun.X.(*ast.Ident); ok3 {
 					str := x.Name + "." + fun.Sel.Name + "(" + basiclit.Value + ")"
 					if r.pattern.MatchString(str) {
-						return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+						return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 					}
 				}
 			}
@@ -320,6 +327,7 @@ func newDirectoryTraversal() Rule {
 		what:    "Potential directory traversal",
 		sev:     SeverityMedium,
 		conf:    ConfidenceMedium,
+		cwe:     "CWE-22",
 		pattern: regexp.MustCompile(`http\.Dir\("\/"\)|http\.Dir\('\/'\)`),
 	}
 }
@@ -331,6 +339,7 @@ type slowlorisRule struct {
 	what string
 	sev  Severity
 	conf Confidence
+	cwe  string
 }
 
 func (r *slowlorisRule) ID() string          { return r.id }
@@ -352,7 +361,7 @@ func (r *slowlorisRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 		return nil, nil
 	}
 	if !containsReadHeaderTimeout(complit) {
-		return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+		return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 	}
 	return nil, nil
 }
@@ -379,6 +388,7 @@ func newSlowloris() Rule {
 		what: "Potential Slowloris Attack because ReadHeaderTimeout is not configured in the http.Server",
 		sev:  SeverityMedium,
 		conf: ConfidenceLow,
+		cwe:  "CWE-770",
 	}
 }
 
@@ -389,6 +399,7 @@ type osCreatePermsRule struct {
 	what        string
 	sev         Severity
 	conf        Confidence
+	cwe         string
 	mode        int64
 	pkgs        []string
 	calls       []string
@@ -406,7 +417,7 @@ func (r *osCreatePermsRule) Match(n ast.Node, ctx *Context) (*Finding, error) {
 	for _, pkg := range r.pkgs {
 		if _, matched := MatchCallByPackage(n, ctx, pkg, r.calls...); matched {
 			if !modeIsSubset(defaultOsCreateMode, r.mode) {
-				return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+				return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 			}
 		}
 	}
@@ -420,6 +431,7 @@ func newOsCreatePerms() Rule {
 		what:  fmt.Sprintf("Expect file permissions to be %#o or less but os.Create used with default permissions %#o", mode, defaultOsCreateMode),
 		sev:   SeverityMedium,
 		conf:  ConfidenceHigh,
+		cwe:   "CWE-276",
 		mode:  mode,
 		pkgs:  []string{"os"},
 		calls: []string{"Create"},
@@ -433,6 +445,7 @@ type insecureConfigTLSRule struct {
 	what            string
 	sev             Severity
 	conf            Confidence
+	cwe             string
 	requiredType    string
 	minVersion      int64
 	maxVersion      int64
@@ -512,10 +525,10 @@ func (t *insecureConfigTLSRule) processTLSConfVal(key, value ast.Expr, ctx *Cont
 		case "InsecureSkipVerify":
 			val, known := t.resolveBoolConst(value, ctx)
 			if known && val {
-				return makeFinding(t.id, "TLS InsecureSkipVerify set to true.", SeverityHigh, ConfidenceHigh, value, ctx)
+				return makeFinding(t.id, "TLS InsecureSkipVerify set to true.", SeverityHigh, ConfidenceHigh, t.cwe, value, ctx)
 			}
 			if !known {
-				return makeFinding(t.id, "TLS InsecureSkipVerify may be set to true.", SeverityHigh, ConfidenceLow, value, ctx)
+				return makeFinding(t.id, "TLS InsecureSkipVerify may be set to true.", SeverityHigh, ConfidenceLow, t.cwe, value, ctx)
 			}
 		case "MinVersion":
 			t.minVersionSet = true
@@ -537,7 +550,7 @@ func (t *insecureConfigTLSRule) processTLSCipherSuites(n ast.Node, ctx *Context)
 				cipherName := ident.Sel.Name
 				if !containsStr(t.goodCiphers, cipherName) {
 					msg := fmt.Sprintf("TLS Bad Cipher Suite: %s", cipherName)
-					return makeFinding(t.id, msg, SeverityHigh, ConfidenceHigh, ident, ctx)
+					return makeFinding(t.id, msg, SeverityHigh, ConfidenceHigh, t.cwe, ident, ctx)
 				}
 			}
 		}
@@ -586,10 +599,10 @@ func (t *insecureConfigTLSRule) checkVersion(n ast.Node, ctx *Context) *Finding 
 		if t.actualMinVersion == 0 {
 			return nil // safe default on Go 1.18+
 		}
-		return makeFinding(t.id, "TLS MinVersion too low.", SeverityHigh, ConfidenceHigh, n, ctx)
+		return makeFinding(t.id, "TLS MinVersion too low.", SeverityHigh, ConfidenceHigh, t.cwe, n, ctx)
 	}
 	if t.maxVersionSet && t.actualMaxVersion != 0 && t.actualMaxVersion < t.maxVersion {
-		return makeFinding(t.id, "TLS MaxVersion too low.", SeverityHigh, ConfidenceHigh, n, ctx)
+		return makeFinding(t.id, "TLS MaxVersion too low.", SeverityHigh, ConfidenceHigh, t.cwe, n, ctx)
 	}
 	return nil
 }
@@ -607,6 +620,7 @@ func newBadTLSConfig() Rule {
 		what:         "TLS settings should be properly configured",
 		sev:          SeverityMedium,
 		conf:         ConfidenceHigh,
+		cwe:          "CWE-295",
 		requiredType: "crypto/tls.Config",
 		minVersion:   int64(tls.VersionTLS12),
 		maxVersion:   int64(tls.VersionTLS13),
@@ -640,7 +654,7 @@ func (w *weakKeyStrengthRule) Match(n ast.Node, ctx *Context) (*Finding, error) 
 		return nil, nil
 	}
 	if bits, err := GetInt(callExpr.Args[1]); err == nil && bits < w.bits {
-		return makeFinding(w.id, w.what, w.sev, w.conf, n, ctx), nil
+		return makeFinding(w.id, w.what, w.sev, w.conf, w.cwe, n, ctx), nil
 	}
 	return nil, nil
 }
@@ -648,7 +662,7 @@ func (w *weakKeyStrengthRule) Match(n ast.Node, ctx *Context) (*Finding, error) 
 func newWeakKeyStrength() Rule {
 	bits := int64(2048)
 	r := &weakKeyStrengthRule{
-		callListRule: newCallListRule("G403", fmt.Sprintf("RSA keys should be at least %d bits", bits), SeverityMedium, ConfidenceHigh),
+		callListRule: newCallListRule("G403", fmt.Sprintf("RSA keys should be at least %d bits", bits), SeverityMedium, ConfidenceHigh, "CWE-327"),
 		bits:         bits,
 	}
 	r.Add("crypto/rsa", "GenerateKey")
@@ -658,7 +672,7 @@ func newWeakKeyStrength() Rule {
 // --- G406: Deprecated MD4/RIPEMD160 ---
 
 func newDeprecatedCryptoHash() Rule {
-	r := newCallListRule("G406", "Use of deprecated cryptographic primitive", SeverityMedium, ConfidenceHigh)
+	r := newCallListRule("G406", "Use of deprecated cryptographic primitive", SeverityMedium, ConfidenceHigh, "CWE-327")
 	r.AddAll("golang.org/x/crypto/md4", "New", "Sum")
 	r.AddAll("golang.org/x/crypto/ripemd160", "New", "Sum")
 	return &r
@@ -671,6 +685,7 @@ type implicitAliasingRule struct {
 	what           string
 	sev            Severity
 	conf           Confidence
+	cwe            string
 	aliases        map[*types.Var]struct{}
 	rightBrace     token.Pos
 	acceptableAlias []*ast.UnaryExpr
@@ -728,7 +743,7 @@ func (r *implicitAliasingRule) Match(n ast.Node, ctx *Context) (*Finding, error)
 							if _, aliased := r.aliases[v]; aliased {
 								_, isPointer := ctx.Info.TypeOf(identExpr).(*types.Pointer)
 								if !hasSelector || !isPointer {
-									return makeFinding(r.id, r.what, r.sev, r.conf, n, ctx), nil
+									return makeFinding(r.id, r.what, r.sev, r.conf, r.cwe, n, ctx), nil
 								}
 							}
 						}
@@ -779,6 +794,7 @@ func newImplicitAliasing() Rule {
 		what:           "Implicit memory aliasing in for loop.",
 		sev:            SeverityMedium,
 		conf:           ConfidenceMedium,
+		cwe:            "CWE-123",
 		aliases:        make(map[*types.Var]struct{}),
 		rightBrace:     token.NoPos,
 		acceptableAlias: make([]*ast.UnaryExpr, 0),

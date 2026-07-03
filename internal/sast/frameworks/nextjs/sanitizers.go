@@ -7,4 +7,5 @@ var Sanitizers = []frameworks.SanitizerPattern{
 	{FuncName: "isSafeRedirect"},
 	{FuncName: "allowlistedHost"},
 	{FuncName: "new URL"},
+	{FuncName: "server-only"},
 }

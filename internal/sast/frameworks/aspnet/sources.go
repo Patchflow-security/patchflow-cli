@@ -9,4 +9,6 @@ var Sources = []frameworks.SourcePattern{
 	{FuncName: "HttpContext.Request.Query", IsSubscript: true},
 	{FuncName: "[FromQuery]", Annotation: "[FromQuery]"},
 	{FuncName: "[FromBody]", Annotation: "[FromBody]"},
+	{FuncName: "Request.RouteValues", IsSubscript: true},
+	{FuncName: "RouteData.Values", IsSubscript: true},
 }

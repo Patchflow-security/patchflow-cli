@@ -15,6 +15,7 @@ var djangoSourceExclusions = []frameworks.PathPattern{
 
 func Rules() []frameworks.FrameworkRule {
 	return []frameworks.FrameworkRule{
+		// === MatchPattern rules ===
 		{
 			ID:             "PF-FLASK-SQLI-001",
 			Framework:      "flask",
@@ -94,6 +95,93 @@ func Rules() []frameworks.FrameworkRule {
 			Sanitizers:     Sanitizers,
 			Exclusions:     djangoSourceExclusions,
 			Recommendation: "Do not render request-controlled template strings. Use render_template with a fixed template file and pass data as context.",
+		},
+		{
+			ID:             "PF-FLASK-PATH-001",
+			Framework:      "flask",
+			Language:       "python",
+			CWE:            "CWE-22",
+			Title:          "Flask path traversal: send_file/open with request input",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".py"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`(send_file|send_from_directory|open)\s*\([^)]*request\.(args|form|values|files)`),
+			Sanitizers:     Sanitizers,
+			Exclusions:     djangoSourceExclusions,
+			SafePatterns: []frameworks.SafePattern{
+				{Regex: regexp.MustCompile(`secure_filename`), Reason: "secure_filename sanitizes the path component."},
+			},
+			Recommendation: "Validate and sanitize file paths from request data. Use secure_filename and restrict to an allowed directory.",
+		},
+		{
+			ID:             "PF-FLASK-CONFIG-001",
+			Framework:      "flask",
+			Language:       "python",
+			CWE:            "CWE-489",
+			Title:          "Flask debug mode enabled or hardcoded secret key",
+			Severity:       analysis.SeverityMedium,
+			Confidence:     analysis.ConfidenceLow,
+			Maturity:       frameworks.MaturityBeta,
+			FileTypes:      []string{".py"},
+			MatchMode:      frameworks.MatchPattern,
+			Pattern:        regexp.MustCompile(`(app\.(run|config)\s*\([^)]*debug\s*=\s*True|DEBUG\s*=\s*True|SECRET_KEY\s*=\s*["'][^"']+["'])`),
+			Sanitizers:     Sanitizers,
+			Exclusions:     djangoSourceExclusions,
+			SafePatterns: []frameworks.SafePattern{
+				{Regex: regexp.MustCompile(`os\.environ|getenv|config\.from_envvar`), Reason: "Secret loaded from environment, not hardcoded."},
+			},
+			Recommendation: "Do not enable debug mode in production. Load SECRET_KEY from environment variables, not hardcoded strings.",
+		},
+
+		// === MatchTaint rules — source→sink taint tracking ===
+		{
+			ID:             "PF-FLASK-SQLI-002",
+			Framework:      "flask",
+			Language:       "python",
+			CWE:            "CWE-89",
+			Title:          "Flask SQLi: request data flows to raw SQL (taint-tracked)",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityExperimental,
+			FileTypes:      []string{".py"},
+			MatchMode:      frameworks.MatchTaint,
+			Sources:        Sources,
+			Sinks: []frameworks.SinkPattern{
+				{FuncName: "text", ArgIndex: 0},
+				{FuncName: "execute", ArgIndex: 0},
+				{FuncName: "session.execute", ArgIndex: 0},
+				{FuncName: "db.session.execute", ArgIndex: 0},
+				{FuncName: "cursor.execute", ArgIndex: 0},
+			},
+			Sanitizers:     Sanitizers,
+			SafePatterns: []frameworks.SafePattern{
+				{Regex: regexp.MustCompile(`:\w+`), Reason: "Named parameter placeholder indicates bound parameters."},
+				{Regex: regexp.MustCompile(`bindparam`), Reason: "SQLAlchemy bindparam() indicates bound parameters."},
+			},
+			Recommendation: "Flask request data flows into raw SQL. Use parameterized queries or ORM filters.",
+		},
+		{
+			ID:             "PF-FLASK-SSRF-002",
+			Framework:      "flask",
+			Language:       "python",
+			CWE:            "CWE-918",
+			Title:          "Flask SSRF: request data flows to outbound HTTP (taint-tracked)",
+			Severity:       analysis.SeverityHigh,
+			Confidence:     analysis.ConfidenceMedium,
+			Maturity:       frameworks.MaturityExperimental,
+			FileTypes:      []string{".py"},
+			MatchMode:      frameworks.MatchTaint,
+			Sources:        Sources,
+			Sinks: []frameworks.SinkPattern{
+				{FuncName: "requests.get", ArgIndex: 0},
+				{FuncName: "requests.post", ArgIndex: 0},
+				{FuncName: "httpx.get", ArgIndex: 0},
+				{FuncName: "httpx.post", ArgIndex: 0},
+			},
+			Sanitizers:     Sanitizers,
+			Recommendation: "Flask request data flows into an outbound HTTP request. Validate URLs against an allowlist.",
 		},
 	}
 }

@@ -110,6 +110,10 @@ type Runner struct {
 	// selection loaded from .patchflow/config.yml.
 	FrameworkProjectConfig fwpatterns.SelectionConfig
 
+	// fwSafePatterns maps framework rule IDs to their safe patterns (B11.5.3).
+	// Used for taint-mode safe pattern suppression after scanning.
+	fwSafePatterns map[string][]fwpatterns.SafePattern
+
 	// FrameworksDetected holds the frameworks detected during the last
 	// Analyze run. Populated by Analyze; read by callers for reporting
 	// and explain output.
@@ -118,6 +122,23 @@ type Runner struct {
 	// frameworkRegistry holds all official embedded framework packs. It is
 	// lazily initialized on first use.
 	frameworkRegistry *fwpatterns.Registry
+}
+
+// defaultFrameworkRegistrySingleton is the package-level shared framework
+// registry. Building the registry involves constructing 18 framework packs
+// with precompiled regex patterns, so we build it once and share it across
+// all Runner instances. This avoids rebuilding the registry on every scan
+// when a new Runner is created.
+var (
+	defaultFrameworkRegistryOnce sync.Once
+	defaultFrameworkRegistryInst *fwpatterns.Registry
+)
+
+func defaultFrameworkRegistry() *fwpatterns.Registry {
+	defaultFrameworkRegistryOnce.Do(func() {
+		defaultFrameworkRegistryInst = packs.BuildDefaultRegistry()
+	})
+	return defaultFrameworkRegistryInst
 }
 
 // SetTaintDepth configures the inter-procedural taint analysis depth on the
@@ -408,11 +429,14 @@ type Result struct {
 	Errors          []string               `json:"errors,omitempty"`
 	SuppressedCount int                    `json:"suppressed_count,omitempty"`
 	Frameworks      []frameworks.Detection `json:"frameworks,omitempty"`
+	EngineTimings   []analysis.EngineTiming `json:"engine_timings,omitempty"`
 }
 
 // Analyze runs all embedded scanners first, then external tools as supplements.
 func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	result := &Result{}
+	var timings []analysis.EngineTiming
+	phaseStart := time.Now()
 
 	// --- Phase 0: Load custom rules from YAML ---
 	policy, err := r.loadRulePolicy(root)
@@ -439,7 +463,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// framework rules run, which keeps noise out of non-framework projects.
 	var frameworkMatcher *fwpatterns.Matcher
 	if r.frameworkRegistry == nil {
-		r.frameworkRegistry = packs.BuildDefaultRegistry()
+		r.frameworkRegistry = defaultFrameworkRegistry()
 	}
 	loader := fwpatterns.NewLoader(r.frameworkRegistry)
 	cfg := r.FrameworkProjectConfig
@@ -457,10 +481,19 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	result.Frameworks = selection.Detections
 	if len(selection.Packs) > 0 {
 		var fwRules []fwpatterns.FrameworkRule
+		// Collect safe patterns per rule ID for taint suppression (B11.5.3).
+		// Pattern/template rules already use safe patterns in the matcher;
+		// this map enables taint-rule safe pattern suppression.
+		fwSafePatterns := map[string][]fwpatterns.SafePattern{}
 		for _, p := range selection.Packs {
 			if policy != nil {
 				if override, ok := policy.FrameworkOverrides[p.Name()]; ok {
 					p = fwpatterns.ApplyPackOverride(p, override)
+				}
+			}
+			for _, r := range p.Rules() {
+				if len(r.SafePatterns) > 0 {
+					fwSafePatterns[r.ID] = r.SafePatterns
 				}
 			}
 			fwRules = append(fwRules, p.Rules()...)
@@ -469,7 +502,11 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		// Register framework taint rules into the taint engine so its
 		// source->sink tracking covers framework-specific flows.
 		r.taintPatternAnalyzer.AddRules(fwpatterns.ToTaintRules(fwRules))
+		// Store safe patterns for taint suppression (used in Phase 2e.5).
+		r.fwSafePatterns = fwSafePatterns
 	}
+	timings = append(timings, analysis.EngineTiming{Engine: "framework_detection", Duration: time.Since(phaseStart)})
+	phaseStart = time.Now()
 
 	// --- Phase 1: Embedded scanners ---
 	//
@@ -695,12 +732,11 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// External tools (gosec, bandit) may report high severity for rules we
 	// intentionally demoted in our embedded scanners. Apply our severity
 	// policy to their findings to keep noise consistent.
+	timings = append(timings, analysis.EngineTiming{Engine: "scanners", Duration: time.Since(phaseStart)})
+	phaseStart = time.Now()
 	result.Findings = applySeverityFindings(result.Findings)
 
 	// --- Phase 2c: Deduplicate cross-scanner findings ---
-	// Run AFTER external tools are merged so that embedded and external
-	// findings on the same file+line+rule are deduplicated (preferring
-	// the embedded scanner's finding via the priority map).
 	result.Findings = dedupFindings(result.Findings)
 
 	// --- Phase 2d: Semantic deduplication ---
@@ -709,6 +745,28 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// call copied 869 times in a generated file) from producing 869 separate
 	// findings. The first occurrence is kept; duplicates are dropped.
 	result.Findings = semanticDedupFindings(result.Findings)
+
+	// --- Phase 2e: Base/interprocedural deduplication ---
+	// Merge base taint findings with their interprocedural (-IP) counterparts
+	// on the same file+line. The interprocedural variant is preferred because
+	// it demonstrates a longer taint flow. Example: TP-JS001 and TP-JS001-IP
+	// on the same line → keep TP-JS001-IP, drop TP-JS001.
+	result.Findings = dedupBaseVsInterprocedural(result.Findings)
+
+	// --- Phase 2e.5: Taint safe-pattern suppression (B11.5.3) ---
+	// Suppress taint findings whose containing function also contains a
+	// safe pattern (e.g., TenantAuth.requireOwner). This applies to
+	// framework taint rules that carry SafePatterns from extensions.
+	if len(r.fwSafePatterns) > 0 {
+		result.Findings = suppressTaintWithSafePatterns(result.Findings, r.fwSafePatterns, root)
+	}
+
+	// --- Phase 2f: Issue grouping ---
+	// Group related findings in the same function (e.g., EditPaste.mutate
+	// with filter_by(id=id) on lines 141 and 148). Each finding gets an
+	// IssueGroupID; the primary finding carries OccurrenceCount and
+	// RelatedLocations. Findings are NOT dropped — they remain as evidence.
+	result.Findings = groupIssues(result.Findings, root)
 
 	// --- Phase 3: Apply suppression directives (//patchflow:ignore) ---
 	if !r.ShowSuppressed {
@@ -733,7 +791,9 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			result.Findings[i].OWASPCategory = cwe.OWASPCategoryLabel(result.Findings[i].CWEID)
 		}
 	}
+	timings = append(timings, analysis.EngineTiming{Engine: "dedup_grouping", Duration: time.Since(phaseStart)})
 
+	result.EngineTimings = timings
 	return result, nil
 }
 
@@ -908,6 +968,242 @@ func normalizeRuleID(ruleID string) string {
 		return ruleID[3:]
 	}
 	return ruleID
+}
+
+// dedupBaseVsInterprocedural merges base taint findings with their
+// interprocedural (-IP) counterparts. When both TP-JS001 (base) and
+// TP-JS001-IP (interprocedural) fire on the same file+line, the base finding
+// is dropped and the IP finding is kept. This reduces duplicate findings
+// without losing the more detailed interprocedural taint path.
+//
+// The function also handles TP-PY*, TP-RUBY*, TP-JAVA* base/IP pairs.
+func dedupBaseVsInterprocedural(findings []analysis.Finding) []analysis.Finding {
+	type ipKey struct {
+		baseRuleID string
+		file       string
+		line       int
+	}
+
+	// First pass: collect IP finding locations
+	ipLocations := make(map[ipKey]bool)
+	for _, f := range findings {
+		if isInterproceduralRule(f.RuleID) {
+			baseID := stripIPSuffixFromRule(f.RuleID)
+			normalizedPath := normalizePathForDedup(f.FilePath)
+			k := ipKey{baseRuleID: baseID, file: normalizedPath, line: f.LineStart}
+			ipLocations[k] = true
+		}
+	}
+
+	// Second pass: drop base findings that have an IP counterpart
+	result := make([]analysis.Finding, 0, len(findings))
+	dropped := 0
+	for _, f := range findings {
+		if !isInterproceduralRule(f.RuleID) {
+			// This is a base rule — check if an IP variant exists
+			baseID := f.RuleID
+			normalizedPath := normalizePathForDedup(f.FilePath)
+			k := ipKey{baseRuleID: baseID, file: normalizedPath, line: f.LineStart}
+			if ipLocations[k] {
+				dropped++
+				continue // Drop base finding — IP variant exists
+			}
+		}
+		result = append(result, f)
+	}
+	return result
+}
+
+// isInterproceduralRule returns true if the rule ID ends with "-IP",
+// indicating an interprocedural taint variant.
+func isInterproceduralRule(ruleID string) bool {
+	return strings.HasSuffix(ruleID, "-IP")
+}
+
+// stripIPSuffixFromRule removes the "-IP" suffix from a rule ID.
+func stripIPSuffixFromRule(ruleID string) string {
+	if strings.HasSuffix(ruleID, "-IP") {
+		return ruleID[:len(ruleID)-3]
+	}
+	return ruleID
+}
+
+// normalizePathForDedup returns the last two path components for robust
+// cross-scanner path matching.
+func normalizePathForDedup(p string) string {
+	parts := strings.Split(filepath.ToSlash(p), "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	}
+	return p
+}
+
+// groupIssues assigns IssueGroupIDs to findings that represent the same
+// vulnerability scenario across multiple locations in the same function.
+// Findings are NOT dropped — they remain as separate findings with their own
+// locations. The primary finding (first occurrence) carries OccurrenceCount
+// and RelatedLocations for display purposes.
+//
+// Grouping strategy (in priority order):
+// 1. Function name from title/description ("in <func_name>") — highest priority.
+// 2. Function boundary detection from source code — reads the file and finds
+//    function/method/class definitions. Each finding is assigned to its
+//    enclosing function. This is the primary grouping mechanism.
+// 3. Line proximity (within 10 lines) — fallback when source code is
+//    unavailable or no function boundary is found. Uses a tight window to
+//    avoid grouping across function boundaries.
+//
+// Findings in different functions are NEVER grouped together, even if they're
+// close in line number. This prevents EditPaste.mutate (line 141) from being
+// grouped with DeletePaste.mutate (line 167) just because they're nearby.
+func groupIssues(findings []analysis.Finding, root string) []analysis.Finding {
+	type groupKey struct {
+		ruleID   string
+		file     string
+		funcName string // function name or "proximity" fallback
+	}
+
+	// Cache function boundaries per file to avoid re-reading
+	boundaryCache := make(map[string][]functionBoundary)
+
+	getBoundaries := func(filePath string) []functionBoundary {
+		normalized := analysis.NormalizePath(filePath)
+		if bs, ok := boundaryCache[normalized]; ok {
+			return bs
+		}
+		resolved := resolveFilePath(filePath, root)
+		bs := detectFunctionBoundaries(resolved)
+		boundaryCache[normalized] = bs
+		return bs
+	}
+
+	// First pass: determine the function name for each finding
+	type candidate struct {
+		key      groupKey
+		idx      int
+		line     int
+	}
+	var candidates []candidate
+
+	for i, f := range findings {
+		funcName := ""
+
+		// Strategy 1: Extract from title/description
+		funcName = analysis.ExtractFunctionName(f.Title, f.Description)
+
+		// Strategy 2: Detect from source code boundaries
+		if funcName == "" && f.FilePath != "" && f.LineStart > 0 {
+			boundaries := getBoundaries(f.FilePath)
+			if len(boundaries) > 0 {
+				if b := findFunctionForLine(boundaries, f.LineStart); b != nil {
+					funcName = fmt.Sprintf("%s@%d", b.name, b.line)
+				}
+			}
+		}
+
+		// Strategy 3: If no function found, use proximity fallback marker
+		// (empty string triggers proximity-based grouping below)
+		k := groupKey{
+			ruleID:   stripIPSuffixFromRule(f.RuleID),
+			file:     analysis.NormalizePath(f.FilePath),
+			funcName: funcName,
+		}
+		candidates = append(candidates, candidate{key: k, idx: i, line: f.LineStart})
+	}
+
+	// Build groups: for each candidate, either join an existing group with
+	// the same key (if funcName is non-empty) or join a group with the same
+	// ruleID+file within the proximity window (if funcName is empty).
+	// Proximity window is tight (10 lines) to avoid crossing function boundaries.
+	const proximityWindow = 10
+
+	groupAssignment := make([]int, len(candidates)) // index → group number
+	groupCount := 0
+
+	for i, c := range candidates {
+		assigned := -1
+		if c.key.funcName != "" {
+			// Function-name-based grouping: find an existing group with same key
+			for j := 0; j < i; j++ {
+				if candidates[j].key == c.key {
+					assigned = groupAssignment[j]
+					break
+				}
+			}
+		} else {
+			// Proximity-based grouping: find an existing group with same ruleID+file
+			// where any member is within the tight proximity window
+			for j := 0; j < i; j++ {
+				if candidates[j].key.ruleID == c.key.ruleID &&
+					candidates[j].key.file == c.key.file &&
+					abs(c.line-candidates[j].line) <= proximityWindow {
+					assigned = groupAssignment[j]
+					break
+				}
+			}
+		}
+
+		if assigned == -1 {
+			assigned = groupCount
+			groupCount++
+		}
+		groupAssignment[i] = assigned
+	}
+
+	// Collect indices by group
+	groupIndices := make(map[int][]int)
+	for i, ga := range groupAssignment {
+		groupIndices[ga] = append(groupIndices[ga], candidates[i].idx)
+	}
+
+	// Assign issue group IDs and populate occurrence counts
+	for _, indices := range groupIndices {
+		if len(indices) == 0 {
+			continue
+		}
+
+		// Primary finding is the one with the lowest line number
+		primaryIdx := indices[0]
+		for _, idx := range indices {
+			if findings[idx].LineStart < findings[primaryIdx].LineStart {
+				primaryIdx = idx
+			}
+		}
+		primary := findings[primaryIdx]
+		groupID := analysis.ComputeIssueGroupID(primary)
+		// Disambiguate by appending the primary line number so different
+		// functions in the same file get different group IDs.
+		if primary.LineStart > 0 {
+			groupID = groupID + "-L" + fmt.Sprintf("%d", primary.LineStart)
+		}
+		// Build related locations (non-primary)
+		var relatedLocs []string
+		for _, idx := range indices {
+			if idx == primaryIdx {
+				continue
+			}
+			loc := fmt.Sprintf("%s:%d", findings[idx].FilePath, findings[idx].LineStart)
+			relatedLocs = append(relatedLocs, loc)
+		}
+
+		// Set group metadata on all findings in the group
+		for _, idx := range indices {
+			findings[idx].IssueGroupID = groupID
+			findings[idx].OccurrenceCount = len(indices)
+		}
+
+		// Set related locations only on the primary finding
+		findings[primaryIdx].RelatedLocations = relatedLocs
+	}
+
+	return findings
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // embeddedGosastRules is the set of rule IDs implemented by the embedded

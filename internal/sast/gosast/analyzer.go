@@ -100,6 +100,7 @@ type Finding struct {
 	Title      string
 	Severity   Severity
 	Confidence Confidence
+	CWEID      string
 	File       string
 	Line       int
 	Col        int
@@ -456,6 +457,7 @@ func toAnalysisFinding(f *Finding, fileName string) analysis.Finding {
 		FilePath:    fileName,
 		LineStart:   f.Line,
 		RuleID:      f.RuleID,
+		CWEID:       f.CWEID,
 		Evidence:    f.Code,
 		DetectedAt:  time.Now(),
 	}

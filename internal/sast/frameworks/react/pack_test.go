@@ -55,3 +55,70 @@ func TestReactXSSSanitizedSafe(t *testing.T) {
 		t.Fatalf("sanitized HTML should not trigger XSS: %+v", findings)
 	}
 }
+
+func TestReactDOMInjectionVulnerable(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `ref.current.innerHTML = props.html;`)
+	if !hasFinding(findings, "PF-REACT-XSS-002") {
+		t.Fatalf("expected DOM injection finding, got %+v", findings)
+	}
+}
+
+func TestReactDOMInjectionTextContentSafe(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `ref.current.textContent = props.text;`)
+	if hasFinding(findings, "PF-REACT-XSS-002") {
+		t.Fatalf("textContent assignment should not trigger DOM injection: %+v", findings)
+	}
+}
+
+func TestReactDOMInjectionSanitizedSafe(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `ref.current.innerHTML = DOMPurify.sanitize(props.html);`)
+	if hasFinding(findings, "PF-REACT-XSS-002") {
+		t.Fatalf("DOMPurify.sanitize should suppress DOM injection finding: %+v", findings)
+	}
+}
+
+func TestReactStorageTokenVulnerable(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `localStorage.setItem("authToken", token);`)
+	if !hasFinding(findings, "PF-REACT-STORAGE-001") {
+		t.Fatalf("expected insecure storage finding for authToken, got %+v", findings)
+	}
+}
+
+func TestReactStorageJWTSessionVulnerable(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `sessionStorage.setItem("jwt", jwt);`)
+	if !hasFinding(findings, "PF-REACT-STORAGE-001") {
+		t.Fatalf("expected insecure storage finding for jwt, got %+v", findings)
+	}
+}
+
+func TestReactStorageThemeSafe(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `localStorage.setItem("theme", "dark");`)
+	if hasFinding(findings, "PF-REACT-STORAGE-001") {
+		t.Fatalf("non-secret theme key should not trigger storage finding: %+v", findings)
+	}
+}
+
+func TestReactStorageLanguageSafe(t *testing.T) {
+	findings := scanFixture(t, "component.jsx", `localStorage.setItem("language", "en");`)
+	if hasFinding(findings, "PF-REACT-STORAGE-001") {
+		t.Fatalf("non-secret language key should not trigger storage finding: %+v", findings)
+	}
+}
+
+func TestReactRuleMaturityAndSeverity(t *testing.T) {
+	for _, r := range New().Rules() {
+		if r.Maturity != frameworks.MaturityBeta {
+			t.Fatalf("rule %s maturity = %s, want beta", r.ID, r.Maturity)
+		}
+	}
+	for _, r := range New().Rules() {
+		if r.ID == "PF-REACT-STORAGE-001" {
+			if r.Severity != analysis.SeverityMedium {
+				t.Fatalf("PF-REACT-STORAGE-001 severity = %s, want medium", r.Severity)
+			}
+			if r.Severity == analysis.SeverityHigh || r.Severity == analysis.SeverityCritical {
+				t.Fatalf("PF-REACT-STORAGE-001 must not be high/critical, got %s", r.Severity)
+			}
+		}
+	}
+}

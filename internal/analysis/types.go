@@ -104,6 +104,20 @@ type Finding struct {
 	SemanticFingerprint string `json:"semantic_fingerprint,omitempty"`
 	LocationFingerprint string `json:"location_fingerprint,omitempty"`
 
+	// DedupFingerprint groups findings that represent the same vulnerability
+	// detected by different analyzers (e.g., TP-JS001 base vs TP-JS001-IP
+	// interprocedural). Findings with the same dedup fingerprint are merged,
+	// keeping the higher-priority variant.
+	DedupFingerprint string `json:"dedup_fingerprint,omitempty"`
+
+	// IssueGroupID groups related findings that represent one vulnerability
+	// scenario across multiple locations (e.g., same function with two
+	// filter_by(id=id) calls). The primary finding carries OccurrenceCount
+	// and RelatedLocations; grouped findings are kept but share the group ID.
+	IssueGroupID    string   `json:"issue_group_id,omitempty"`
+	OccurrenceCount int      `json:"occurrence_count,omitempty"`
+	RelatedLocations []string `json:"related_locations,omitempty"`
+
 	// Lifecycle
 	DetectedAt time.Time `json:"detected_at"`
 }
@@ -372,7 +386,87 @@ func PopulateFingerprints(findings []Finding) {
 		if findings[i].LocationFingerprint == "" {
 			findings[i].LocationFingerprint = ComputeLocationFingerprint(findings[i])
 		}
+		if findings[i].DedupFingerprint == "" {
+			findings[i].DedupFingerprint = ComputeDedupFingerprint(findings[i])
+		}
 	}
+}
+
+// stripIPSuffix removes the "-IP" suffix from interprocedural taint rule IDs
+// so that base and interprocedural variants of the same rule share a dedup key.
+// Example: "TP-JS001-IP" → "TP-JS001", "TP-JS008-IP" → "TP-JS008".
+func stripIPSuffix(ruleID string) string {
+	if strings.HasSuffix(ruleID, "-IP") {
+		return ruleID[:len(ruleID)-3]
+	}
+	return ruleID
+}
+
+// ComputeDedupFingerprint builds a fingerprint that groups findings representing
+// the same vulnerability detected by different analyzers or rule variants.
+// Key ingredients: normalized rule ID (stripping -IP suffix), file path, line,
+// and normalized evidence. Two findings with the same dedup fingerprint are
+// considered duplicates and the higher-priority one is kept.
+func ComputeDedupFingerprint(f Finding) string {
+	var parts []string
+	// Strip -IP suffix so TP-JS001 and TP-JS001-IP on the same line merge
+	parts = append(parts, stripIPSuffix(f.RuleID))
+	parts = append(parts, NormalizePath(f.FilePath))
+	if f.LineStart > 0 {
+		parts = append(parts, "L"+itoa(f.LineStart))
+	}
+	// For taint findings, include the sink (evidence) to distinguish
+	// different sinks on the same line (rare but possible).
+	parts = append(parts, NormalizeSnippet(f.Evidence))
+	return shortHash(strings.Join(parts, "|"))
+}
+
+// ComputeIssueGroupID builds a fingerprint that groups related findings
+// representing one vulnerability scenario across multiple locations in the
+// same function. Key ingredients: rule ID, file path, and function/class name
+// extracted from the title or taint path. Findings in the same group share
+// the IssueGroupID but remain separate findings with their own locations.
+func ComputeIssueGroupID(f Finding) string {
+	var parts []string
+	parts = append(parts, stripIPSuffix(f.RuleID))
+	parts = append(parts, NormalizePath(f.FilePath))
+	// Extract function/class name from title or description
+	// Titles often contain "in <function_name>" or "<Class.method>"
+	funcName := ExtractFunctionName(f.Title, f.Description)
+	if funcName != "" {
+		parts = append(parts, funcName)
+	}
+	// For taint findings, include the source variable to distinguish
+	// different source-to-sink flows in the same function
+	if len(f.TaintPath) > 0 {
+		parts = append(parts, f.TaintPath[0])
+	}
+	return shortHash(strings.Join(parts, "|"))
+}
+
+// ExtractFunctionName attempts to extract a function or class name from a
+// finding title or description. This is used for issue grouping so that
+// multiple findings in the same function are grouped together.
+func ExtractFunctionName(title, description string) string {
+	// Look for patterns like "in resolve_pastes", "in EditPaste.mutate",
+	// "GraphQL IDOR in EditPaste.mutate", etc.
+	for _, s := range []string{title, description} {
+		if s == "" {
+			continue
+		}
+		lower := strings.ToLower(s)
+		idx := strings.Index(lower, " in ")
+		if idx >= 0 {
+			rest := s[idx+4:]
+			// Take up to the next space or end
+			end := strings.IndexAny(rest, " ,(")
+			if end > 0 {
+				return strings.ToLower(rest[:end])
+			}
+			return strings.ToLower(rest)
+		}
+	}
+	return ""
 }
 
 // itoa is a small allocation-free int-to-string helper used by the fingerprint

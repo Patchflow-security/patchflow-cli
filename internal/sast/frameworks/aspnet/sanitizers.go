@@ -13,4 +13,6 @@ var Sanitizers = []frameworks.SanitizerPattern{
 	{FuncName: "LocalRedirect"},
 	{Regex: regexp.MustCompile(`FromSqlInterpolated|ExecuteSqlInterpolated`)},
 	{Regex: regexp.MustCompile(`new\s+SqlParameter`)},
+	{FuncName: "Path.GetFullPath"},
+	{FuncName: "JsonSerializer.Deserialize"},
 }

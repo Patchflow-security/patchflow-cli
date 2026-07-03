@@ -564,6 +564,13 @@ func (ia *InterproceduralAnalyzer) checkCallIP(
 					*findings = append(*findings, f)
 					break
 				}
+				// Also check for direct source-to-sink flows (inline source
+				// usage without variable assignment).
+				if argContainsSource(arg, bt, src, rule.Sources) {
+					f := ia.makeIPFinding(rule, node, bt, absPath, root, funcName, argTexts[idx])
+					*findings = append(*findings, f)
+					break
+				}
 			}
 		}
 	}

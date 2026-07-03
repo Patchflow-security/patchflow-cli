@@ -6,6 +6,8 @@ import "github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks"
 var Sinks = []frameworks.SinkPattern{
 	{FuncName: "execute", ArgIndex: 0},
 	{FuncName: "executemany", ArgIndex: 0},
+	{FuncName: "text", ArgIndex: 0},
+	{FuncName: "session.execute", ArgIndex: 0},
 	{FuncName: "requests.get", ArgIndex: 0},
 	{FuncName: "requests.post", ArgIndex: 0},
 	{FuncName: "httpx.get", ArgIndex: 0},

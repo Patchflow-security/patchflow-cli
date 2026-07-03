@@ -14,6 +14,7 @@ import (
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/fastapi"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/flask"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/gin"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/graphql"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/laravel"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/nestjs"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast/frameworks/nextjs"
@@ -41,6 +42,7 @@ func BuildDefaultRegistry() *frameworks.Registry {
 	reg.Register(fastapi.New())
 	reg.Register(flask.New())
 	reg.Register(gin.New())
+	reg.Register(graphql.New())
 	reg.Register(laravel.New())
 	reg.Register(nestjs.New())
 	reg.Register(nextjs.New())

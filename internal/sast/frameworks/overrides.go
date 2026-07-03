@@ -8,15 +8,17 @@ type PackOverride struct {
 	Sources           []SourcePattern
 	Sinks             []SinkPattern
 	Sanitizers        []SanitizerPattern
+	SafePatterns      []SafePattern
 	SeverityOverrides map[string]analysis.Severity
 }
 
 type overriddenPack struct {
-	base       Pack
-	rules      []FrameworkRule
-	sources    []SourcePattern
-	sinks      []SinkPattern
-	sanitizers []SanitizerPattern
+	base        Pack
+	rules       []FrameworkRule
+	sources     []SourcePattern
+	sinks       []SinkPattern
+	sanitizers  []SanitizerPattern
+	safePatterns []SafePattern
 }
 
 // ApplyPackOverride returns a pack view with user overrides merged on top of
@@ -25,6 +27,7 @@ func ApplyPackOverride(base Pack, override PackOverride) Pack {
 	if len(override.Sources) == 0 &&
 		len(override.Sinks) == 0 &&
 		len(override.Sanitizers) == 0 &&
+		len(override.SafePatterns) == 0 &&
 		len(override.SeverityOverrides) == 0 {
 		return base
 	}
@@ -32,14 +35,30 @@ func ApplyPackOverride(base Pack, override PackOverride) Pack {
 	mergedSources := append(cloneSources(base.Sources()), override.Sources...)
 	mergedSinks := append(cloneSinks(base.Sinks()), override.Sinks...)
 	mergedSanitizers := append(cloneSanitizers(base.Sanitizers()), override.Sanitizers...)
+	// Safe patterns are per-rule, not per-pack. We collect them here for
+	// explain output but they are merged into each rule below.
+	mergedSafePatterns := cloneSafePatterns(override.SafePatterns)
 
 	baseRules := base.Rules()
 	rules := make([]FrameworkRule, 0, len(baseRules))
 	for _, rule := range baseRules {
 		cp := rule
-		cp.Sources = append(cloneSources(rule.Sources), override.Sources...)
-		cp.Sinks = append(cloneSinks(rule.Sinks), override.Sinks...)
+		// Scope custom sources: only attach to rules whose category matches
+		// (or all rules if source has no category restriction).
+		for _, src := range override.Sources {
+			if sourceMatchesRule(src, rule) {
+				cp.Sources = append(cp.Sources, src)
+			}
+		}
+		// Scope custom sinks: only attach to rules whose CWE/category matches.
+		// This prevents a SQL sink from firing on SSRF/redirect/deser rules.
+		for _, sink := range override.Sinks {
+			if sinkMatchesRule(sink, rule) {
+				cp.Sinks = append(cp.Sinks, sink)
+			}
+		}
 		cp.Sanitizers = append(cloneSanitizers(rule.Sanitizers), override.Sanitizers...)
+		cp.SafePatterns = append(cloneSafePatterns(rule.SafePatterns), override.SafePatterns...)
 		if sev, ok := override.SeverityOverrides[rule.ID]; ok {
 			cp.Severity = sev
 		}
@@ -47,11 +66,12 @@ func ApplyPackOverride(base Pack, override PackOverride) Pack {
 	}
 
 	return &overriddenPack{
-		base:       base,
-		rules:      rules,
-		sources:    mergedSources,
-		sinks:      mergedSinks,
-		sanitizers: mergedSanitizers,
+		base:         base,
+		rules:        rules,
+		sources:      mergedSources,
+		sinks:        mergedSinks,
+		sanitizers:   mergedSanitizers,
+		safePatterns: mergedSafePatterns,
 	}
 }
 
@@ -68,6 +88,12 @@ func (p *overriddenPack) Sources() []SourcePattern { return cloneSources(p.sourc
 func (p *overriddenPack) Sinks() []SinkPattern     { return cloneSinks(p.sinks) }
 func (p *overriddenPack) Sanitizers() []SanitizerPattern {
 	return cloneSanitizers(p.sanitizers)
+}
+
+// SafePatterns returns the merged safe patterns (pack + extension).
+// This is not part of the Pack interface but is used internally for explain.
+func (p *overriddenPack) SafePatterns() []SafePattern {
+	return cloneSafePatterns(p.safePatterns)
 }
 
 func cloneRules(in []FrameworkRule) []FrameworkRule {
@@ -99,4 +125,8 @@ func cloneSinks(in []SinkPattern) []SinkPattern {
 
 func cloneSanitizers(in []SanitizerPattern) []SanitizerPattern {
 	return append([]SanitizerPattern(nil), in...)
+}
+
+func cloneSafePatterns(in []SafePattern) []SafePattern {
+	return append([]SafePattern(nil), in...)
 }

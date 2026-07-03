@@ -223,5 +223,58 @@ func (Pack) Rules() []frameworks.FrameworkRule {
 			Sanitizers:  []frameworks.SanitizerPattern{{FuncName: "url_for"}, {FuncName: "URI.parse"}},
 			Recommendation: "Validate redirect targets against an allowlist. Tainted request data reached redirect_to.",
 		},
+
+		// === Command injection ===
+		{
+			ID:          "PF-RAILS-CMDI-001",
+			Framework:   "rails",
+			Language:    "ruby",
+			CWE:         "CWE-78",
+			Title:       "Rails command injection: system/exec/backticks with params interpolation",
+			Severity:    analysis.SeverityCritical,
+			Confidence:  analysis.ConfidenceMedium,
+			Maturity:    frameworks.MaturityExperimental,
+			FileTypes:   []string{".rb"},
+			MatchMode:   frameworks.MatchPattern,
+			Pattern:     regexp.MustCompile(`(system|exec|` + "`" + `)\s*\(?\s*.*#\{.*params`),
+			Sanitizers:  Sanitizers,
+			Recommendation: "Use system with separate arguments (system('cmd', arg1, arg2)) instead of string interpolation. Sanitize user input with Shellwords.escape.",
+		},
+
+		// === SSRF ===
+		{
+			ID:          "PF-RAILS-SSRF-001",
+			Framework:   "rails",
+			Language:    "ruby",
+			CWE:         "CWE-918",
+			Title:       "Rails SSRF: Net::HTTP/URI with user-controlled URL",
+			Severity:    analysis.SeverityHigh,
+			Confidence:  analysis.ConfidenceMedium,
+			Maturity:    frameworks.MaturityExperimental,
+			FileTypes:   []string{".rb"},
+			MatchMode:   frameworks.MatchPattern,
+			Pattern:     regexp.MustCompile(`(Net::HTTP\.(get|post|start|new)|URI\.(parse|open))\s*\(?\s*.*#\{.*params`),
+			Sanitizers:  Sanitizers,
+			Recommendation: "Validate and restrict URLs before making HTTP requests. Use an allow-list of permitted domains and validate the URL scheme.",
+		},
+
+		// === Weak crypto ===
+		{
+			ID:          "PF-RAILS-CRYPTO-001",
+			Framework:   "rails",
+			Language:    "ruby",
+			CWE:         "CWE-327",
+			Title:       "Rails weak hash: MD5/SHA1 used for security-sensitive data",
+			Severity:    analysis.SeverityHigh,
+			Confidence:  analysis.ConfidenceMedium,
+			Maturity:    frameworks.MaturityExperimental,
+			FileTypes:   []string{".rb"},
+			MatchMode:   frameworks.MatchPattern,
+			Pattern:     regexp.MustCompile(`(?i)(Digest::(MD5|SHA1)\.(hexdigest|base64digest)|Digest::(MD5|SHA1)\.new)`),
+			SafePatterns: []frameworks.SafePattern{
+				{Regex: regexp.MustCompile(`(?i)(cache|checksum|etag|fingerprint)`), Reason: "MD5/SHA1 for non-security contexts (cache key, checksum, etag, fingerprint) is acceptable"},
+			},
+			Recommendation: "Use BCrypt or Argon2 for password hashing. MD5 and SHA1 are cryptographically broken and unsuitable for security purposes.",
+		},
 	}
 }

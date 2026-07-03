@@ -42,6 +42,7 @@ func toTaintSources(srcs []SourcePattern) []taintpatterns.SourcePattern {
 		out = append(out, taintpatterns.SourcePattern{
 			FuncName:    s.FuncName,
 			IsSubscript: s.IsSubscript,
+			Annotation:  s.Annotation,
 		})
 	}
 	return out

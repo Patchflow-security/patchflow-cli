@@ -16,9 +16,98 @@ package frameworks
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 )
+
+// CategoryForCWE maps a CWE identifier to a vulnerability category string.
+// This is used to scope custom extension sinks to the correct taint rules.
+// Returns empty string for unknown CWEs.
+func CategoryForCWE(cwe string) string {
+	switch strings.ToUpper(cwe) {
+	case "CWE-89":
+		return "sql_injection"
+	case "CWE-918":
+		return "ssrf"
+	case "CWE-601":
+		return "open_redirect"
+	case "CWE-502":
+		return "deserialization"
+	case "CWE-79":
+		return "xss"
+	case "CWE-78":
+		return "command_injection"
+	case "CWE-22":
+		return "path_traversal"
+	case "CWE-611":
+		return "xxe"
+	case "CWE-306":
+		return "missing_authentication"
+	case "CWE-862":
+		return "missing_authorization"
+	case "CWE-352":
+		return "csrf"
+	case "CWE-916":
+		return "password_hashing"
+	case "CWE-327":
+		return "weak_crypto"
+	case "CWE-639":
+		return "idor"
+	case "CWE-1336":
+		return "deserialization"
+	case "CWE-117":
+		return "log_injection"
+	default:
+		return ""
+	}
+}
+
+// sinkMatchesRule returns true if a custom sink should be attached to a rule.
+// A sink matches when:
+//   - sink has no CWE and no category → matches all rules (backward compatible)
+//   - sink.CWE matches rule.CWE
+//   - sink.Category matches rule.Category or CategoryForCWE(rule.CWE)
+func sinkMatchesRule(sink SinkPattern, rule FrameworkRule) bool {
+	if sink.CWE == "" && sink.Category == "" {
+		return true // unscoped sink: applies everywhere (backward compatible)
+	}
+	if sink.CWE != "" && rule.CWE != "" {
+		if strings.EqualFold(sink.CWE, rule.CWE) {
+			return true
+		}
+	}
+	if sink.Category != "" {
+		ruleCat := rule.Category
+		if ruleCat == "" {
+			ruleCat = CategoryForCWE(rule.CWE)
+		}
+		if strings.EqualFold(sink.Category, ruleCat) {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceMatchesRule returns true if a custom source should be attached to a rule.
+// A source matches when:
+//   - source has no categories → matches all rules (backward compatible)
+//   - source.Categories contains the rule's category
+func sourceMatchesRule(source SourcePattern, rule FrameworkRule) bool {
+	if len(source.Categories) == 0 {
+		return true // unscoped source: applies everywhere
+	}
+	ruleCat := rule.Category
+	if ruleCat == "" {
+		ruleCat = CategoryForCWE(rule.CWE)
+	}
+	for _, cat := range source.Categories {
+		if strings.EqualFold(cat, ruleCat) {
+			return true
+		}
+	}
+	return false
+}
 
 // MatchMode declares how a framework rule is evaluated.
 type MatchMode int
@@ -93,6 +182,10 @@ type SourcePattern struct {
 	// Annotation matches a Java/C# attribute source (e.g. "@RequestParam",
 	// "@PathVariable", "[FromQuery]").
 	Annotation string
+	// Categories limits this source to specific vulnerability categories.
+	// Empty means "applies to all categories" (backward compatible).
+	// Example: ["sql_injection", "path_traversal"]
+	Categories []string
 }
 
 // SinkPattern declares where tainted data should not flow.
@@ -102,6 +195,14 @@ type SinkPattern struct {
 	FuncName string
 	// ArgIndex is the 0-based argument index that must be tainted; -1 = any.
 	ArgIndex int
+	// CWE limits this sink to rules with a matching CWE.
+	// Empty means "applies to all rules" (backward compatible).
+	// Example: "CWE-89" → only SQLi rules.
+	CWE string
+	// Category limits this sink to rules with a matching category.
+	// Empty means "applies to all categories" (backward compatible).
+	// Example: "sql_injection" → only SQLi rules.
+	Category string
 }
 
 // SanitizerPattern declares a function/pattern that clears taint.
@@ -138,6 +239,7 @@ type FrameworkRule struct {
 	Framework  string // canonical framework name (e.g. "rails", "spring")
 	Language   string // primary language
 	CWE        string
+	Category   string // vulnerability category (e.g. "sql_injection", "ssrf")
 	Title      string
 	Severity   analysis.Severity
 	Confidence analysis.Confidence

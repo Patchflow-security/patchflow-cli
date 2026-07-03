@@ -69,3 +69,44 @@ func TestNextJSXSSSafeNormalText(t *testing.T) {
 		t.Fatalf("normal JSX text rendering should not trigger XSS: %+v", findings)
 	}
 }
+
+func TestNextJSSecretExposedAPIKey(t *testing.T) {
+	findings := scanFixture(t, "page.tsx", `const key = process.env.NEXT_PUBLIC_API_KEY`)
+	if !hasFinding(findings, "PF-NEXTJS-SECRET-001") {
+		t.Fatalf("expected SECRET finding for NEXT_PUBLIC_API_KEY, got %+v", findings)
+	}
+}
+
+func TestNextJSSecretExposedJWTSecret(t *testing.T) {
+	findings := scanFixture(t, "page.tsx", `const secret = process.env.NEXT_PUBLIC_JWT_SECRET`)
+	if !hasFinding(findings, "PF-NEXTJS-SECRET-001") {
+		t.Fatalf("expected SECRET finding for NEXT_PUBLIC_JWT_SECRET, got %+v", findings)
+	}
+}
+
+func TestNextJSSecretNonSecretPublicVar(t *testing.T) {
+	findings := scanFixture(t, "page.tsx", `const analytics = process.env.NEXT_PUBLIC_ANALYTICS_ID`)
+	if hasFinding(findings, "PF-NEXTJS-SECRET-001") {
+		t.Fatalf("non-secret NEXT_PUBLIC_ANALYTICS_ID should not trigger SECRET: %+v", findings)
+	}
+}
+
+func TestNextJSSecretServerOnlyEnvVar(t *testing.T) {
+	findings := scanFixture(t, "route.ts", `const key = process.env.API_KEY`)
+	if hasFinding(findings, "PF-NEXTJS-SECRET-001") {
+		t.Fatalf("server-only env var without NEXT_PUBLIC prefix should not trigger SECRET: %+v", findings)
+	}
+}
+
+func TestNextJSRuleMaturityAndSeverity(t *testing.T) {
+	for _, rule := range New().Rules() {
+		if rule.Maturity != frameworks.MaturityBeta {
+			t.Fatalf("rule %s expected MaturityBeta, got %s", rule.ID, rule.Maturity)
+		}
+	}
+	for _, rule := range New().Rules() {
+		if rule.ID == "PF-NEXTJS-SECRET-001" && rule.Severity != analysis.SeverityMedium {
+			t.Fatalf("SECRET rule expected Medium severity, got %s", rule.Severity)
+		}
+	}
+}
