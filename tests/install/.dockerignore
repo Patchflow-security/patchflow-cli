@@ -1,0 +1,6 @@
+.git
+*.md
+.github
+.patchflow/reports
+.patchflow/baselines
+benchmarks

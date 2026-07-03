@@ -4,11 +4,13 @@ PatchFlow CLI provides change intelligence for engineering teams. Use it to scan
 
 ## Installation
 
-### Homebrew (macOS / Linux)
+### Homebrew (macOS)
 
 ```bash
 brew install Patchflow-security/tap/patchflow
 ```
+
+> **Note for Linux users:** The Patchflow Security tap does not currently publish Linux bottles. On Linux, `brew install` will fall back to building from source and requires a C compiler (`gcc` or `clang`). We recommend using the install script above for Linux and containerized environments.
 
 ### Scoop (Windows)
 
@@ -17,10 +19,26 @@ scoop bucket add patchflow https://github.com/Patchflow-security/scoop-bucket
 scoop install patchflow
 ```
 
-### Install Script (macOS / Linux)
+### Install Script (recommended for Linux / CI / Docker)
 
 ```bash
 curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash
+```
+
+If you prefer the binary to be in your PATH immediately (e.g., inside a Docker/Podman container), install to `/usr/local/bin`:
+
+```bash
+curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash -s -- --install-dir /usr/local/bin
+```
+
+Other options:
+
+```bash
+# Install a specific version
+curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash -s -- --version v0.1.3
+
+# Skip the post-install binary verification step (useful in CI)
+NO_VERIFY=1 curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash
 ```
 
 ### Docker / Podman

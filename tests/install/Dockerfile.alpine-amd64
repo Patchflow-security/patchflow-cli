@@ -1,0 +1,13 @@
+# Minimal musl-based Linux amd64.
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /test
+COPY scripts/install.sh /tmp/install.sh
+COPY tests/install/test-install.sh /tmp/test-install.sh
+COPY tests/install/test-commands.sh /tmp/test-commands.sh
+
+RUN chmod +x /tmp/install.sh /tmp/test-install.sh /tmp/test-commands.sh
+
+CMD ["sh", "-c", \
+    "/tmp/test-install.sh && /tmp/test-commands.sh && cat /tmp/install-test.log /tmp/commands-test.log"]

@@ -1,0 +1,15 @@
+# Fresh Ubuntu amd64 — default install path as root.
+FROM ubuntu:24.04
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /test
+COPY scripts/install.sh /tmp/install.sh
+COPY tests/install/test-install.sh /tmp/test-install.sh
+COPY tests/install/test-commands.sh /tmp/test-commands.sh
+
+RUN chmod +x /tmp/install.sh /tmp/test-install.sh /tmp/test-commands.sh
+
+CMD ["sh", "-c", \
+    "/tmp/test-install.sh && /tmp/test-commands.sh && cat /tmp/install-test.log /tmp/commands-test.log"]
