@@ -38,3 +38,6 @@ Thumbs.db
 # Build artifacts
 /dist/
 /build/
+
+# Install test logs
+/tests/install/results-*.log

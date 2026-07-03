@@ -1,0 +1,31 @@
+# Linuxbrew/Homebrew tap test on Linux.
+FROM ubuntu:24.04
+
+# Homebrew dependencies.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl git sudo build-essential && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -m -s /bin/sh -G sudo patchflow && \
+    echo 'patchflow ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/patchflow
+
+USER patchflow
+ENV HOME=/home/patchflow
+ENV PATH=/home/patchflow/.linuxbrew/bin:/home/patchflow/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Install Linuxbrew.
+RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" && \
+    echo 'eval "$(/home/patchflow/.linuxbrew/bin/brew shellenv)"' >> /home/patchflow/.bashrc
+
+# We cannot install from the real tap here in a closed test because it may fall
+# back to building from source. Instead, this image validates the install script
+# path side-by-side with the Homebrew tap path.
+WORKDIR /test
+COPY scripts/install.sh /tmp/install.sh
+COPY tests/install/test-install.sh /tmp/test-install.sh
+COPY tests/install/test-commands.sh /tmp/test-commands.sh
+
+RUN chmod +x /tmp/install.sh /tmp/test-install.sh /tmp/test-commands.sh
+
+CMD ["sh", "-c", \
+    "/tmp/test-install.sh && /tmp/test-commands.sh && cat /tmp/install-test.log /tmp/commands-test.log"]
