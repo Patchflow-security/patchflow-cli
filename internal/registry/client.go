@@ -70,7 +70,7 @@ func (c *MetadataClient) FetchLicenses(ctx context.Context, deps []analysis.Depe
 	var wg sync.WaitGroup
 
 	// Semaphore to limit concurrent HTTP requests (avoid rate limiting).
-	sem := make(chan struct{}, 10)
+	sem := make(chan struct{}, 20)
 
 	for _, dep := range deps {
 		if dep.License != "" {
@@ -136,10 +136,12 @@ func isUninformativeLicense(lic string) bool {
 
 // fetchLicenseForDep dispatches to the appropriate registry based on ecosystem.
 func (c *MetadataClient) fetchLicenseForDep(ctx context.Context, dep analysis.Dependency) string {
-	// Check cache first
+	// Check cache first. Has() distinguishes "not cached" from "cached as
+	// empty" — both return "" from Get(), but we only want to skip the
+	// network call when the entry actually exists in the cache.
 	if c.cache != nil {
-		if cached := c.cache.Get(dep); cached != "" {
-			return cached
+		if c.cache.Has(dep) {
+			return c.cache.Get(dep)
 		}
 	}
 
@@ -1512,6 +1514,29 @@ func (c *Cache) Get(dep analysis.Dependency) string {
 	}
 
 	return entry.License
+}
+
+// Has returns true if a cache entry exists and is not expired, regardless of
+// whether the cached license is empty. This distinguishes "not cached" from
+// "cached as empty" — both return "" from Get(), but only Has() tells us
+// whether we already attempted to fetch the license and should skip the
+// network call.
+func (c *Cache) Has(dep analysis.Dependency) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	path := c.cachePath(dep)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	var entry cacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return false
+	}
+
+	return time.Since(entry.FetchedAt) <= CacheTTL
 }
 
 // Set stores a license string in the cache.

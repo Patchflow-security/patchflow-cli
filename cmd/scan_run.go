@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/api"
 	"github.com/Patchflow-security/patchflow-cli/internal/baseline"
 	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
 	"github.com/Patchflow-security/patchflow-cli/internal/cwe"
@@ -62,6 +66,8 @@ var (
 	scanDisableFramework  []string
 	scanRulesConfigPath   string
 	scanConfigPath        string
+	scanSubmit            bool
+	scanProjectID         int
 )
 
 var scanRealCmd = &cobra.Command{
@@ -107,6 +113,8 @@ func init() {
 	scanRealCmd.Flags().StringSliceVar(&scanFramework, "framework", nil, "Enable specific framework rule packs (can be repeated, or 'auto' for detection-based activation)")
 	scanRealCmd.Flags().StringSliceVar(&scanDisableFramework, "disable-framework", nil, "Disable specific framework rule packs (can be repeated; takes precedence over --framework)")
 	scanRealCmd.Flags().StringVar(&scanRulesConfigPath, "rules-config", "", "Path to rules config YAML for block/inform/off mode overrides (legacy alias for --config; default: .patchflow/rules.yaml)")
+	scanRealCmd.Flags().BoolVar(&scanSubmit, "submit", false, "Submit scan results to the PatchFlow backend (requires authentication)")
+	scanRealCmd.Flags().IntVar(&scanProjectID, "project-id", 0, "Project ID for backend submission (required with --submit)")
 
 	scanCmd.AddCommand(scanRealCmd)
 }
@@ -203,10 +211,10 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 	}
 	scaStart := time.Now()
 	scaAnalyzer := sca.NewAnalyzer()
-	if scanChangedOnly {
-		scaAnalyzer.ChangedOnly = true
-		scaAnalyzer.ChangedFiles = repo.ChangedFiles
-	}
+	// SCA always scans all dependencies regardless of --changed-only/--since.
+	// Vulnerabilities in existing dependencies are still relevant even if the
+	// manifest file wasn't changed in this PR. Filtering to changed files
+	// would silently drop critical vulnerability findings.
 	switch scanProfile {
 	case "quick":
 		scaAnalyzer.MaxDepth = 1
@@ -329,6 +337,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 		sastStart := time.Now()
 		sastRunner := sast.NewRunner()
+		sastRunner.Quiet = output.IsJSON(formatter) || QuietFromContext(ctx)
 		if scanChangedOnly {
 			sastRunner.ChangedOnly = true
 			sastRunner.ChangedFiles = repo.ChangedFiles
@@ -726,10 +735,25 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// Save the raw AnalysisResult as JSON so `patchflow report` can reuse
+	// it without re-running the entire scan pipeline.
+	saveLastScanResult(repo.Root, result, &riskScore)
+
 	if output.IsJSON(formatter) {
 		// Enrich findings with OWASP category, fix suggestion, and detection method.
 		enrichedFindings := enrichFindingsForJSON(allFindings)
 		result.Findings = enrichedFindings
+
+		// Submit to backend if --submit is set (before printing so the scan_id
+		// from the backend can be included in the output).
+		if scanSubmit {
+			if err := submitScanToBackend(cmd, ctx, result); err != nil {
+				if !QuietFromContext(ctx) {
+					_ = formatter.PrintError(fmt.Errorf("backend submission failed: %w", err))
+				}
+				// Don't fail the scan — local results are still valid.
+			}
+		}
 
 		// For JSON mode, output the full result with scan metadata.
 		return formatter.Print(struct {
@@ -739,6 +763,15 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 			AnalysisResult: result,
 			Risk:           &riskScore,
 		})
+	}
+
+	// Submit to backend if --submit is set (non-JSON mode).
+	if scanSubmit {
+		if err := submitScanToBackend(cmd, ctx, result); err != nil {
+			if !QuietFromContext(ctx) {
+				_ = formatter.PrintError(fmt.Errorf("backend submission failed: %w", err))
+			}
+		}
 	}
 
 	// Terminal summary
@@ -1011,4 +1044,83 @@ func filterToPaths(files []string, paths []string) []string {
 		}
 	}
 	return result
+}
+
+// submitScanToBackend posts the AnalysisResult JSON to the backend's
+// POST /api/v1/cli/scan-results endpoint. Requires authentication
+// (patchflow login) and --project-id.
+func submitScanToBackend(cmd *cobra.Command, ctx context.Context, result *analysis.AnalysisResult) error {
+	if scanProjectID == 0 {
+		return fmt.Errorf("--project-id is required when using --submit")
+	}
+
+	token, err := requireAuthToken(cmd)
+	if err != nil {
+		return err
+	}
+
+	cfg := ConfigFromContext(ctx)
+	if cfg == nil || cfg.APIURL == "" {
+		return fmt.Errorf("no API URL configured. Set --api-url or run 'patchflow config set apiurl <url>'")
+	}
+
+	// Marshal the result to JSON (the backend expects the AnalysisResult schema).
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("failed to marshal scan result: %w", err)
+	}
+
+	client := api.NewClient(cfg.APIURL, token)
+	resp, err := client.PostScanResults(ctx, payload, scanProjectID, result.ScanID)
+	if err != nil {
+		return fmt.Errorf("backend rejected scan results: %w", err)
+	}
+
+	// Update the result's ScanID to the backend-assigned scan_id so the
+	// JSON output reflects the persisted scan.
+	result.ScanID = fmt.Sprintf("backend-scan-%d", resp.ScanID)
+
+	return nil
+}
+
+// lastScanFile is the filename for the cached scan result used by `patchflow report`.
+const lastScanFile = "last-scan.json"
+
+// saveLastScanResult writes the AnalysisResult as JSON to .patchflow/reports/
+// so `patchflow report` can reuse it without re-running the scan.
+func saveLastScanResult(root string, result *analysis.AnalysisResult, riskScore *risk.ScoreOutput) {
+	reportsDir := filepath.Join(root, ".patchflow", "reports")
+	if err := os.MkdirAll(reportsDir, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(reportsDir, lastScanFile)
+	data, err := json.MarshalIndent(struct {
+		*analysis.AnalysisResult `json:"analysis"`
+		Risk                     *risk.ScoreOutput `json:"risk"`
+	}{
+		AnalysisResult: result,
+		Risk:           riskScore,
+	}, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o644)
+}
+
+// loadLastScanResult reads the cached scan result from .patchflow/reports/last-scan.json.
+// Returns nil if the file doesn't exist or is invalid.
+func loadLastScanResult(root string) (*analysis.AnalysisResult, *risk.ScoreOutput) {
+	path := filepath.Join(root, ".patchflow", "reports", lastScanFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	var cached struct {
+		Analysis *analysis.AnalysisResult `json:"analysis"`
+		Risk     *risk.ScoreOutput              `json:"risk"`
+	}
+	if err := json.Unmarshal(data, &cached); err != nil {
+		return nil, nil
+	}
+	return cached.Analysis, cached.Risk
 }

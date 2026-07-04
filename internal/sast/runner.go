@@ -11,6 +11,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -102,6 +105,10 @@ type Runner struct {
 	// the taint pattern analyzer. 0 disables inter-procedural analysis.
 	// Default is 3. Set via the --taint-depth CLI flag.
 	TaintDepth int
+
+	// Quiet suppresses diagnostic log output (SAST timing logs, etc.) to
+	// keep stdout/stderr clean in JSON mode or CI scripting.
+	Quiet bool
 
 	// FrameworkConfig controls which framework rule packs are activated.
 	// It is the highest-precedence layer and is typically set from CLI flags.
@@ -438,6 +445,13 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	var timings []analysis.EngineTiming
 	phaseStart := time.Now()
 
+	// Suppress SAST diagnostic logs (timing output) when in quiet/JSON mode.
+	// These logs go to stderr and interfere with parseable output.
+	if r.Quiet {
+		log.SetOutput(io.Discard)
+		defer log.SetOutput(os.Stderr) // restore
+	}
+
 	// --- Phase 0: Load custom rules from YAML ---
 	policy, err := r.loadRulePolicy(root)
 	if err != nil {
@@ -565,6 +579,13 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// The taint-ssa analyzer has its own internal recovery, but
+					// add a second safety net so a panic never kills the scan.
+					resultCh <- scannerResult{name: "taint-ssa", findings: nil, err: fmt.Errorf("taint-ssa panic: %v", r)}
+				}
+			}()
 			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
 			findings, err := r.taintAnalyzer.Analyze(toolCtx, root)
 			cancel()
