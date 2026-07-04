@@ -22,6 +22,7 @@ import (
 
 	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
 	"github.com/Patchflow-security/patchflow-cli/internal/cacheutil"
+	"github.com/Patchflow-security/patchflow-cli/internal/licensedetect"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,14 +39,16 @@ const (
 
 // MetadataClient fetches package license info from public registries.
 type MetadataClient struct {
-	HTTPClient *http.Client
-	cache      *Cache
+	HTTPClient     *http.Client
+	cache          *Cache
+	licenseFetcher *licensedetect.Fetcher
 }
 
 // NewMetadataClient creates a registry metadata client with default settings.
 func NewMetadataClient() *MetadataClient {
 	return &MetadataClient{
-		HTTPClient: &http.Client{Timeout: DefaultTimeout},
+		HTTPClient:     &http.Client{Timeout: DefaultTimeout},
+		licenseFetcher: licensedetect.NewFetcher(),
 	}
 }
 
@@ -161,6 +164,12 @@ func (c *MetadataClient) fetchLicenseForDep(ctx context.Context, dep analysis.De
 			if dep.Repository != "" {
 				license = c.fetchGitHubLicense(ctx, dep.Repository)
 			}
+			// If still no luck, try extracting repo from PyPI metadata
+			if isUninformativeLicense(license) {
+				if repo := c.fetchPyPIRepositoryURL(ctx, dep.Name); repo != "" {
+					license = c.fetchGitHubLicense(ctx, repo)
+				}
+			}
 		}
 	case analysis.EcosystemMaven:
 		license = c.fetchMavenLicense(ctx, dep.Name, dep.Version)
@@ -174,6 +183,12 @@ func (c *MetadataClient) fetchLicenseForDep(ctx context.Context, dep analysis.De
 		if isUninformativeLicense(license) {
 			if dep.Repository != "" {
 				license = c.fetchGitHubLicense(ctx, dep.Repository)
+			}
+			// If still no luck, try extracting repo from RubyGems metadata
+			if isUninformativeLicense(license) {
+				if repo := c.fetchRubyGemsRepositoryURL(ctx, dep.Name); repo != "" {
+					license = c.fetchGitHubLicense(ctx, repo)
+				}
 			}
 		}
 	case analysis.EcosystemPackagist:
@@ -374,6 +389,90 @@ func (c *MetadataClient) fetchNPMRepositoryURL(ctx context.Context, name string)
 	// Try homepage URL — sometimes it's a GitHub URL
 	if repo := extractGitHubRepo(resp.Homepage); repo != "" {
 		return repo
+	}
+	return ""
+}
+
+// fetchPyPIRepositoryURL fetches the repository URL from PyPI's JSON API.
+// PyPI metadata includes project_urls with keys like "Homepage", "Source",
+// "Repository" that may point to GitHub.
+func (c *MetadataClient) fetchPyPIRepositoryURL(ctx context.Context, name string) string {
+	name = strings.Split(name, "[")[0]
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+
+	url := fmt.Sprintf("%s/%s/json", PyPIRegistryURL, name)
+	body, err := c.httpGet(ctx, url)
+	if err != nil {
+		return ""
+	}
+
+	var resp struct {
+		Info struct {
+			ProjectURLs map[string]string `json:"project_urls"`
+			Homepage    string            `json:"home_page"`
+			PackageURL  string            `json:"package_url"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ""
+	}
+
+	// Check project_urls for GitHub links
+	for _, u := range resp.Info.ProjectURLs {
+		if repo := extractGitHubRepo(u); repo != "" {
+			return repo
+		}
+	}
+
+	// Try homepage
+	if repo := extractGitHubRepo(resp.Info.Homepage); repo != "" {
+		return repo
+	}
+
+	// Try package_url (sometimes it's a GitHub URL for GitHub-hosted packages)
+	if repo := extractGitHubRepo(resp.Info.PackageURL); repo != "" {
+		return repo
+	}
+	return ""
+}
+
+// fetchRubyGemsRepositoryURL fetches the repository URL from RubyGems API.
+// RubyGems returns source_code_uri, homepage_uri, and repository_uri.
+func (c *MetadataClient) fetchRubyGemsRepositoryURL(ctx context.Context, name string) string {
+	name = strings.TrimSpace(name)
+	// Strip version constraints
+	for _, sep := range []string{" ", "~", ">", "<", "=", "!"} {
+		if idx := strings.Index(name, sep); idx > 0 {
+			name = name[:idx]
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+
+	url := fmt.Sprintf("https://rubygems.org/api/v1/gems/%s.json", name)
+	body, err := c.httpGet(ctx, url)
+	if err != nil {
+		return ""
+	}
+
+	var resp struct {
+		SourceCode string `json:"source_code_uri"`
+		Homepage   string `json:"homepage_uri"`
+		Repo       string `json:"repository_uri"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ""
+	}
+
+	for _, u := range []string{resp.SourceCode, resp.Repo, resp.Homepage} {
+		if repo := extractGitHubRepo(u); repo != "" {
+			return repo
+		}
 	}
 	return ""
 }
@@ -1034,6 +1133,8 @@ func (c *MetadataClient) fetchPackagistLicense(ctx context.Context, name, versio
 // fetchGitHubLicense fetches the license file from a GitHub repository
 // using the GitHub API. The repository should be in "owner/repo" format.
 // Returns the SPDX license identifier (e.g., "MIT", "Apache-2.0").
+// If the GitHub API returns NOASSERTION or fails, falls back to fetching
+// the raw LICENSE file and using text-based detection (licensee-style).
 func (c *MetadataClient) fetchGitHubLicense(ctx context.Context, repo string) string {
 	repo = strings.TrimSpace(repo)
 	if repo == "" {
@@ -1055,28 +1156,33 @@ func (c *MetadataClient) fetchGitHubLicense(ctx context.Context, repo string) st
 	// /v2, /subpath, /proto are common in Go module paths.
 	repo = fmt.Sprintf("%s/%s", parts[0], parts[1])
 
+	// Try the GitHub API first
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/license", parts[0], parts[1])
 	body, err := c.httpGet(ctx, url)
-	if err != nil {
-		return ""
+	if err == nil {
+		var resp struct {
+			License struct {
+				SPDXID string `json:"spdx_id"`
+				Name   string `json:"name"`
+			} `json:"license"`
+		}
+		if json.Unmarshal(body, &resp) == nil {
+			if resp.License.SPDXID != "" && resp.License.SPDXID != "NOASSERTION" {
+				return resp.License.SPDXID
+			}
+			if resp.License.Name != "" && !isUninformativeLicense(resp.License.Name) {
+				return resp.License.Name
+			}
+		}
 	}
 
-	var resp struct {
-		License struct {
-			SPDXID string `json:"spdx_id"`
-			Name   string `json:"name"`
-		} `json:"license"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return ""
+	// Fallback: fetch the raw LICENSE file and use text-based detection
+	if c.licenseFetcher != nil {
+		if lic := c.licenseFetcher.FetchLicenseFileFromRepo(ctx, repo); lic != "" {
+			return lic
+		}
 	}
 
-	if resp.License.SPDXID != "" && resp.License.SPDXID != "NOASSERTION" {
-		return resp.License.SPDXID
-	}
-	if resp.License.Name != "" {
-		return resp.License.Name
-	}
 	return ""
 }
 
