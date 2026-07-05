@@ -37,8 +37,14 @@ import (
 
 // RuleFile represents the YAML structure of a custom rules file.
 type RuleFile struct {
+	// Rules is the legacy key for custom pattern rules (a list). The unified
+	// config (B11.5.4) also accepts `custom_rules:` for the same list; both
+	// are merged at load time so a single file works with the mode-override
+	// loader (which reads `rules:` as a map) without conflict.
 	Rules              []YAMLRule                           `yaml:"rules"`
+	CustomRules        []YAMLRule                           `yaml:"custom_rules"`
 	TaintRules         []YAMLTaintRule                      `yaml:"taint_rules"`
+	CustomTaintRules   []YAMLTaintRule                      `yaml:"custom_taint_rules"`
 	Frameworks         YAMLFrameworkSelection               `yaml:"frameworks"`
 	FrameworkOverrides map[string]YAMLFrameworkPackOverride `yaml:"framework_overrides"`
 	FrameworkExtensions map[string]YAMLFrameworkExtension   `yaml:"framework_extensions"`
@@ -271,19 +277,54 @@ func LoadPolicyFromBytes(data []byte) (*Policy, error) {
 		FrameworkOverrides: make(map[string]fwpatterns.PackOverride),
 	}
 
+	// Merge the legacy `rules:` list and the unified `custom_rules:` list.
+	// Both are custom pattern rules; dedup by ID (legacy first, then unified).
+	seenRuleIDs := make(map[string]bool)
 	for i, yr := range ruleFile.Rules {
 		rule, err := convertRule(yr, i)
 		if err != nil {
 			return nil, err
 		}
+		if seenRuleIDs[rule.ID] {
+			continue
+		}
+		seenRuleIDs[rule.ID] = true
+		policy.PatternRules = append(policy.PatternRules, rule)
+	}
+	for i, yr := range ruleFile.CustomRules {
+		rule, err := convertRule(yr, i+len(ruleFile.Rules))
+		if err != nil {
+			return nil, err
+		}
+		if seenRuleIDs[rule.ID] {
+			continue
+		}
+		seenRuleIDs[rule.ID] = true
 		policy.PatternRules = append(policy.PatternRules, rule)
 	}
 
+	// Merge legacy `taint_rules:` and unified `custom_taint_rules:`.
+	seenTaintIDs := make(map[string]bool)
 	for i, yr := range ruleFile.TaintRules {
 		rule, err := convertTaintRule(yr, i)
 		if err != nil {
 			return nil, err
 		}
+		if seenTaintIDs[rule.ID] {
+			continue
+		}
+		seenTaintIDs[rule.ID] = true
+		policy.TaintRules = append(policy.TaintRules, rule)
+	}
+	for i, yr := range ruleFile.CustomTaintRules {
+		rule, err := convertTaintRule(yr, i+len(ruleFile.TaintRules))
+		if err != nil {
+			return nil, err
+		}
+		if seenTaintIDs[rule.ID] {
+			continue
+		}
+		seenTaintIDs[rule.ID] = true
 		policy.TaintRules = append(policy.TaintRules, rule)
 	}
 
