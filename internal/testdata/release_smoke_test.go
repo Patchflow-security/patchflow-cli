@@ -68,6 +68,29 @@ func TestReleaseSmoke(t *testing.T) {
 			minFindings: 0,
 			maxFindings: 0,
 		},
+		// Regression fixtures from Safe-pip-backend (2026-07-05).
+		// fastapi-orm-safe: parameterized SQLAlchemy select().where() must NOT
+		// produce taint findings. Before the -IP safe-pattern suppression fix,
+		// this produced 2 PF-FASTAPI-SQLI-002-IP false positives.
+		{
+			name:        "fastapi-orm-safe-no-false-positives",
+			fixture:     "fastapi-orm-safe",
+			framework:   "fastapi",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		// fastapi-real-findings: actual vulnerabilities (verify=False, sha1,
+		// text(f"...")) must be detected. This is the precision canary — if
+		// findings drop below 3, the scanner lost coverage.
+		{
+			name:        "fastapi-real-findings-detected",
+			fixture:     "fastapi-real-findings",
+			framework:   "fastapi",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 3,
+			maxFindings: 15,
+		},
 	}
 
 	for _, tt := range tests {
