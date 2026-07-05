@@ -678,8 +678,22 @@ func parseLanguage(s string) (patterns.Language, error) {
 		return patterns.LangRuby, nil
 	case "php":
 		return patterns.LangPHP, nil
+	case "java":
+		return patterns.LangJava, nil
+	case "csharp", "c_sharp", "c#":
+		return patterns.LangCSharp, nil
+	case "go", "golang":
+		return patterns.LangGo, nil
+	case "rust", "rs":
+		return patterns.LangRust, nil
+	case "yaml", "yml":
+		return patterns.LangYAML, nil
+	case "dockerfile", "docker":
+		return patterns.LangDockerfile, nil
+	case "terraform", "tf", "hcl":
+		return patterns.LangTerraform, nil
 	default:
-		return "", fmt.Errorf("unsupported language: %s (supported: python, javascript, typescript, ruby, php)", s)
+		return "", fmt.Errorf("unsupported language: %s (supported: python, javascript, typescript, ruby, php, java, csharp, go, rust, yaml, dockerfile, terraform)", s)
 	}
 }
 
