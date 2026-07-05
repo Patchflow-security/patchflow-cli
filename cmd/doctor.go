@@ -75,6 +75,14 @@ var doctorCmd = &cobra.Command{
 			fmt.Printf("[X]  SARIF output not writable: %s\n", report.SARIFError)
 		}
 
+		// Config round-trip check (B11.5.4 regression guard)
+		fmt.Println("\nConfig round-trip:")
+		if report.ConfigRoundTripOK {
+			fmt.Println("[OK] Unified --config loads via both rulesconfig + customrules")
+		} else {
+			fmt.Printf("[X]  Config round-trip failed: %s\n", report.ConfigRoundTripError)
+		}
+
 		// Embedded scanners
 		fmt.Println("\nEmbedded SAST Scanners (always available, zero installation):")
 		for _, s := range report.EmbeddedScanners {
