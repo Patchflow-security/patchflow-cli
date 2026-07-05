@@ -21,12 +21,14 @@ type functionBoundary struct {
 // trimmed line. Keywords use non-capturing groups so the first capture group
 // is always the function/method/class name.
 var funcDefPatterns = regexp.MustCompile(
-	// Python/Ruby: def method_name, class ClassName
-	`^(?:def|class)\s+(\w+)` +
+	// Python/Ruby: def method_name, class ClassName.
+	// Also handles `async def` (Python 3.5+) and `async class` is not valid,
+	// so async only applies to def.
+	`^(?:async\s+)?(?:def|class)\s+(\w+)` +
 		// Go: func methodName, func (recv) methodName
 		`|^func\s+(?:\([^)]*\)\s+)?(\w+)` +
-		// JavaScript/TypeScript: function methodName
-		`|^function\s+(\w+)` +
+		// JavaScript/TypeScript: function methodName, async function methodName
+		`|^(?:async\s+)?function\s+(\w+)` +
 		// Java: public/private/protected static? ReturnType methodName(
 		`|^(?:public|private|protected)\s+(?:static\s+)?(?:\w+(?:<[^>]*>)?\s+)?(\w+)\s*\(` +
 		// Ruby: def self.method_name (already covered by def above, but

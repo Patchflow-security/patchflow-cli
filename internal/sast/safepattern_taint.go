@@ -24,6 +24,12 @@ import (
 //
 // Only findings with a rule ID in the safePatterns map are considered.
 // Non-taint findings and findings without safe patterns are passed through.
+//
+// Interprocedural taint findings carry a "-IP" suffix on their rule ID
+// (e.g., PF-FASTAPI-SQLI-002-IP) while the safePatterns map is keyed by
+// the base rule ID (PF-FASTAPI-SQLI-002). We resolve the base ID before
+// lookup so safe patterns apply to both base and -IP variants. This
+// mirrors the -IP stripping in dedupBaseVsInterprocedural (B10).
 func suppressTaintWithSafePatterns(findings []analysis.Finding, safePatterns map[string][]fwpatterns.SafePattern, root string) []analysis.Finding {
 	if len(safePatterns) == 0 {
 		return findings
@@ -35,7 +41,10 @@ func suppressTaintWithSafePatterns(findings []analysis.Finding, safePatterns map
 		if f.RuleID == "" {
 			continue
 		}
-		if _, has := safePatterns[f.RuleID]; !has {
+		// Resolve the base rule ID (strip "-IP") so safe patterns registered
+		// against the base rule also suppress interprocedural variants.
+		baseID := stripIPSuffixFromRule(f.RuleID)
+		if _, has := safePatterns[baseID]; !has {
 			continue
 		}
 		// Only suppress taint-patterns and framework-taint findings
@@ -88,8 +97,9 @@ func suppressTaintWithSafePatterns(findings []analysis.Finding, safePatterns map
 				}
 			}
 
-			// Check if any safe pattern matches within the function's line range
-			patterns := safePatterns[f.RuleID]
+			// Check if any safe pattern matches within the function's line range.
+			// Use the base rule ID (strip "-IP") to match the safePatterns map keys.
+			patterns := safePatterns[stripIPSuffixFromRule(f.RuleID)]
 			for _, sp := range patterns {
 				if sp.Regex == nil {
 					continue
