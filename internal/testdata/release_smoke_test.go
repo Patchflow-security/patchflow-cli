@@ -91,6 +91,103 @@ func TestReleaseSmoke(t *testing.T) {
 			minFindings: 3,
 			maxFindings: 15,
 		},
+		// --- Cross-language taint framework regression fixtures ---
+		// Each taint framework has a safe fixture (0 findings — safe patterns
+		// suppress -IP false positives) and a vulnerable fixture (findings
+		// detected — precision canary). This covers all 6 taint frameworks.
+
+		// Spring (Java) — 4 taint rules (SQLi, SSRF, redirect, deser)
+		// spring-safe: parameterized JPA query must NOT produce taint findings.
+		// JAVA064 (endpoint without @PreAuthorize) is a low-severity pattern
+		// finding unrelated to SQLi safe-pattern suppression — allowed.
+		{
+			name:        "spring-safe-parameterized-jpa-no-false-positives",
+			fixture:     "spring-safe",
+			framework:   "spring",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 2,
+		},
+		{
+			name:        "spring-vuln-sqli-and-redirect-detected",
+			fixture:     "spring-vuln",
+			framework:   "spring",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// Rails (Ruby) — 2 taint rules (SQLi, redirect)
+		{
+			name:        "rails-safe-parameterized-orm-no-false-positives",
+			fixture:     "rails-safe",
+			framework:   "rails",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "rails-vuln-sqli-and-redirect-detected",
+			fixture:     "rails-vuln",
+			framework:   "rails",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// Flask (Python) — 2 taint rules (SQLi, SSRF)
+		{
+			name:        "flask-safe-orm-select-no-false-positives",
+			fixture:     "flask-safe",
+			framework:   "flask",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "flask-vuln-sqli-and-ssrf-detected",
+			fixture:     "flask-vuln",
+			framework:   "flask",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// GraphQL (Python) — 3 taint rules (SQLi, SSRF, path traversal)
+		{
+			name:        "graphql-safe-orm-select-no-false-positives",
+			fixture:     "graphql-safe",
+			framework:   "graphql",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "graphql-vuln-sqli-and-ssrf-detected",
+			fixture:     "graphql-vuln",
+			framework:   "graphql",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// Angular (TypeScript) — 2 taint rules (XSS, redirect)
+		{
+			name:        "angular-safe-dom-sanitizer-no-false-positives",
+			fixture:     "angular-safe",
+			framework:   "angular",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "angular-vuln-innerhtml-xss-detected",
+			fixture:     "angular-vuln",
+			framework:   "angular",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
 	}
 
 	for _, tt := range tests {

@@ -121,6 +121,11 @@ type Runner struct {
 	// Used for taint-mode safe pattern suppression after scanning.
 	fwSafePatterns map[string][]fwpatterns.SafePattern
 
+	// fwSafePatternsByCWE maps "CWE-89:ruby" → safe patterns. Allows generic
+	// taint rules (TP-RB001, TP-PY001) to be suppressed by framework safe
+	// patterns when the framework is active.
+	fwSafePatternsByCWE map[string][]fwpatterns.SafePattern
+
 	// FrameworksDetected holds the frameworks detected during the last
 	// Analyze run. Populated by Analyze; read by callers for reporting
 	// and explain output.
@@ -499,6 +504,12 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		// Pattern/template rules already use safe patterns in the matcher;
 		// this map enables taint-rule safe pattern suppression.
 		fwSafePatterns := map[string][]fwpatterns.SafePattern{}
+		// fwSafePatternsByCWE maps "CWE-89:ruby" → safe patterns. This allows
+		// generic taint rules (TP-RB001, TP-PY001) to be suppressed by framework
+		// safe patterns when the framework is active. Without this, a Rails
+		// .where( safe pattern registered for PF-RAILS-SQLI-003 would not
+		// suppress the generic TP-RB001 finding on the same code.
+		fwSafePatternsByCWE := map[string][]fwpatterns.SafePattern{}
 		for _, p := range selection.Packs {
 			if policy != nil {
 				if override, ok := policy.FrameworkOverrides[p.Name()]; ok {
@@ -508,6 +519,11 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			for _, r := range p.Rules() {
 				if len(r.SafePatterns) > 0 {
 					fwSafePatterns[r.ID] = r.SafePatterns
+					// Also index by CWE+language for generic taint rule suppression
+					if r.CWE != "" && r.Language != "" {
+						key := r.CWE + ":" + r.Language
+						fwSafePatternsByCWE[key] = append(fwSafePatternsByCWE[key], r.SafePatterns...)
+					}
 				}
 			}
 			fwRules = append(fwRules, p.Rules()...)
@@ -518,6 +534,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		r.taintPatternAnalyzer.AddRules(fwpatterns.ToTaintRules(fwRules))
 		// Store safe patterns for taint suppression (used in Phase 2e.5).
 		r.fwSafePatterns = fwSafePatterns
+		r.fwSafePatternsByCWE = fwSafePatternsByCWE
 	}
 	timings = append(timings, analysis.EngineTiming{Engine: "framework_detection", Duration: time.Since(phaseStart)})
 	phaseStart = time.Now()
@@ -778,8 +795,8 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// Suppress taint findings whose containing function also contains a
 	// safe pattern (e.g., TenantAuth.requireOwner). This applies to
 	// framework taint rules that carry SafePatterns from extensions.
-	if len(r.fwSafePatterns) > 0 {
-		result.Findings = suppressTaintWithSafePatterns(result.Findings, r.fwSafePatterns, root)
+	if len(r.fwSafePatterns) > 0 || len(r.fwSafePatternsByCWE) > 0 {
+		result.Findings = suppressTaintWithSafePatternsAndCWE(result.Findings, r.fwSafePatterns, r.fwSafePatternsByCWE, root)
 	}
 
 	// --- Phase 2f: Issue grouping ---
