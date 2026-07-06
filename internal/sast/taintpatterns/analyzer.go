@@ -286,6 +286,9 @@ func isFunctionDef(nodeType, lang string) bool {
 		return nodeType == "method_declaration" || nodeType == "constructor_declaration"
 	case "c_sharp":
 		return nodeType == "method_declaration" || nodeType == "constructor_declaration"
+	case "go":
+		return nodeType == "function_declaration" || nodeType == "method_declaration" ||
+			nodeType == "func_literal"
 	}
 	return false
 }
@@ -532,10 +535,12 @@ func (a *Analyzer) walkFunctionBody(node *gotreesitter.Node, bt *gotreesitter.Bo
 	// PHP: assignment_expression, simple_assignment
 	// Java: local_variable_declaration (wraps variable_declarator)
 	// C#: local_declaration_statement (wraps variable_declaration → variable_declarator)
+	// Go: short_var_declaration (:=), var_declaration (var x = ...), assignment_statement (=)
 	if nt == "assignment" || nt == "assignment_expression" || nt == "variable_declarator" ||
 		nt == "lexical_declaration" || nt == "variable_declaration" ||
 		nt == "operator_assignment" || nt == "simple_assignment" ||
-		nt == "local_variable_declaration" || nt == "local_declaration_statement" {
+		nt == "local_variable_declaration" || nt == "local_declaration_statement" ||
+		nt == "short_var_declaration" || nt == "var_declaration" || nt == "assignment_statement" {
 		a.checkAssignment(node, bt, lang, src, taintedVars)
 	}
 
@@ -544,6 +549,7 @@ func (a *Analyzer) walkFunctionBody(node *gotreesitter.Node, bt *gotreesitter.Bo
 	// PHP: "function_call_expression", Java: "method_invocation",
 	// C#: "invocation_expression"
 	// Java/C#: "object_creation_expression" (new keyword constructor calls)
+	// Go: "call_expression" (same as JS/TS)
 	if nt == "call" || nt == "call_expression" ||
 		nt == "function_call_expression" || nt == "method_invocation" ||
 		nt == "invocation_expression" || nt == "object_creation_expression" {
@@ -622,6 +628,41 @@ func (a *Analyzer) checkAssignment(node *gotreesitter.Node, bt *gotreesitter.Bou
 				break
 			}
 		}
+	} else if nt == "short_var_declaration" || nt == "assignment_statement" {
+		// Go: short_var_declaration (q := expr) and assignment_statement (q = expr)
+		// Both have two expression_list children: LHS and RHS, separated by := or =
+		var exprLists []*gotreesitter.Node
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+			if bt.NodeType(child) == "expression_list" {
+				exprLists = append(exprLists, child)
+			}
+		}
+		if len(exprLists) >= 2 {
+			lhsNode = exprLists[0]
+			rhsNode = exprLists[1]
+		}
+	} else if nt == "var_declaration" {
+		// Go: var q string = expr
+		// Has identifier (name), optional type, and expression_list (value)
+		var exprList *gotreesitter.Node
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child == nil {
+				continue
+			}
+			ct := bt.NodeType(child)
+			if ct == "identifier" && lhsNode == nil {
+				lhsNode = child
+			}
+			if ct == "expression_list" {
+				exprList = child
+			}
+		}
+		rhsNode = exprList
 	}
 
 	if lhsNode == nil || rhsNode == nil {
@@ -631,6 +672,13 @@ func (a *Analyzer) checkAssignment(node *gotreesitter.Node, bt *gotreesitter.Bou
 	varName := bt.NodeText(lhsNode)
 	if varName == "" {
 		return
+	}
+	// Go expression_list may contain multiple identifiers (e.g., "q, err").
+	// Extract just the first identifier for taint tracking.
+	if nt == "short_var_declaration" || nt == "assignment_statement" || nt == "var_declaration" {
+		if first := firstIdentifier(lhsNode, bt); first != "" {
+			varName = first
+		}
 	}
 
 	// Check if the RHS is a call to a sanitizer — if so, clear taint.
@@ -926,7 +974,27 @@ func isPunctuation(nodeType string) bool {
 	return nodeType == "(" || nodeType == ")" || nodeType == "," ||
 		nodeType == "[" || nodeType == "]" || nodeType == "{" || nodeType == "}" ||
 		nodeType == ";" || nodeType == "->" || nodeType == "=>" ||
-		nodeType == "::" || nodeType == "."
+		nodeType == "::" || nodeType == "." || nodeType == ":=" ||
+		nodeType == "="
+}
+
+// firstIdentifier returns the text of the first identifier descendant of a
+// node. Used for Go's expression_list which may contain multiple identifiers
+// (e.g., "q, err := ..."). Returns "" if no identifier is found.
+func firstIdentifier(node *gotreesitter.Node, bt *gotreesitter.BoundTree) string {
+	if node == nil {
+		return ""
+	}
+	nt := bt.NodeType(node)
+	if nt == "identifier" || nt == "field_identifier" {
+		return bt.NodeText(node)
+	}
+	for i := 0; i < int(node.ChildCount()); i++ {
+		if result := firstIdentifier(node.Child(i), bt); result != "" {
+			return result
+		}
+	}
+	return ""
 }
 
 // matchesSource checks if a node represents a taint source.

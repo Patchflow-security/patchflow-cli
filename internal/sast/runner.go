@@ -452,7 +452,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 
 	// Suppress SAST diagnostic logs (timing output) when in quiet/JSON mode.
 	// These logs go to stderr and interfere with parseable output.
-	if r.Quiet {
+	if r.Quiet && false {
 		log.SetOutput(io.Discard)
 		defer log.SetOutput(os.Stderr) // restore
 	}

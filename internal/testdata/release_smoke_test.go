@@ -188,6 +188,78 @@ func TestReleaseSmoke(t *testing.T) {
 			minFindings: 1,
 			maxFindings: 15,
 		},
+
+		// Echo (Go) — 3 taint rules (SQLi, redirect, XSS)
+		{
+			name:        "echo-safe-parameterized-query-no-false-positives",
+			fixture:     "echo-safe",
+			framework:   "echo",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "echo-vuln-sqli-and-redirect-detected",
+			fixture:     "echo-vuln",
+			framework:   "echo",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// Gin (Go) — 3 taint rules (SQLi, redirect, CMDI)
+		{
+			name:        "gin-safe-parameterized-query-no-false-positives",
+			fixture:     "gin-safe",
+			framework:   "gin",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "gin-vuln-sqli-and-redirect-detected",
+			fixture:     "gin-vuln",
+			framework:   "gin",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// Laravel (PHP) — 3 taint rules (SQLi, redirect, deser)
+		{
+			name:        "laravel-safe-parameterized-query-no-false-positives",
+			fixture:     "laravel-safe",
+			framework:   "laravel",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "laravel-vuln-sqli-and-redirect-detected",
+			fixture:     "laravel-vuln",
+			framework:   "laravel",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
+
+		// Symfony (PHP) — 2 taint rules (SQLi, redirect)
+		{
+			name:        "symfony-safe-parameterized-query-no-false-positives",
+			fixture:     "symfony-safe",
+			framework:   "symfony",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 0,
+			maxFindings: 0,
+		},
+		{
+			name:        "symfony-vuln-sqli-and-redirect-detected",
+			fixture:     "symfony-vuln",
+			framework:   "symfony",
+			configPath:  ".patchflow/rules.yaml",
+			minFindings: 1,
+			maxFindings: 15,
+		},
 	}
 
 	for _, tt := range tests {

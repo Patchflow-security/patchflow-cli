@@ -487,8 +487,8 @@ public class UserController {
 func TestRulesCount(t *testing.T) {
 	a := NewAnalyzer()
 	rules := a.Rules()
-	if len(rules) != 47 {
-		t.Errorf("expected 47 taint pattern rules, got %d", len(rules))
+	if len(rules) != 51 {
+		t.Errorf("expected 51 taint pattern rules, got %d", len(rules))
 	}
 }
 
