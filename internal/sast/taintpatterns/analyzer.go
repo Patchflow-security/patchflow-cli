@@ -546,13 +546,14 @@ func (a *Analyzer) walkFunctionBody(node *gotreesitter.Node, bt *gotreesitter.Bo
 
 	// Check for sink calls: sink(tainted_var)
 	// Python: "call", JS/TS: "call_expression", Ruby: "call",
-	// PHP: "function_call_expression", Java: "method_invocation",
-	// C#: "invocation_expression"
+	// PHP: "function_call_expression", "member_call_expression", "scoped_call_expression"
+	// Java: "method_invocation", C#: "invocation_expression"
 	// Java/C#: "object_creation_expression" (new keyword constructor calls)
 	// Go: "call_expression" (same as JS/TS)
 	if nt == "call" || nt == "call_expression" ||
 		nt == "function_call_expression" || nt == "method_invocation" ||
-		nt == "invocation_expression" || nt == "object_creation_expression" {
+		nt == "invocation_expression" || nt == "object_creation_expression" ||
+		nt == "member_call_expression" || nt == "scoped_call_expression" {
 		a.checkSinkCall(node, bt, lang, absPath, root, src, taintedVars, findings)
 	}
 
@@ -743,6 +744,8 @@ func defaultSanitizers(lang string) []string {
 		return []string{"StringEscapeUtils.escapeHtml", "URLEncoder.encode", "org.apache.commons.text.StringEscapeUtils.escapeHtml4"}
 	case "c_sharp":
 		return []string{"HttpUtility.HtmlEncode", "WebUtility.HtmlEncode", "HttpUtility.UrlEncode"}
+	case "go":
+		return []string{"filepath.Clean", "filepath.Base", "html.EscapeString", "url.QueryEscape", "url.PathEscape", "regexp.MustCompile", "strconv.Atoi", "strconv.ParseInt"}
 	default:
 		return nil
 	}
@@ -810,6 +813,18 @@ func (a *Analyzer) checkSinkCall(node *gotreesitter.Node, bt *gotreesitter.Bound
 func extractCallName(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string) string {
 	nt := bt.NodeType(node)
 
+	// Go wraps expressions in expression_list. Unwrap to the first child.
+	if nt == "expression_list" {
+		for i := 0; i < int(node.ChildCount()); i++ {
+			child := node.Child(i)
+			if child == nil || isPunctuation(bt.NodeType(child)) {
+				continue
+			}
+			return extractCallName(child, bt, lang)
+		}
+		return ""
+	}
+
 	// Python "call" uses the "function" field
 	if nt == "call" && lang == "python" {
 		funcNode := bt.ChildByField(node, "function")
@@ -846,6 +861,18 @@ func extractCallName(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang s
 			}
 		}
 		return ""
+	}
+
+	// PHP "member_call_expression" has: variable_name(receiver) + name(method)
+	// Return the full receiver->method path (e.g., "$request->get", "DB::select")
+	if nt == "member_call_expression" {
+		return extractDottedPath(node, bt)
+	}
+
+	// PHP "scoped_call_expression" has: qualified_name(receiver) + name(method)
+	// e.g., \DB::select(args) → "DB::select"
+	if nt == "scoped_call_expression" {
+		return extractDottedPath(node, bt)
 	}
 
 	// Java "method_invocation" has: identifier(receiver) + "." + identifier(method)
@@ -923,10 +950,12 @@ func extractLastIdentifier(node *gotreesitter.Node, bt *gotreesitter.BoundTree) 
 
 // extractDottedPath returns the full receiver.method path from a call node.
 // For example, Ruby "File.open(args)" → "File.open", "User.where(args)" → "User.where".
-// It concatenates identifier/constant children with "." separators, stopping
-// before the argument_list.
+// PHP "$request->get(args)" → "$request->get", "DB::select(args)" → "DB::select".
+// It concatenates identifier/constant/variable_name/name children with appropriate
+// separators, stopping before the argument_list.
 func extractDottedPath(node *gotreesitter.Node, bt *gotreesitter.BoundTree) string {
 	var parts []string
+	var sep = "."
 	for i := 0; i < int(node.ChildCount()); i++ {
 		child := node.Child(i)
 		if child == nil {
@@ -936,11 +965,37 @@ func extractDottedPath(node *gotreesitter.Node, bt *gotreesitter.BoundTree) stri
 		if ct == "argument_list" || ct == "arguments" {
 			break
 		}
-		if ct == "identifier" || ct == "constant" {
-			parts = append(parts, bt.NodeText(child))
+		// PHP member_call_expression uses "->" between receiver and method
+		if ct == "->" {
+			sep = "->"
+			continue
+		}
+		// PHP scoped call uses "::"
+		if ct == "::" {
+			sep = "::"
+			continue
+		}
+		if ct == "identifier" || ct == "constant" || ct == "variable_name" || ct == "name" || ct == "qualified_name" {
+			text := bt.NodeText(child)
+			// Strip leading backslash from PHP qualified names (e.g., "\DB" → "DB")
+			text = strings.TrimPrefix(text, "\\")
+			parts = append(parts, text)
 		}
 	}
-	return strings.Join(parts, ".")
+	if len(parts) < 2 {
+		return strings.Join(parts, sep)
+	}
+	// Use the detected separator between the last two parts (receiver->method)
+	// and "." for earlier parts (e.g., package.Class.method in Java)
+	result := parts[0]
+	for i := 1; i < len(parts); i++ {
+		if i == len(parts)-1 && sep != "." {
+			result += sep + parts[i]
+		} else {
+			result += "." + parts[i]
+		}
+	}
+	return result
 }
 
 // extractCallArgs extracts the arguments node from a call node across
@@ -1083,6 +1138,10 @@ func sinkMatches(funcName, sinkPattern string) bool {
 	}
 	// Qualified call: Module::Class.method matches sink "method"
 	if strings.HasSuffix(funcName, "::"+sinkPattern) {
+		return true
+	}
+	// PHP member call: $obj->method matches sink "method"
+	if strings.HasSuffix(funcName, "->"+sinkPattern) {
 		return true
 	}
 	return false

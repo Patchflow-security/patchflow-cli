@@ -822,6 +822,12 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		}
 		result.Findings = filtered
 	}
+	log.Printf("[runner-debug] after Phase 3 suppression: %d findings", len(result.Findings))
+	for _, f := range result.Findings {
+		if f.Analyzer == "taint-patterns" {
+			log.Printf("[runner-debug]   taint: rule=%s file=%s line=%d", f.RuleID, f.FilePath, f.LineStart)
+		}
+	}
 
 	// --- Phase 4: Enrich findings with OWASP category ---
 	for i := range result.Findings {
