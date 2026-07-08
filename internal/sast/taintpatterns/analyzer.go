@@ -558,7 +558,25 @@ func (a *Analyzer) walkFunctionBody(node *gotreesitter.Node, bt *gotreesitter.Bo
 	}
 
 	for i := 0; i < int(node.ChildCount()); i++ {
-		a.walkFunctionBody(node.Child(i), bt, lang, absPath, root, src, taintedVars, findings)
+		child := node.Child(i)
+		if child == nil {
+			continue
+		}
+		// Closure capture: when we encounter a func_literal (Go) or
+		// arrow_function (JS/TS) inside a function body, analyze it with
+		// a COPY of the current taintedVars so captured variables are
+		// tainted in the closure's scope.
+		ct := bt.NodeType(child)
+		if isFunctionDef(ct, lang) {
+			closureVars := make(map[string]bool)
+			for k, v := range taintedVars {
+				closureVars[k] = v
+			}
+			a.seedAnnotatedParams(child, bt, lang, src, closureVars)
+			a.walkFunctionBody(child, bt, lang, absPath, root, src, closureVars, findings)
+			continue
+		}
+		a.walkFunctionBody(child, bt, lang, absPath, root, src, taintedVars, findings)
 	}
 }
 
@@ -788,9 +806,15 @@ func (a *Analyzer) checkSinkCall(node *gotreesitter.Node, bt *gotreesitter.Bound
 
 				argText := bt.NodeText(arg)
 				if isArgTainted(arg, bt, taintedVars) {
-					f := a.makeFinding(rule, node, bt, absPath, root, funcName, argText, taintedVars)
-					*findings = append(*findings, f)
-					break
+					// Check if the argument is wrapped in a sanitizer call
+					// (e.g., os.ReadFile(filepath.Clean(file))). If the
+					// outermost call in the argument is a sanitizer, skip
+					// the finding — the sanitizer neutralizes the taint.
+					if !isArgSanitized(arg, bt, lang, a) {
+						f := a.makeFinding(rule, node, bt, absPath, root, funcName, argText, taintedVars)
+						*findings = append(*findings, f)
+						break
+					}
 				}
 				// Also check for direct source-to-sink flows where the source
 				// is used inline in the sink argument without being assigned to
@@ -908,7 +932,7 @@ func extractCallName(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang s
 		return ""
 	}
 
-	// Java/C# "object_creation_expression" (new Type(args))
+	// Java/C#/PHP "object_creation_expression" (new Type(args))
 	// Extract the type name — it's the last identifier in the type part
 	if nt == "object_creation_expression" {
 		for i := 0; i < int(node.ChildCount()); i++ {
@@ -918,8 +942,19 @@ func extractCallName(node *gotreesitter.Node, bt *gotreesitter.BoundTree, lang s
 			}
 			ct := bt.NodeType(child)
 			// Java: type_identifier, C#: identifier or qualified_name
-			if ct == "type_identifier" || ct == "identifier" {
+			// PHP: name (e.g., RedirectResponse) or qualified_name (e.g., \Symfony\...\RedirectResponse)
+			if ct == "type_identifier" || ct == "identifier" || ct == "name" {
 				return bt.NodeText(child)
+			}
+			if ct == "qualified_name" {
+				// Extract the last segment after backslashes (PHP) or dots (C#)
+				text := bt.NodeText(child)
+				text = strings.TrimPrefix(text, "\\")
+				// Take the last segment after \
+				if idx := strings.LastIndex(text, "\\"); idx >= 0 {
+					text = text[idx+1:]
+				}
+				return text
 			}
 		}
 		return ""
@@ -1124,6 +1159,40 @@ func isArgTainted(arg *gotreesitter.Node, bt *gotreesitter.BoundTree, taintedVar
 		return taintedVars[bt.NodeText(arg)]
 	}
 	return referencesTaintedVar(arg, bt, taintedVars)
+}
+
+// isArgSanitized checks if the argument is wrapped in a sanitizer call,
+// e.g., os.ReadFile(filepath.Clean(file)). It checks if the outermost
+// expression in the argument is a call to a known sanitizer function.
+func isArgSanitized(arg *gotreesitter.Node, bt *gotreesitter.BoundTree, lang string, a *Analyzer) bool {
+	if arg == nil || a == nil {
+		return false
+	}
+	// The argument itself might be a call expression (e.g., filepath.Clean(file))
+	// or it might be wrapped in an "argument" node (PHP) or expression_list (Go).
+	nt := bt.NodeType(arg)
+	// Unwrap wrapper nodes to find the actual expression
+	expr := arg
+	if nt == "argument" || nt == "expression_list" {
+		for i := 0; i < int(arg.ChildCount()); i++ {
+			child := arg.Child(i)
+			if child == nil || isPunctuation(bt.NodeType(child)) {
+				continue
+			}
+			expr = child
+			break
+		}
+	}
+	// Check if the expression is a sanitizer call
+	exprType := bt.NodeType(expr)
+	if exprType == "call_expression" || exprType == "member_call_expression" ||
+		exprType == "scoped_call_expression" || exprType == "function_call_expression" {
+		funcName := extractCallName(expr, bt, lang)
+		if funcName != "" && a.isSanitizer(funcName, lang) {
+			return true
+		}
+	}
+	return false
 }
 
 // sinkMatches checks if a function name matches a sink pattern.

@@ -543,6 +543,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		registry := buildGovernanceRegistry()
 		filtered := make([]analysis.Finding, 0, len(allFindings))
 		dropped := 0
+		droppedByRule := make(map[string]int)
 		for _, f := range allFindings {
 			// SCA, secret, IaC, and license findings from external sources
 			// (OSV, gitleaks, checkov, registry-license) don't have rule_ids
@@ -557,10 +558,17 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 				filtered = append(filtered, f)
 			} else {
 				dropped++
+				droppedByRule[f.RuleID]++
 			}
 		}
 		if dropped > 0 && (!output.IsJSON(formatter) && !QuietFromContext(ctx)) {
 			_ = formatter.Print("  Governance profile " + string(governanceProfile) + ": excluded " + strconv.Itoa(dropped) + " findings from inactive rules.")
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			if verbose {
+				for ruleID, count := range droppedByRule {
+					_ = formatter.Print("    dropped " + strconv.Itoa(count) + "x " + ruleID + " (not active in " + string(governanceProfile) + " profile)")
+				}
+			}
 		}
 		allFindings = filtered
 	}

@@ -1014,6 +1014,13 @@ func builtInRules() []Rule {
 				{FuncName: "r.Header.Get", IsSubscript: true},
 				{FuncName: "r.Cookie", IsSubscript: true},
 				{FuncName: "r.Body"},
+				{FuncName: "r.URL.Path"},
+				{FuncName: "r.MultipartForm.Value"},
+				{FuncName: "r.FormFile"},
+				{FuncName: "os.Getenv"},
+				{FuncName: "os.Args", IsSubscript: true},
+				{FuncName: "flag.Arg"},
+				{FuncName: "flag.String"},
 			},
 			Sinks: []SinkPattern{
 				{FuncName: "db.Exec", ArgIndex: 0},
@@ -1024,6 +1031,11 @@ func builtInRules() []Rule {
 				{FuncName: "sql.Query", ArgIndex: 0},
 				{FuncName: "tx.Exec", ArgIndex: 0},
 				{FuncName: "Raw", ArgIndex: 0},
+				{FuncName: "db.ExecContext", ArgIndex: 0},
+				{FuncName: "db.QueryContext", ArgIndex: 0},
+				{FuncName: "db.QueryRowContext", ArgIndex: 0},
+				{FuncName: "tx.ExecContext", ArgIndex: 0},
+				{FuncName: "tx.QueryContext", ArgIndex: 0},
 			},
 		},
 		{
@@ -1068,6 +1080,7 @@ func builtInRules() []Rule {
 				{FuncName: "http.NewRequest", ArgIndex: 1},
 				{FuncName: "http.DefaultClient.Do", ArgIndex: 0},
 				{FuncName: "client.Do", ArgIndex: 0},
+				{FuncName: "http.Redirect", ArgIndex: 2},
 			},
 		},
 		{

@@ -33,6 +33,11 @@ func TestReleaseSmoke(t *testing.T) {
 		configPath  string
 		minFindings int
 		maxFindings int
+		// requiredTaintRules are taint-patterns rule IDs that MUST appear in
+		// the findings. This verifies the taint engine (not just the pattern
+		// scanner) is producing findings. If a required rule is missing, the
+		// test fails even if minFindings is met by pattern-based rules.
+		requiredTaintRules []string
 	}{
 		{
 			name:        "spring-custom-extension-scoped-sink",
@@ -115,6 +120,12 @@ func TestReleaseSmoke(t *testing.T) {
 			configPath:  ".patchflow/rules.yaml",
 			minFindings: 1,
 			maxFindings: 15,
+			// Spring taint rules (PF-SPRING-SQLI-004) use @RequestParam
+			// annotation-based source seeding which is a known gap — the
+			// seedAnnotatedParams function doesn't correctly taint the
+			// parameter variable in all cases. The generic TP-JAVA001 rule
+			// fires instead. Requiring the framework taint rule here would
+			// fail until the annotation seeding is fixed.
 		},
 
 		// Rails (Ruby) — 2 taint rules (SQLi, redirect)
@@ -133,6 +144,10 @@ func TestReleaseSmoke(t *testing.T) {
 			configPath:  ".patchflow/rules.yaml",
 			minFindings: 1,
 			maxFindings: 15,
+			// Rails taint rule PF-RAILS-SQLI-003 uses Ruby "call" node type
+			// which has a different tree-sitter structure. The generic
+			// TP-RB001 rule fires instead. Requiring the framework taint
+			// rule would fail until the Ruby call extraction is improved.
 		},
 
 		// Flask (Python) — 2 taint rules (SQLi, SSRF)
@@ -145,12 +160,13 @@ func TestReleaseSmoke(t *testing.T) {
 			maxFindings: 0,
 		},
 		{
-			name:        "flask-vuln-sqli-and-ssrf-detected",
-			fixture:     "flask-vuln",
-			framework:   "flask",
-			configPath:  ".patchflow/rules.yaml",
-			minFindings: 1,
-			maxFindings: 15,
+			name:               "flask-vuln-sqli-and-ssrf-detected",
+			fixture:            "flask-vuln",
+			framework:          "flask",
+			configPath:         ".patchflow/rules.yaml",
+			minFindings:        1,
+			maxFindings:        15,
+			requiredTaintRules: []string{"PF-FLASK-SQLI-002"},
 		},
 
 		// GraphQL (Python) — 3 taint rules (SQLi, SSRF, path traversal)
@@ -169,6 +185,8 @@ func TestReleaseSmoke(t *testing.T) {
 			configPath:  ".patchflow/rules.yaml",
 			minFindings: 1,
 			maxFindings: 15,
+			// GraphQL has no MatchTaint rules (only MatchPattern -001 rules).
+			// The generic TP-PY001 taint rule fires instead.
 		},
 
 		// Angular (TypeScript) — 2 taint rules (XSS, redirect)
@@ -187,6 +205,11 @@ func TestReleaseSmoke(t *testing.T) {
 			configPath:  ".patchflow/rules.yaml",
 			minFindings: 1,
 			maxFindings: 15,
+			// Angular taint rule PF-ANGULAR-XSS-003 uses Angular's
+			// DomSanitizer bypass patterns which require TypeScript-specific
+			// AST handling. The pattern-based PF-ANGULAR-XSS-001 rule fires
+			// instead. Requiring the taint rule would fail until the TS
+			// sanitizer bypass detection is improved.
 		},
 
 		// Echo (Go) — 3 taint rules (SQLi, redirect, XSS)
@@ -199,12 +222,13 @@ func TestReleaseSmoke(t *testing.T) {
 			maxFindings: 0,
 		},
 		{
-			name:        "echo-vuln-sqli-and-redirect-detected",
-			fixture:     "echo-vuln",
-			framework:   "echo",
-			configPath:  ".patchflow/rules.yaml",
-			minFindings: 1,
-			maxFindings: 15,
+			name:               "echo-vuln-sqli-and-redirect-detected",
+			fixture:            "echo-vuln",
+			framework:          "echo",
+			configPath:         ".patchflow/rules.yaml",
+			minFindings:        1,
+			maxFindings:        15,
+			requiredTaintRules: []string{"PF-ECHO-SQLI-002", "PF-ECHO-REDIRECT-002"},
 		},
 
 		// Gin (Go) — 3 taint rules (SQLi, redirect, CMDI)
@@ -217,12 +241,13 @@ func TestReleaseSmoke(t *testing.T) {
 			maxFindings: 0,
 		},
 		{
-			name:        "gin-vuln-sqli-and-redirect-detected",
-			fixture:     "gin-vuln",
-			framework:   "gin",
-			configPath:  ".patchflow/rules.yaml",
-			minFindings: 1,
-			maxFindings: 15,
+			name:               "gin-vuln-sqli-and-redirect-detected",
+			fixture:            "gin-vuln",
+			framework:          "gin",
+			configPath:         ".patchflow/rules.yaml",
+			minFindings:        1,
+			maxFindings:        15,
+			requiredTaintRules: []string{"PF-GIN-SQLI-002", "PF-GIN-REDIRECT-002"},
 		},
 
 		// Laravel (PHP) — 3 taint rules (SQLi, redirect, deser)
@@ -235,12 +260,13 @@ func TestReleaseSmoke(t *testing.T) {
 			maxFindings: 0,
 		},
 		{
-			name:        "laravel-vuln-sqli-and-redirect-detected",
-			fixture:     "laravel-vuln",
-			framework:   "laravel",
-			configPath:  ".patchflow/rules.yaml",
-			minFindings: 1,
-			maxFindings: 15,
+			name:               "laravel-vuln-sqli-and-redirect-detected",
+			fixture:            "laravel-vuln",
+			framework:          "laravel",
+			configPath:         ".patchflow/rules.yaml",
+			minFindings:        1,
+			maxFindings:        15,
+			requiredTaintRules: []string{"PF-LARAVEL-SQLI-002", "PF-LARAVEL-REDIRECT-002"},
 		},
 
 		// Symfony (PHP) — 2 taint rules (SQLi, redirect)
@@ -253,12 +279,13 @@ func TestReleaseSmoke(t *testing.T) {
 			maxFindings: 0,
 		},
 		{
-			name:        "symfony-vuln-sqli-and-redirect-detected",
-			fixture:     "symfony-vuln",
-			framework:   "symfony",
-			configPath:  ".patchflow/rules.yaml",
-			minFindings: 1,
-			maxFindings: 15,
+			name:               "symfony-vuln-sqli-and-redirect-detected",
+			fixture:            "symfony-vuln",
+			framework:          "symfony",
+			configPath:         ".patchflow/rules.yaml",
+			minFindings:        1,
+			maxFindings:        15,
+			requiredTaintRules: []string{"PF-SYMFONY-SQLI-002", "PF-SYMFONY-REDIRECT-002"},
 		},
 	}
 
@@ -304,11 +331,15 @@ func TestReleaseSmoke(t *testing.T) {
 
 			// Filter to only SAST findings (exclude SCA, license, secret findings)
 			var sastFindings int
+			taintRuleIDs := make(map[string]bool)
 			for _, f := range result.Analysis.Findings {
 				if f.Analyzer == "taint-patterns" || f.Analyzer == "patterns-embedded" ||
 					f.Analyzer == "treesitter-ast" || f.Analyzer == "gosast-embedded" ||
 					f.Analyzer == "framework-taint" || f.Analyzer == "framework-pattern" {
 					sastFindings++
+				}
+				if f.Analyzer == "taint-patterns" {
+					taintRuleIDs[f.RuleID] = true
 				}
 			}
 
@@ -317,6 +348,16 @@ func TestReleaseSmoke(t *testing.T) {
 			}
 			if sastFindings > tt.maxFindings {
 				t.Errorf("expected at most %d SAST findings, got %d (potential false positives)", tt.maxFindings, sastFindings)
+			}
+
+			// Verify required taint rules are present. This catches taint
+			// engine regressions that would be masked by pattern-based
+			// findings on the same lines.
+			// Accept either the base rule ID or the -IP (interprocedural) variant.
+			for _, required := range tt.requiredTaintRules {
+				if !taintRuleIDs[required] && !taintRuleIDs[required+"-IP"] {
+					t.Errorf("required taint rule %s (or -IP variant) not found in findings (taint rules present: %v)", required, taintRuleIDs)
+				}
 			}
 		})
 	}
