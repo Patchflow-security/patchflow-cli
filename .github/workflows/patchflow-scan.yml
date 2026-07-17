@@ -160,4 +160,17 @@ jobs:
       #    against the v0.1.5 bugs)
       # =========================================================================
       - name: Run output-correctness tests
-        run: go test ./internal/integration/ -run "TestCycloneDXVulnerabilities|TestStandardProfileNoCrash|TestJSONModeNoStderr|TestSARIFValidForGitHubCodeScanning" -v -timeout 180s
+        timeout-minutes: 4
+        run: |
+          set -o pipefail
+          go test ./internal/integration/ \
+            -run "TestCycloneDXVulnerabilities|TestStandardProfileNoCrash|TestJSONModeNoStderr|TestSARIFValidForGitHubCodeScanning" \
+            -json -count=1 -timeout 180s | tee "$RUNNER_TEMP/output-correctness.json"
+          python3 scripts/report-go-test-timings.py "$RUNNER_TEMP/output-correctness.json" --limit 10
+
+      - name: Repeat JSON stream contract
+        timeout-minutes: 4
+        run: go test ./internal/integration/ -run '^TestJSONModeNoStderrLeak$' -v -count=3 -timeout 210s
+
+      - name: Validate SARIF scenario matrix against OASIS schema
+        run: go test ./internal/report -run '^TestSARIFScenarioMatrixValidatesAgainstOfficialSchema$' -v -count=1

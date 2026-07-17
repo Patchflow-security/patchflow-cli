@@ -711,6 +711,8 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		Version:           versionString(),
 		ChangedFiles:      repo.ChangedFiles,
 	}
+	computedExitCode, computedExitMessage := determineScanExit(allFindings, scanFailOn)
+	result.ExitCode = computedExitCode
 
 	// 7. Output
 	gen := report.NewGenerator(result, &riskScore)
@@ -754,23 +756,30 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 
 		// Submit to backend if --submit is set (before printing so the scan_id
 		// from the backend can be included in the output).
+		submissionError := ""
 		if scanSubmit {
 			if err := submitScanToBackend(cmd, ctx, result); err != nil {
-				if !QuietFromContext(ctx) {
-					_ = formatter.PrintError(fmt.Errorf("backend submission failed: %w", err))
-				}
+				submissionError = fmt.Sprintf("backend submission failed: %v", err)
 				// Don't fail the scan — local results are still valid.
 			}
 		}
 
 		// For JSON mode, output the full result with scan metadata.
-		return formatter.Print(struct {
+		if err := formatter.Print(struct {
 			*analysis.AnalysisResult `json:"analysis"`
 			Risk                     *risk.ScoreOutput `json:"risk"`
+			SubmissionError          string            `json:"submission_error,omitempty"`
 		}{
-			AnalysisResult: result,
-			Risk:           &riskScore,
-		})
+			AnalysisResult:  result,
+			Risk:            &riskScore,
+			SubmissionError: submissionError,
+		}); err != nil {
+			return err
+		}
+		if computedExitCode != exitcode.Success {
+			return output.MarkErrorReported(&ExitError{Code: computedExitCode, Msg: computedExitMessage})
+		}
+		return nil
 	}
 
 	// Submit to backend if --submit is set (non-JSON mode).
@@ -835,48 +844,41 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// 8. Compute exit code.
-	//    --fail-on uses severity threshold (highest priority).
-	//    If no --fail-on is set, use the Blocking field from rule mode enforcement:
-	//    any finding with mode=block contributes to a non-zero exit code.
-	exitCode := exitcode.Success
-	if scanFailOn != "" {
-		threshold := parseSeverityThreshold(scanFailOn)
+	// 8. Return the exit decision computed before report serialization so JSON,
+	//    SARIF, saved results, and the process all agree on the same status.
+	if computedExitCode != exitcode.Success {
+		return &ExitError{Code: computedExitCode, Msg: computedExitMessage}
+	}
+	return nil
+}
+
+// determineScanExit computes the release-facing scan status before any report
+// is serialized. --fail-on takes precedence over rule-mode blocking.
+func determineScanExit(findings []analysis.Finding, failOn string) (int, string) {
+	if failOn != "" {
+		threshold := parseSeverityThreshold(failOn)
 		blockingCount := 0
-		for _, f := range allFindings {
-			if severityRank(f.Severity) >= threshold {
+		for _, finding := range findings {
+			if severityRank(finding.Severity) >= threshold {
 				blockingCount++
 			}
 		}
 		if blockingCount > 0 {
-			exitCode = exitcode.FindingsFound
-			result.ExitCode = exitCode
-			return &ExitError{
-				Code: exitCode,
-				Msg:  fmt.Sprintf("%d finding(s) at or above %s severity", blockingCount, scanFailOn),
-			}
+			return exitcode.FindingsFound, fmt.Sprintf("%d finding(s) at or above %s severity", blockingCount, failOn)
 		}
-	} else {
-		// No --fail-on: use Blocking field from mode enforcement.
-		// Only block if at least one finding has mode=block.
-		blockingCount := 0
-		for _, f := range allFindings {
-			if f.Blocking {
-				blockingCount++
-			}
-		}
-		if blockingCount > 0 {
-			exitCode = exitcode.FindingsFound
-			result.ExitCode = exitCode
-			return &ExitError{
-				Code: exitCode,
-				Msg:  fmt.Sprintf("%d blocking finding(s) (mode=block)", blockingCount),
-			}
+		return exitcode.Success, ""
+	}
+
+	blockingCount := 0
+	for _, finding := range findings {
+		if finding.Blocking {
+			blockingCount++
 		}
 	}
-	result.ExitCode = exitCode
-
-	return nil
+	if blockingCount > 0 {
+		return exitcode.FindingsFound, fmt.Sprintf("%d blocking finding(s) (mode=block)", blockingCount)
+	}
+	return exitcode.Success, ""
 }
 
 func hasDependencyFiles(files []string) bool {

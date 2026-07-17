@@ -9,9 +9,41 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Patchflow-security/patchflow-cli/internal/analysis"
+	"github.com/Patchflow-security/patchflow-cli/internal/exitcode"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+func TestDetermineScanExit(t *testing.T) {
+	findings := []analysis.Finding{
+		{Severity: analysis.SeverityHigh, Blocking: false},
+		{Severity: analysis.SeverityLow, Blocking: true},
+	}
+
+	for _, tc := range []struct {
+		name   string
+		input  []analysis.Finding
+		failOn string
+		code   int
+	}{
+		{name: "clean", code: exitcode.Success},
+		{name: "explicit threshold", input: findings, failOn: "high", code: exitcode.FindingsFound},
+		{name: "threshold above findings", input: findings[1:], failOn: "high", code: exitcode.Success},
+		{name: "rule mode blocking", input: findings, code: exitcode.FindingsFound},
+		{name: "informational findings", input: findings[:1], code: exitcode.Success},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, message := determineScanExit(tc.input, tc.failOn)
+			if got != tc.code {
+				t.Fatalf("determineScanExit() code = %d, want %d", got, tc.code)
+			}
+			if (got == exitcode.Success) != (message == "") {
+				t.Fatalf("determineScanExit() message = %q for code %d", message, got)
+			}
+		})
+	}
+}
 
 // chdirTemp changes the working directory to dir and registers cleanup to
 // restore the original directory. The scan run command uses git.DetectOrLocal

@@ -951,7 +951,9 @@ type SARIFRegion struct {
 
 // SARIF returns a SARIF 2.1.0 report.
 func (g *Generator) SARIF(toolVersion string) *SARIFReport {
-	var results []SARIFResult
+	// SARIF requires runs[].results to be an array. Keep it non-nil so clean,
+	// empty, and failed scans serialize as [] rather than JSON null.
+	results := make([]SARIFResult, 0)
 
 	if g.Result != nil {
 		for _, f := range g.Result.Findings {

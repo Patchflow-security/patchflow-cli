@@ -7,6 +7,7 @@ require (
 	github.com/docker/docker v27.5.0+incompatible
 	github.com/google/go-containerregistry v0.20.3
 	github.com/odvcencio/gotreesitter v0.20.5
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0

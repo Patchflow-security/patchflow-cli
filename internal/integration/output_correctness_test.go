@@ -14,6 +14,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -424,23 +425,65 @@ func TestJSONModeNoStderrLeak(t *testing.T) {
 		t.Skip("skipping binary-based test in -short mode")
 	}
 
-	g := newGoldenRepo(t)
-	g.write("app.js", `function run(input) {
+	cleanRepo := newGoldenRepo(t)
+	cleanRepo.write("README.md", "# clean fixture\n")
+	cleanRepo.commit("initial clean repo")
+
+	findingRepo := newGoldenRepo(t)
+	findingRepo.write("app.js", `function run(input) {
     return eval(input);
 }
 module.exports = { run };
 `)
-	g.write("package.json", `{"name":"test","version":"1.0.0"}`)
-	g.commit("initial node repo")
+	findingRepo.write("package.json", `{"name":"test","version":"1.0.0"}`)
+	findingRepo.commit("initial vulnerable node repo")
+
+	errorDir := t.TempDir()
 
 	binPath := buildPatchflowBinary(t)
 
 	testCases := []struct {
-		name string
-		args []string
+		name     string
+		dir      string
+		args     []string
+		wantExit int
+		wantKey  string
 	}{
-		{name: "quiet", args: []string{"scan", "run", "--json", "--quiet", "--offline"}},
-		{name: "verbose", args: []string{"scan", "run", "--json", "--verbose", "--offline"}},
+		{
+			name:     "clean quiet",
+			dir:      cleanRepo.root,
+			args:     []string{"scan", "run", "--json", "--quiet", "--offline", "--no-licenses", "--no-reachability", "--fail-on", "low"},
+			wantExit: 0,
+			wantKey:  "analysis",
+		},
+		{
+			name:     "findings quiet",
+			dir:      findingRepo.root,
+			args:     []string{"scan", "run", "--json", "--quiet", "--offline", "--no-licenses", "--no-reachability", "--fail-on", "low"},
+			wantExit: 1,
+			wantKey:  "analysis",
+		},
+		{
+			name:     "findings verbose",
+			dir:      findingRepo.root,
+			args:     []string{"scan", "run", "--json", "--verbose", "--offline", "--no-licenses", "--no-reachability", "--fail-on", "low"},
+			wantExit: 1,
+			wantKey:  "analysis",
+		},
+		{
+			name:     "runtime error quiet",
+			dir:      errorDir,
+			args:     []string{"scan", "run", "--json", "--quiet", "--offline", "--changed-only"},
+			wantExit: 3,
+			wantKey:  "error",
+		},
+		{
+			name:     "runtime error verbose",
+			dir:      errorDir,
+			args:     []string{"scan", "run", "--json", "--verbose", "--offline", "--changed-only"},
+			wantExit: 3,
+			wantKey:  "error",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -449,13 +492,24 @@ module.exports = { run };
 			defer cancel()
 
 			cmd := exec.CommandContext(ctx, binPath, tc.args...)
-			cmd.Dir = g.root
+			cmd.Dir = tc.dir
 			var stdout, stderr strings.Builder
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
-			_ = cmd.Run() // exit code may be non-zero due to findings
+			runErr := cmd.Run()
 			if ctx.Err() == context.DeadlineExceeded {
 				t.Fatal("JSON scan exceeded the 60-second per-test budget")
+			}
+			gotExit := 0
+			if runErr != nil {
+				var exitErr *exec.ExitError
+				if !errors.As(runErr, &exitErr) {
+					t.Fatalf("running PatchFlow: %v", runErr)
+				}
+				gotExit = exitErr.ExitCode()
+			}
+			if gotExit != tc.wantExit {
+				t.Fatalf("exit code = %d, want %d\nstdout:\n%s\nstderr:\n%s", gotExit, tc.wantExit, stdout.String(), stderr.String())
 			}
 
 			if got := strings.TrimSpace(stderr.String()); got != "" {
@@ -470,6 +524,9 @@ module.exports = { run };
 			var extra interface{}
 			if err := decoder.Decode(&extra); err != io.EOF {
 				t.Fatalf("stdout must contain exactly one JSON document; second decode returned %v", err)
+			}
+			if _, ok := document[tc.wantKey]; !ok {
+				t.Fatalf("JSON document missing %q: %s", tc.wantKey, stdout.String())
 			}
 		})
 	}
