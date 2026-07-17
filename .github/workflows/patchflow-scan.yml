@@ -160,4 +160,4 @@ jobs:
       #    against the v0.1.5 bugs)
       # =========================================================================
       - name: Run output-correctness tests
-        run: go test ./internal/integration/ -run "TestCycloneDXVulnerabilities|TestStandardProfileNoCrash|TestJSONModeNoStderr" -v -timeout 120s
+        run: go test ./internal/integration/ -run "TestCycloneDXVulnerabilities|TestStandardProfileNoCrash|TestJSONModeNoStderr|TestSARIFValidForGitHubCodeScanning" -v -timeout 180s

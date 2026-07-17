@@ -189,7 +189,7 @@ func runScanReal(cmd *cobra.Command, _ []string) error {
 
 	// Debug/verbose: show the changed-file inventory so CI logs are auditable.
 	verbose, _ := cmd.Flags().GetBool("verbose")
-	if verbose && len(repo.ChangedFiles) > 0 {
+	if verbose && !output.IsJSON(formatter) && len(repo.ChangedFiles) > 0 {
 		_ = formatter.Print(fmt.Sprintf("Changed files (%d) since %s:", len(repo.ChangedFiles), scanSince))
 		for _, f := range repo.ChangedFiles {
 			_ = formatter.Print("  " + f)
@@ -1125,7 +1125,7 @@ func loadLastScanResult(root string) (*analysis.AnalysisResult, *risk.ScoreOutpu
 	}
 	var cached struct {
 		Analysis *analysis.AnalysisResult `json:"analysis"`
-		Risk     *risk.ScoreOutput              `json:"risk"`
+		Risk     *risk.ScoreOutput        `json:"risk"`
 	}
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, nil

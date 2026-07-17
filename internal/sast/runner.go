@@ -11,9 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -435,12 +432,12 @@ func (r *Runner) EmbeddedTools() []string {
 
 // Result is the output of a SAST analysis run.
 type Result struct {
-	Findings        []analysis.Finding     `json:"findings"`
-	ToolsRun        []string               `json:"tools_run"`
-	ToolsSkipped    []string               `json:"tools_skipped"`
-	Errors          []string               `json:"errors,omitempty"`
-	SuppressedCount int                    `json:"suppressed_count,omitempty"`
-	Frameworks      []frameworks.Detection `json:"frameworks,omitempty"`
+	Findings        []analysis.Finding      `json:"findings"`
+	ToolsRun        []string                `json:"tools_run"`
+	ToolsSkipped    []string                `json:"tools_skipped"`
+	Errors          []string                `json:"errors,omitempty"`
+	SuppressedCount int                     `json:"suppressed_count,omitempty"`
+	Frameworks      []frameworks.Detection  `json:"frameworks,omitempty"`
 	EngineTimings   []analysis.EngineTiming `json:"engine_timings,omitempty"`
 }
 
@@ -449,13 +446,6 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	result := &Result{}
 	var timings []analysis.EngineTiming
 	phaseStart := time.Now()
-
-	// Suppress SAST diagnostic logs (timing output) when in quiet/JSON mode.
-	// These logs go to stderr and interfere with parseable output.
-	if r.Quiet && false {
-		log.SetOutput(io.Discard)
-		defer log.SetOutput(os.Stderr) // restore
-	}
 
 	// --- Phase 0: Load custom rules from YAML ---
 	policy, err := r.loadRulePolicy(root)
@@ -822,13 +812,6 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		}
 		result.Findings = filtered
 	}
-	log.Printf("[runner-debug] after Phase 3 suppression: %d findings", len(result.Findings))
-	for _, f := range result.Findings {
-		if f.Analyzer == "taint-patterns" {
-			log.Printf("[runner-debug]   taint: rule=%s file=%s line=%d", f.RuleID, f.FilePath, f.LineStart)
-		}
-	}
-
 	// --- Phase 4: Enrich findings with OWASP category ---
 	for i := range result.Findings {
 		if result.Findings[i].CWEID != "" && result.Findings[i].OWASPCategory == "" {
@@ -1089,13 +1072,13 @@ func normalizePathForDedup(p string) string {
 // and RelatedLocations for display purposes.
 //
 // Grouping strategy (in priority order):
-// 1. Function name from title/description ("in <func_name>") — highest priority.
-// 2. Function boundary detection from source code — reads the file and finds
-//    function/method/class definitions. Each finding is assigned to its
-//    enclosing function. This is the primary grouping mechanism.
-// 3. Line proximity (within 10 lines) — fallback when source code is
-//    unavailable or no function boundary is found. Uses a tight window to
-//    avoid grouping across function boundaries.
+//  1. Function name from title/description ("in <func_name>") — highest priority.
+//  2. Function boundary detection from source code — reads the file and finds
+//     function/method/class definitions. Each finding is assigned to its
+//     enclosing function. This is the primary grouping mechanism.
+//  3. Line proximity (within 10 lines) — fallback when source code is
+//     unavailable or no function boundary is found. Uses a tight window to
+//     avoid grouping across function boundaries.
 //
 // Findings in different functions are NEVER grouped together, even if they're
 // close in line number. This prevents EditPaste.mutate (line 141) from being
@@ -1123,9 +1106,9 @@ func groupIssues(findings []analysis.Finding, root string) []analysis.Finding {
 
 	// First pass: determine the function name for each finding
 	type candidate struct {
-		key      groupKey
-		idx      int
-		line     int
+		key  groupKey
+		idx  int
+		line int
 	}
 	var candidates []candidate
 

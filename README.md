@@ -237,6 +237,10 @@ https://api.patchflow.dev
 
 All commands support `--json` for machine-readable output. This is useful for CI/CD pipelines and automation.
 
+See [Machine-readable output contracts](docs/MACHINE_READABLE_OUTPUTS.md) for
+stdout/stderr guarantees, SARIF conformance, compatibility rules, and release
+validation requirements.
+
 ```bash
 # Get version info as JSON
 patchflow version --json

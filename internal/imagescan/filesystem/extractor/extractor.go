@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/Patchflow-security/patchflow-cli/internal/imagescan/model"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 // Extractor builds a FileSystemView from a v1.Image.
@@ -321,11 +321,20 @@ func (v *View) writeBlob(r io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer tmp.Close()
+	tmpName := tmp.Name()
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}()
 
 	h := newSHA256()
 	w := io.MultiWriter(tmp, h)
 	if _, err := io.Copy(w, r); err != nil {
+		return "", err
+	}
+	// Windows does not allow renaming an open file. Close it before checking
+	// for deduplication or moving it into its content-addressed location.
+	if err := tmp.Close(); err != nil {
 		return "", err
 	}
 	digest := "sha256:" + h.hex()
@@ -333,10 +342,9 @@ func (v *View) writeBlob(r io.Reader) (string, error) {
 	final := v.blobPath(digest)
 	// If the blob already exists (content-addressed dedup), drop the temp.
 	if _, err := os.Stat(final); err == nil {
-		_ = os.Remove(tmp.Name())
 		return digest, nil
 	}
-	if err := os.Rename(tmp.Name(), final); err != nil {
+	if err := os.Rename(tmpName, final); err != nil {
 		return "", err
 	}
 	return digest, nil

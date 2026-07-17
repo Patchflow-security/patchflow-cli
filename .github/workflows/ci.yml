@@ -91,7 +91,8 @@ jobs:
           }
           echo "PASS: --config smoke test — custom rule fired"
           # Verify doctor round-trip check passes
-          "$GITHUB_WORKSPACE/patchflow" doctor --json 2>&1 | grep -q '"config_round_trip_ok":true' || {
+          "$GITHUB_WORKSPACE/patchflow" doctor --json 2>&1 |
+            python3 -c 'import json, sys; raise SystemExit(json.load(sys.stdin).get("config_round_trip_ok") is not True)' || {
             echo "FAIL: doctor config_round_trip_ok is not true"
             exit 1
           }

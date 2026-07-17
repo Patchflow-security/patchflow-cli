@@ -14,6 +14,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -414,7 +415,8 @@ func main() {
 //
 // Bug: v0.1.5 SAST timing logs (e.g., "[sast] secrets-embedded total: 143ms")
 // were written to stderr even in --json mode, breaking parseable output.
-// Fix: Added Runner.Quiet field; redirects log output to io.Discard.
+// Fix: Scanner diagnostics are no longer emitted on machine-readable paths;
+// quiet and verbose JSON modes both keep stderr empty.
 // =============================================================================
 
 func TestJSONModeNoStderrLeak(t *testing.T) {
@@ -433,31 +435,44 @@ module.exports = { run };
 
 	binPath := buildPatchflowBinary(t)
 
-	cmd := exec.Command(binPath, "scan", "run", "--json", "--quiet", "--offline")
-	cmd.Dir = g.root
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	_ = cmd.Run() // exit code may be non-zero due to findings
-
-	stderrStr := stderr.String()
-	// Filter out OSV cache messages which are informational
-	sastLogLines := 0
-	for _, line := range strings.Split(stderrStr, "\n") {
-		if strings.Contains(line, "[sast]") || strings.Contains(line, "secrets-embedded") ||
-			strings.Contains(line, "patterns-embedded") || strings.Contains(line, "treesitter-ast") ||
-			strings.Contains(line, "taint-patterns") || strings.Contains(line, "taint-ssa") {
-			sastLogLines++
-		}
+	testCases := []struct {
+		name string
+		args []string
+	}{
+		{name: "quiet", args: []string{"scan", "run", "--json", "--quiet", "--offline"}},
+		{name: "verbose", args: []string{"scan", "run", "--json", "--verbose", "--offline"}},
 	}
 
-	if sastLogLines > 0 {
-		t.Errorf("SAST diagnostic logs leaked to stderr in JSON mode: %d lines. "+
-			"JSON mode must produce parseable stdout with clean stderr.\n"+
-			"Stderr:\n%s", sastLogLines, stderrStr)
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
 
-	t.Logf("JSON mode stderr is clean (0 SAST log lines)")
+			cmd := exec.CommandContext(ctx, binPath, tc.args...)
+			cmd.Dir = g.root
+			var stdout, stderr strings.Builder
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			_ = cmd.Run() // exit code may be non-zero due to findings
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatal("JSON scan exceeded the 60-second per-test budget")
+			}
+
+			if got := strings.TrimSpace(stderr.String()); got != "" {
+				t.Fatalf("JSON mode must keep stderr empty; got:\n%s", got)
+			}
+
+			decoder := json.NewDecoder(strings.NewReader(stdout.String()))
+			var document map[string]interface{}
+			if err := decoder.Decode(&document); err != nil {
+				t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout.String())
+			}
+			var extra interface{}
+			if err := decoder.Decode(&extra); err != io.EOF {
+				t.Fatalf("stdout must contain exactly one JSON document; second decode returned %v", err)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -488,9 +503,14 @@ module.exports = { run };
 
 	// Generate SARIF output
 	outputFile := filepath.Join(g.root, "results.sarif")
-	cmd := exec.Command(binPath, "scan", "run", "--format", "sarif", "--output", outputFile, "--offline")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binPath, "scan", "run", "--format", "sarif", "--output", outputFile, "--offline")
 	cmd.Dir = g.root
 	_ = cmd.Run() // non-zero exit is expected with findings
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatal("SARIF scan exceeded the 60-second per-test budget")
+	}
 
 	data, err := os.ReadFile(outputFile)
 	if err != nil {
@@ -525,6 +545,17 @@ module.exports = { run };
 	driverName, _ := driver["name"].(string)
 	if driverName == "" {
 		t.Error("missing tool.driver.name — GitHub Code Scanning requires this")
+	}
+
+	// SARIF 2.1.0 requires executionSuccessful on every invocation.
+	invocations, _ := run["invocations"].([]interface{})
+	if len(invocations) == 0 {
+		t.Error("missing invocations — scan provenance and execution status are required")
+	} else {
+		invocation, _ := invocations[0].(map[string]interface{})
+		if _, ok := invocation["executionSuccessful"].(bool); !ok {
+			t.Error("missing boolean invocations[0].executionSuccessful — invalid SARIF 2.1.0")
+		}
 	}
 
 	// Check rules have required fields
@@ -596,11 +627,16 @@ func buildPatchflowBinary(t *testing.T) string {
 	t.Helper()
 	binDir := t.TempDir()
 	binPath := filepath.Join(binDir, "patchflow")
-	build := exec.Command("go", "build", "-o", binPath, ".")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	build := exec.CommandContext(ctx, "go", "build", "-o", binPath, ".")
 	// Use the project root relative to this test file
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build patchflow: %v\n%s", err, out)
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatal("building patchflow exceeded the 60-second per-test budget")
 	}
 	return binPath
 }

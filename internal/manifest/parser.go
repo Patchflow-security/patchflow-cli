@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -2416,8 +2417,16 @@ func validatePomRelativePath(pomDir, relPath string) (string, bool) {
 		return "", false
 	}
 
-	// Reject absolute paths — parent POM must be relative
-	if filepath.IsAbs(relPath) {
+	// Reject absolute paths in both slash conventions, independent of the
+	// host OS. A POM authored on Unix must remain unsafe when scanned on
+	// Windows, and vice versa.
+	portablePath := strings.ReplaceAll(relPath, "\\", "/")
+	isWindowsVolumePath := len(portablePath) >= 3 &&
+		((portablePath[0] >= 'A' && portablePath[0] <= 'Z') ||
+			(portablePath[0] >= 'a' && portablePath[0] <= 'z')) &&
+		portablePath[1] == ':' && portablePath[2] == '/'
+	if filepath.IsAbs(relPath) || pathpkg.IsAbs(portablePath) ||
+		isWindowsVolumePath || strings.HasPrefix(portablePath, "//") {
 		return "", false
 	}
 
