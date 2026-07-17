@@ -2,6 +2,18 @@
 
 PatchFlow CLI provides change intelligence for engineering teams. Use it to scan, review, and analyze code changes in your repositories.
 
+## Canonical repository
+
+[`Patchflow-security/patchflow-cli`](https://github.com/Patchflow-security/patchflow-cli)
+is the source of truth for PatchFlow CLI development, issues, pull requests, tags,
+and releases. Release artifacts must resolve to commits and tags that are reachable
+from this public repository.
+
+Older private copies are read-only mirrors for continuity. They are not upstreams,
+must not publish releases, and are checked automatically against the public `main`
+branch. See [RELEASE.md](RELEASE.md#repository-source-of-truth) for the maintainer
+remote layout and provenance checks.
+
 ## Installation
 
 ### Homebrew (macOS)

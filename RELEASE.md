@@ -2,6 +2,43 @@
 
 This document describes how to cut a release of PatchFlow CLI.
 
+## Repository source of truth
+
+`Patchflow-security/patchflow-cli` is the canonical repository. All development pull
+requests, release tags, GitHub Releases, and release automation originate there.
+
+The legacy `malik111110/Patch-flow-cli` repository may be retained as a read-only,
+one-way continuity mirror. It must never be used as an upstream and must not create
+tags or publish artifacts. The scheduled `Canonical Repository Drift` workflow uses
+`scripts/check-canonical-drift.sh` to fail when a mirrored `main` does not exactly
+match the public canonical commit.
+
+Recommended maintainer remotes:
+
+```bash
+git remote set-url origin git@github.com:Patchflow-security/patchflow-cli.git
+git remote add private-mirror git@github.com:malik111110/Patch-flow-cli.git
+git remote set-url --push private-mirror DISABLED
+git remote -v
+```
+
+Normal development fetches from and pushes to `origin`. The `private-mirror` remote
+is optional and fetch-only; synchronization must be performed by explicitly reviewed
+automation, never by release jobs running in the private repository.
+
+Before cutting a release, prove that the tag resolves to a public commit reachable
+from canonical `main`:
+
+```bash
+git fetch origin main --tags
+tag_commit="$(git rev-list -n 1 "${TAG}")"
+git merge-base --is-ancestor "${tag_commit}" origin/main
+gh release view "${TAG}" --repo Patchflow-security/patchflow-cli
+```
+
+The ancestry command must exit successfully. Record the tag, commit SHA, workflow run,
+checksums, signatures, and SBOM asset links in the release verification notes.
+
 ## Prerequisites
 
 ### Repository setup

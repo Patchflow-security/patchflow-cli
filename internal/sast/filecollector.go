@@ -98,6 +98,9 @@ func collectFiles(root string, ignoreMatcher *ignore.Matcher, maxFileSize int64,
 		if err != nil {
 			return nil
 		}
+		if info.IsDir() && path == root {
+			log.Printf("[collect-debug] walking root=%s", root)
+		}
 		if info.IsDir() {
 			name := filepath.Base(path)
 			if ignoredDirs[name] {

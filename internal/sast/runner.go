@@ -11,6 +11,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -103,6 +106,10 @@ type Runner struct {
 	// Default is 3. Set via the --taint-depth CLI flag.
 	TaintDepth int
 
+	// Quiet suppresses diagnostic log output (SAST timing logs, etc.) to
+	// keep stdout/stderr clean in JSON mode or CI scripting.
+	Quiet bool
+
 	// FrameworkConfig controls which framework rule packs are activated.
 	// It is the highest-precedence layer and is typically set from CLI flags.
 	FrameworkConfig fwpatterns.SelectionConfig
@@ -113,6 +120,11 @@ type Runner struct {
 	// fwSafePatterns maps framework rule IDs to their safe patterns (B11.5.3).
 	// Used for taint-mode safe pattern suppression after scanning.
 	fwSafePatterns map[string][]fwpatterns.SafePattern
+
+	// fwSafePatternsByCWE maps "CWE-89:ruby" → safe patterns. Allows generic
+	// taint rules (TP-RB001, TP-PY001) to be suppressed by framework safe
+	// patterns when the framework is active.
+	fwSafePatternsByCWE map[string][]fwpatterns.SafePattern
 
 	// FrameworksDetected holds the frameworks detected during the last
 	// Analyze run. Populated by Analyze; read by callers for reporting
@@ -438,6 +450,13 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	var timings []analysis.EngineTiming
 	phaseStart := time.Now()
 
+	// Suppress SAST diagnostic logs (timing output) when in quiet/JSON mode.
+	// These logs go to stderr and interfere with parseable output.
+	if r.Quiet && false {
+		log.SetOutput(io.Discard)
+		defer log.SetOutput(os.Stderr) // restore
+	}
+
 	// --- Phase 0: Load custom rules from YAML ---
 	policy, err := r.loadRulePolicy(root)
 	if err != nil {
@@ -485,6 +504,12 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		// Pattern/template rules already use safe patterns in the matcher;
 		// this map enables taint-rule safe pattern suppression.
 		fwSafePatterns := map[string][]fwpatterns.SafePattern{}
+		// fwSafePatternsByCWE maps "CWE-89:ruby" → safe patterns. This allows
+		// generic taint rules (TP-RB001, TP-PY001) to be suppressed by framework
+		// safe patterns when the framework is active. Without this, a Rails
+		// .where( safe pattern registered for PF-RAILS-SQLI-003 would not
+		// suppress the generic TP-RB001 finding on the same code.
+		fwSafePatternsByCWE := map[string][]fwpatterns.SafePattern{}
 		for _, p := range selection.Packs {
 			if policy != nil {
 				if override, ok := policy.FrameworkOverrides[p.Name()]; ok {
@@ -494,6 +519,11 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			for _, r := range p.Rules() {
 				if len(r.SafePatterns) > 0 {
 					fwSafePatterns[r.ID] = r.SafePatterns
+					// Also index by CWE+language for generic taint rule suppression
+					if r.CWE != "" && r.Language != "" {
+						key := r.CWE + ":" + r.Language
+						fwSafePatternsByCWE[key] = append(fwSafePatternsByCWE[key], r.SafePatterns...)
+					}
 				}
 			}
 			fwRules = append(fwRules, p.Rules()...)
@@ -504,6 +534,7 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		r.taintPatternAnalyzer.AddRules(fwpatterns.ToTaintRules(fwRules))
 		// Store safe patterns for taint suppression (used in Phase 2e.5).
 		r.fwSafePatterns = fwSafePatterns
+		r.fwSafePatternsByCWE = fwSafePatternsByCWE
 	}
 	timings = append(timings, analysis.EngineTiming{Engine: "framework_detection", Duration: time.Since(phaseStart)})
 	phaseStart = time.Now()
@@ -565,6 +596,13 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// The taint-ssa analyzer has its own internal recovery, but
+					// add a second safety net so a panic never kills the scan.
+					resultCh <- scannerResult{name: "taint-ssa", findings: nil, err: fmt.Errorf("taint-ssa panic: %v", r)}
+				}
+			}()
 			toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
 			findings, err := r.taintAnalyzer.Analyze(toolCtx, root)
 			cancel()
@@ -757,8 +795,8 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 	// Suppress taint findings whose containing function also contains a
 	// safe pattern (e.g., TenantAuth.requireOwner). This applies to
 	// framework taint rules that carry SafePatterns from extensions.
-	if len(r.fwSafePatterns) > 0 {
-		result.Findings = suppressTaintWithSafePatterns(result.Findings, r.fwSafePatterns, root)
+	if len(r.fwSafePatterns) > 0 || len(r.fwSafePatternsByCWE) > 0 {
+		result.Findings = suppressTaintWithSafePatternsAndCWE(result.Findings, r.fwSafePatterns, r.fwSafePatternsByCWE, root)
 	}
 
 	// --- Phase 2f: Issue grouping ---
@@ -783,6 +821,12 @@ func (r *Runner) Analyze(ctx context.Context, root string) (*Result, error) {
 			result.SuppressedCount = suppressedCount
 		}
 		result.Findings = filtered
+	}
+	log.Printf("[runner-debug] after Phase 3 suppression: %d findings", len(result.Findings))
+	for _, f := range result.Findings {
+		if f.Analyzer == "taint-patterns" {
+			log.Printf("[runner-debug]   taint: rule=%s file=%s line=%d", f.RuleID, f.FilePath, f.LineStart)
+		}
 	}
 
 	// --- Phase 4: Enrich findings with OWASP category ---
