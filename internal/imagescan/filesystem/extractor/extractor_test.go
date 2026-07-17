@@ -6,11 +6,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path/filepath"
 	"testing"
 
-	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/Patchflow-security/patchflow-cli/internal/imagescan/model"
+	"github.com/google/go-containerregistry/pkg/v1/random"
 )
 
 // TestWhiteoutAndOpaque verifies that whiteout and opaque-whiteout entries
@@ -67,6 +66,19 @@ func TestWhiteoutAndOpaque(t *testing.T) {
 	}
 	if e.LayerDigest != "sha256:layer1" {
 		t.Errorf("/etc/keep LayerDigest = %q, want layer1", e.LayerDigest)
+	}
+}
+
+// TestNormalizeUsesOCISeparators verifies that image paths remain portable
+// when the scanner itself is running on Windows.
+func TestNormalizeUsesOCISeparators(t *testing.T) {
+	for input, want := range map[string]string{
+		`etc\\foo`:        "/etc/foo",
+		`/etc/bar/../foo`: "/etc/foo",
+	} {
+		if got := normalize(input); got != want {
+			t.Errorf("normalize(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 
@@ -181,7 +193,3 @@ func makeTarBytes(t *testing.T, entries []tarEntry) []byte {
 	}
 	return buf.Bytes()
 }
-
-// init keeps the model/filepath imports referenced.
-var _ = model.FileEntry{}
-var _ = filepath.Join

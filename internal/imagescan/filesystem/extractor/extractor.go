@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -273,8 +274,8 @@ func (v *View) applyEntry(hdr *tar.Header, r io.Reader, layerDigest string) erro
 		return nil
 	}
 
-	base := filepath.Base(name)
-	dir := filepath.Dir(name)
+	base := path.Base(name)
+	dir := path.Dir(name)
 
 	// Opaque whiteout: ".wh..wh..opq" deletes all existing children of dir.
 	if base == ".wh..wh..opq" {
@@ -284,7 +285,7 @@ func (v *View) applyEntry(hdr *tar.Header, r io.Reader, layerDigest string) erro
 
 	// Regular whiteout: ".wh.<x>" deletes "<x>" in the same directory.
 	if strings.HasPrefix(base, ".wh.") {
-		target := normalize(filepath.Join(dir, strings.TrimPrefix(base, ".wh.")))
+		target := normalize(path.Join(dir, strings.TrimPrefix(base, ".wh.")))
 		v.deletePath(target)
 		return nil
 	}
@@ -385,7 +386,10 @@ func (v *View) deleteChildren(dir string) {
 
 // normalize cleans a path and ensures a leading slash.
 func normalize(p string) string {
-	p = filepath.Clean("/" + p)
+	// OCI image paths always use slash separators, regardless of the host
+	// running the scanner. Using filepath here would turn "/etc/foo" into
+	// "\\etc\\foo" on Windows and break whiteout prefix matching.
+	p = path.Clean("/" + strings.ReplaceAll(p, "\\", "/"))
 	if p == "." {
 		return "/"
 	}
@@ -396,11 +400,11 @@ func normalize(p string) string {
 // directory. Absolute targets are cleaned as-is; relative targets are joined
 // against the symlink's directory.
 func resolveSymlink(linkPath, target string) string {
-	if filepath.IsAbs(target) {
+	if path.IsAbs(strings.ReplaceAll(target, "\\", "/")) {
 		return normalize(target)
 	}
-	dir := filepath.Dir(normalize(linkPath))
-	return normalize(filepath.Join(dir, target))
+	dir := path.Dir(normalize(linkPath))
+	return normalize(path.Join(dir, target))
 }
 
 func min(a, b int) int {
