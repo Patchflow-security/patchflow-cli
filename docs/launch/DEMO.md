@@ -9,23 +9,39 @@ local, requires no account, and uses no source upload.
 ## Pinned inputs
 
 - Release: `v0.1.6`
-- Fixture: `examples/quickstart` at the CLI commit being demonstrated
+- Release commit: `c5e304a2f9463c98f8a56701c8b0061d40d56922`
+- Fixture commit: `97585554172cfec430527a1a0c6d62713a3557ef`
+- Fixture paths: `examples/quickstart/vulnerable/app.py` and
+  `examples/quickstart/clean/app.py`
 - Rule: `PY001` (`eval()` with potential user input)
+- Configuration: none
 - Mode: offline, embedded scanners available with no extra install, no license
   or reachability lookup; supported external scanners may supplement if present
 
-Use the launch commit SHA instead of `main` in the clone command when the launch
-release is cut.
+The release binary and public fixture intentionally have separate immutable
+commits: `v0.1.6` is the published binary, while the later fixture commit added
+the launch evidence without changing the installed artifact. The authoritative
+machine-readable mapping is [`manifest.json`](manifest.json).
+
+`v0.1.6` is pinned here for repeatable rehearsal, not approved as the final
+launch candidate: its human `doctor` output can mislabel a failed origin lookup
+as a configured remote. The final recording must use the next release containing
+the remote-diagnostic fix, then update the manifest and every command below.
 
 ## Commands
 
 Install on macOS or Linux:
 
 ```bash
-curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh |
-  bash -s -- --version v0.1.6
+PATCHFLOW_RELEASE=v0.1.6
+PATCHFLOW_RELEASE_COMMIT=c5e304a2f9463c98f8a56701c8b0061d40d56922
+PATCHFLOW_FIXTURE_COMMIT=97585554172cfec430527a1a0c6d62713a3557ef
+
+curl -fsSL \
+  "https://raw.githubusercontent.com/Patchflow-security/patchflow-cli/${PATCHFLOW_RELEASE_COMMIT}/scripts/install.sh" |
+  bash -s -- --version "${PATCHFLOW_RELEASE}"
 export PATH="$HOME/.local/bin:$PATH"
-patchflow version
+patchflow version --json
 ```
 
 Prepare isolated copies of the public fixtures. Isolation prevents the demo scan
@@ -33,7 +49,10 @@ from treating the CLI source repository as its Git root:
 
 ```bash
 DEMO_ROOT="$(mktemp -d)"
-git clone --depth 1 https://github.com/Patchflow-security/patchflow-cli.git "$DEMO_ROOT/source"
+curl -fsSL \
+  "https://github.com/Patchflow-security/patchflow-cli/archive/${PATCHFLOW_FIXTURE_COMMIT}.tar.gz" |
+  tar -xz -C "$DEMO_ROOT"
+mv "$DEMO_ROOT/patchflow-cli-${PATCHFLOW_FIXTURE_COMMIT}" "$DEMO_ROOT/source"
 cp -R "$DEMO_ROOT/source/examples/quickstart/vulnerable" "$DEMO_ROOT/vulnerable"
 cp -R "$DEMO_ROOT/source/examples/quickstart/clean" "$DEMO_ROOT/clean"
 git -C "$DEMO_ROOT/vulnerable" init -q
@@ -77,6 +96,20 @@ From a CLI checkout:
 The script creates isolated fixtures, enforces the five-minute ceiling, and
 writes `onboarding-evidence.json`. CI uploads one evidence file per supported
 platform. The automated timing is not a replacement for the five human sessions.
+
+## Final publication gate
+
+The final recording URL, duration, verified commit, timestamp, and four owner
+sign-offs belong in [`manifest.json`](manifest.json). Within 24 hours of
+publication, run:
+
+```bash
+python3 scripts/validate-launch-kit.py --require-ready --check-remote
+```
+
+The command fails while the recording or sign-offs are missing, when evidence is
+older than 24 hours, when a local link is broken, or when a pinned remote URL is
+unavailable.
 
 ## Failure handling
 

@@ -21,6 +21,10 @@
 
 - [ ] Technical post final copy reviewed.
 - [ ] Show HN and community variants checked against current limitations.
+- [ ] `docs/launch/manifest.json` pins the release, release commit, fixture
+  commit, configuration, recording, verified commit, and owner sign-offs.
 - [ ] Repository, release, support, license, security-policy, and SARIF links tested.
+- [ ] `python3 scripts/validate-launch-kit.py --require-ready --check-remote`
+  passes less than 24 hours before publication.
 - [ ] Support owner available for the launch window.
 - [ ] Go/no-go decision and rollback owner recorded.
