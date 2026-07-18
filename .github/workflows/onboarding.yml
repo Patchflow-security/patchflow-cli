@@ -151,3 +151,22 @@ jobs:
           name: onboarding-container-${{ github.sha }}
           path: onboarding-container-evidence.json
           retention-days: 30
+
+  onboarding-gate:
+    name: Five-minute onboarding gate
+    runs-on: ubuntu-slim
+    if: always()
+    needs:
+      - claim-registry
+      - native-install-and-quickstart
+      - container-quickstart
+    steps:
+      - name: Require every onboarding target
+        env:
+          CLAIMS_RESULT: ${{ needs.claim-registry.result }}
+          NATIVE_RESULT: ${{ needs.native-install-and-quickstart.result }}
+          CONTAINER_RESULT: ${{ needs.container-quickstart.result }}
+        run: |
+          test "$CLAIMS_RESULT" = success
+          test "$NATIVE_RESULT" = success
+          test "$CONTAINER_RESULT" = success
