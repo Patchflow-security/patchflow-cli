@@ -133,7 +133,12 @@ To test the release pipeline without publishing:
 
 ### Via GitHub Actions (workflow_dispatch)
 
-Go to Actions → Release → Run workflow → check "dry_run".
+Go to Actions → Release → Run workflow. Manually dispatched runs are always
+non-publishing snapshots; only a pushed semantic `vX.Y.Z` tag can publish.
+
+For a publishing run, automation rejects a malformed tag or a tag whose commit
+is not reachable from canonical `origin/main`. It also validates the public
+launch manifest and live evidence links before building artifacts.
 
 ### Locally
 
