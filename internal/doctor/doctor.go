@@ -15,23 +15,24 @@ import (
 // Report contains the results of the environment diagnostic checks.
 type Report struct {
 	// Version info (B12.8)
-	Version    string `json:"version"`
-	Commit     string `json:"commit"`
-	GoVersion  string `json:"go_version"`
-	BuiltAt    string `json:"built_at"`
-	Status     string `json:"status"` // "ok", "warning", "error"
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	GoVersion string `json:"go_version"`
+	BuiltAt   string `json:"built_at"`
+	Status    string `json:"status"` // "ok", "warning", "error"
 
 	IsGitRepo  bool     `json:"is_git_repo"`
 	GitVersion string   `json:"git_version"`
 	RepoRoot   string   `json:"repo_root"`
 	RemoteURL  string   `json:"remote_url"`
 	Errors     []string `json:"errors"`
+	Checks     []Check  `json:"checks"`
 
 	// Config checks (B12.8)
-	ConfigFound   bool   `json:"config_found"`
-	ConfigPath    string `json:"config_path"`
-	ConfigValid   bool   `json:"config_valid"`
-	ConfigError   string `json:"config_error,omitempty"`
+	ConfigFound bool   `json:"config_found"`
+	ConfigPath  string `json:"config_path"`
+	ConfigValid bool   `json:"config_valid"`
+	ConfigError string `json:"config_error,omitempty"`
 
 	// Cache checks (B12.8)
 	CacheDir      string `json:"cache_dir"`
@@ -54,6 +55,15 @@ type Report struct {
 
 	// External tools (optional supplements)
 	ExternalTools []ToolInfo `json:"external_tools"`
+}
+
+// Check is a machine-readable diagnostic. Every non-pass check includes an
+// exact remediation so humans and automation receive the same next step.
+type Check struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"` // "pass", "warning", "error"
+	Message     string `json:"message"`
+	Remediation string `json:"remediation,omitempty"`
 }
 
 // ScannerInfo describes an embedded scanner.
@@ -88,8 +98,10 @@ func Run() (*Report, error) {
 	if err != nil {
 		report.Errors = append(report.Errors, "git is not installed or not in PATH")
 		report.Status = "warning"
+		report.addCheck("git", "warning", "Git is not installed or not in PATH", "Install Git from https://git-scm.com/downloads, then open a new terminal and run 'git --version'.")
 	} else {
 		report.GitVersion = strings.TrimSpace(gitVer)
+		report.addCheck("git", "pass", report.GitVersion, "")
 	}
 
 	repo, err := git.Detect()
@@ -97,6 +109,15 @@ func Run() (*Report, error) {
 		report.IsGitRepo = true
 		report.RepoRoot = repo.Root
 		report.RemoteURL = repo.RemoteURL
+		report.addCheck("repository", "pass", "Git repository detected at "+repo.Root, "")
+		if repo.RemoteURL == "" {
+			report.addCheck("remote", "warning", "No origin remote is configured", "Add one with 'git remote add origin <repository-url>'; local scans work without a remote.")
+		} else {
+			report.addCheck("remote", "pass", repo.RemoteURL, "")
+		}
+	} else {
+		report.Status = "warning"
+		report.addCheck("repository", "warning", "The current directory is not a Git repository", "Run 'git init' here or change to the repository you want to scan.")
 	}
 
 	// Check config file (B12.8)
@@ -109,15 +130,23 @@ func Run() (*Report, error) {
 		if data, err := os.ReadFile(configPath); err == nil {
 			if isValidConfig(data) {
 				report.ConfigValid = true
+				report.addCheck("config", "pass", "Configuration is valid at "+configPath, "")
 			} else {
 				report.ConfigValid = false
 				report.ConfigError = "config file exists but could not be parsed"
 				report.Status = "warning"
+				report.addCheck("config", "warning", "Configuration cannot be parsed at "+configPath, "Fix the YAML, or move it aside and run 'patchflow rules init'; then rerun 'patchflow doctor'.")
 			}
+		} else {
+			report.ConfigValid = false
+			report.ConfigError = err.Error()
+			report.Status = "warning"
+			report.addCheck("config", "warning", "Configuration cannot be read at "+configPath, "Fix the file permissions so the current user can read it, then rerun 'patchflow doctor'.")
 		}
 	} else if report.IsGitRepo {
 		// Config not found is not an error, just note it
 		report.ConfigFound = false
+		report.addCheck("config", "pass", "No project rules file; embedded defaults will be used", "")
 	}
 
 	// Check cache directory writability (B12.8)
@@ -126,14 +155,17 @@ func Run() (*Report, error) {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		report.CacheWritable = false
 		report.Status = "warning"
+		report.addCheck("cache", "warning", "Cannot create cache directory "+cacheDir, "Set XDG_CACHE_HOME to a writable directory or fix the directory permissions, then rerun 'patchflow doctor'.")
 	} else {
 		testFile := filepath.Join(cacheDir, ".doctor-write-test")
 		if err := os.WriteFile(testFile, []byte("ok"), 0644); err != nil {
 			report.CacheWritable = false
 			report.Status = "warning"
+			report.addCheck("cache", "warning", "Cache directory is not writable: "+cacheDir, "Fix the directory permissions or set XDG_CACHE_HOME to a writable directory, then rerun 'patchflow doctor'.")
 		} else {
 			report.CacheWritable = true
 			os.Remove(testFile)
+			report.addCheck("cache", "pass", "Cache directory is writable: "+cacheDir, "")
 		}
 	}
 
@@ -143,9 +175,11 @@ func Run() (*Report, error) {
 		report.SARIFWritable = false
 		report.SARIFError = err.Error()
 		report.Status = "warning"
+		report.addCheck("sarif_output", "warning", "SARIF output cannot be written in "+report.RepoRoot, "Change to a writable repository directory or choose a writable path with '--output <path>'.")
 	} else {
 		report.SARIFWritable = true
 		os.Remove(sarifTest)
+		report.addCheck("sarif_output", "pass", "SARIF output is writable", "")
 	}
 
 	// Config round-trip check: verify that a config with custom rules (rules:
@@ -154,6 +188,12 @@ func Run() (*Report, error) {
 	// breaks because the two loaders disagree on the `rules:` schema
 	// (B11.5.4 regression guard — the bug that shipped in v0.1.6).
 	report.ConfigRoundTripOK, report.ConfigRoundTripError = checkConfigRoundTrip()
+	if report.ConfigRoundTripOK {
+		report.addCheck("config_round_trip", "pass", "Unified configuration loaders agree", "")
+	} else {
+		report.Status = "warning"
+		report.addCheck("config_round_trip", "error", report.ConfigRoundTripError, "Reinstall the latest PatchFlow release and rerun 'patchflow doctor'; if it persists, open an issue with 'patchflow doctor --json'.")
+	}
 
 	// Check embedded scanners
 	runner := sast.NewRunner()
@@ -195,6 +235,12 @@ func Run() (*Report, error) {
 		report.Status = "warning"
 	}
 	return report, nil
+}
+
+func (r *Report) addCheck(name, status, message, remediation string) {
+	r.Checks = append(r.Checks, Check{
+		Name: name, Status: status, Message: message, Remediation: remediation,
+	})
 }
 
 // isValidConfig does a basic YAML parse check.

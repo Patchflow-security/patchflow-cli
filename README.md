@@ -1,89 +1,80 @@
 # PatchFlow CLI — Change Intelligence for Engineering Teams
 
-PatchFlow CLI provides change intelligence for engineering teams. Use it to scan, review, and analyze code changes in your repositories.
+PatchFlow is a local-first security scanner for source code, dependencies, and
+secrets. A local scan requires no account and does not upload source code.
 
-## Canonical repository
+## Install and scan in under five minutes
 
-[`Patchflow-security/patchflow-cli`](https://github.com/Patchflow-security/patchflow-cli)
-is the source of truth for PatchFlow CLI development, issues, pull requests, tags,
-and releases. Release artifacts must resolve to commits and tags that are reachable
-from this public repository.
+Use the official installer. On macOS or Linux:
 
-Older private copies are read-only mirrors for continuity. They are not upstreams,
-must not publish releases, and are checked automatically against the public `main`
-branch. See [RELEASE.md](RELEASE.md#repository-source-of-truth) for the maintainer
-remote layout and provenance checks.
+```bash
+curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
-## Installation
+On Windows PowerShell:
 
-### Homebrew (macOS)
+```powershell
+irm https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.ps1 | iex
+$env:Path = "$env:LOCALAPPDATA\PatchFlow\bin;$env:Path"
+```
+
+Then scan the repository in the current directory. This deterministic first run
+uses local data; embedded scanners need no additional installation, while any
+supported external scanners already on the machine may add findings:
+
+```bash
+patchflow doctor
+patchflow scan run --offline --no-licenses --no-reachability
+```
+
+To reproduce the vulnerable, clean, explanation, and SARIF path against the
+versioned public fixture:
+
+```bash
+git clone --depth 1 https://github.com/Patchflow-security/patchflow-cli.git
+cd patchflow-cli
+./scripts/verify-quickstart.sh "$(command -v patchflow)"
+```
+
+See the [two-minute demo runbook](docs/launch/DEMO.md) for the visible scan,
+`explain`, and SARIF commands.
+
+## Other installation methods
+
+Homebrew on macOS:
 
 ```bash
 brew install Patchflow-security/tap/patchflow
 ```
 
-> **Note for Linux users:** The Patchflow Security tap does not currently publish Linux bottles. On Linux, `brew install` will fall back to building from source and requires a C compiler (`gcc` or `clang`). We recommend using the install script above for Linux and containerized environments.
-
-### Scoop (Windows)
+Scoop on Windows:
 
 ```powershell
 scoop bucket add patchflow https://github.com/Patchflow-security/scoop-bucket
 scoop install patchflow
 ```
 
-### Install Script (recommended for Linux / CI / Docker)
+Container:
 
 ```bash
-curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash
+docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/patchflow-security/cli:latest scan run --offline
 ```
 
-If you prefer the binary to be in your PATH immediately (e.g., inside a Docker/Podman container), install to `/usr/local/bin`:
+You can also use `go install github.com/Patchflow-security/patchflow-cli@latest`,
+build from source, or download a signed archive from the
+[releases page](https://github.com/Patchflow-security/patchflow-cli/releases).
+
+## Canonical repository
+
+[`Patchflow-security/patchflow-cli`](https://github.com/Patchflow-security/patchflow-cli)
+is the source of truth for development, issues, pull requests, tags, and releases.
+Release artifacts must resolve to commits and tags reachable from this repository.
+See [RELEASE.md](RELEASE.md#repository-source-of-truth) for provenance checks.
+
+## More commands
 
 ```bash
-curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash -s -- --install-dir /usr/local/bin
-```
-
-Other options:
-
-```bash
-# Install a specific version
-curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash -s -- --version v0.1.3
-
-# Skip the post-install binary verification step (useful in CI)
-NO_VERIFY=1 curl -fsSL https://github.com/Patchflow-security/patchflow-cli/raw/main/scripts/install.sh | bash
-```
-
-### Docker / Podman
-
-```bash
-podman pull ghcr.io/patchflow-security/cli:latest
-podman run --rm -v "$PWD:/repo" ghcr.io/patchflow-security/cli:latest scan run --path /repo
-```
-
-### Go Install
-
-```bash
-go install github.com/Patchflow-security/patchflow-cli@latest
-```
-
-### Build from Source
-
-```bash
-git clone https://github.com/Patchflow-security/patchflow-cli.git
-cd patchflow-cli
-go build -o patchflow .
-```
-
-### Download Binary
-
-Download the latest binary for your platform from the [releases page](https://github.com/Patchflow-security/patchflow-cli/releases).
-
-## Quick Start
-
-```bash
-# Initialize PatchFlow in your repository
-patchflow init
-
 # Run a full security analysis (SCA + SAST + reachability + risk score)
 patchflow scan run
 

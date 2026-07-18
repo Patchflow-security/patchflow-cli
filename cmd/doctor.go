@@ -106,6 +106,18 @@ var doctorCmd = &cobra.Command{
 			}
 		}
 
+		var printedNextSteps bool
+		for _, check := range report.Checks {
+			if check.Status == "pass" || check.Remediation == "" {
+				continue
+			}
+			if !printedNextSteps {
+				fmt.Println("\nNext steps:")
+				printedNextSteps = true
+			}
+			fmt.Printf("  - %s: %s\n", check.Name, check.Remediation)
+		}
+
 		fmt.Printf("\nOverall status: %s\n", report.Status)
 		return nil
 	},
