@@ -40,6 +40,10 @@ cd patchflow-cli
 See the [two-minute demo runbook](docs/launch/DEMO.md) for the visible scan,
 `explain`, and SARIF commands.
 
+We are validating this path with five people who have not used PatchFlow before.
+Moderators must follow the [fresh-user session protocol](docs/launch/FRESH_USER_SESSIONS.md)
+so timing, success, privacy, and failure evidence are recorded consistently.
+
 ## Other installation methods
 
 Homebrew on macOS:
