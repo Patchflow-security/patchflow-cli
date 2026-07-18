@@ -14,3 +14,18 @@ func TestCheckConfigRoundTrip(t *testing.T) {
 		t.Fatalf("config round-trip check failed: %s", errMsg)
 	}
 }
+
+func TestEveryNonPassCheckHasRemediation(t *testing.T) {
+	report, err := Run()
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if len(report.Checks) == 0 {
+		t.Fatal("Run() returned no structured checks")
+	}
+	for _, check := range report.Checks {
+		if check.Status != "pass" && check.Remediation == "" {
+			t.Errorf("check %q has status %q without remediation", check.Name, check.Status)
+		}
+	}
+}
