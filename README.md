@@ -20,7 +20,8 @@ $env:Path = "$env:LOCALAPPDATA\PatchFlow\bin;$env:Path"
 ```
 
 Then scan the repository in the current directory. This deterministic first run
-uses only embedded scanners and local data:
+uses local data; embedded scanners need no additional installation, while any
+supported external scanners already on the machine may add findings:
 
 ```bash
 patchflow doctor

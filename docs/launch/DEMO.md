@@ -11,7 +11,8 @@ local, requires no account, and uses no source upload.
 - Release: `v0.1.6`
 - Fixture: `examples/quickstart` at the CLI commit being demonstrated
 - Rule: `PY001` (`eval()` with potential user input)
-- Mode: offline, embedded scanners, no license or reachability lookup
+- Mode: offline, embedded scanners available with no extra install, no license
+  or reachability lookup; supported external scanners may supplement if present
 
 Use the launch commit SHA instead of `main` in the clone command when the launch
 release is cut.
