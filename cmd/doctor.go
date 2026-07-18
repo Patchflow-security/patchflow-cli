@@ -44,7 +44,7 @@ var doctorCmd = &cobra.Command{
 		if report.RemoteURL != "" {
 			fmt.Printf("[OK] Remote configured: %s\n", report.RemoteURL)
 		} else if report.IsGitRepo {
-			fmt.Println("[!]  No remote origin configured")
+			fmt.Println("[--] No remote origin configured (optional; local scans work without one)")
 		}
 
 		// Config checks (B12.8)
