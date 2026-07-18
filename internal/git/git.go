@@ -94,6 +94,12 @@ func DetectOrLocal() (*Repository, bool, error) {
 	if absErr != nil {
 		return nil, false, absErr
 	}
+	// Normalize symlinks and Windows short (8.3) path aliases so callers see
+	// the same canonical root regardless of how the working directory was
+	// entered.
+	if canonicalRoot, evalErr := filepath.EvalSymlinks(root); evalErr == nil {
+		root = canonicalRoot
+	}
 
 	return &Repository{
 		Root:          root,
