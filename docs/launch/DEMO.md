@@ -8,8 +8,8 @@ local, requires no account, and uses no source upload.
 
 ## Pinned inputs
 
-- Release: `v0.1.6`
-- Release commit: `c5e304a2f9463c98f8a56701c8b0061d40d56922`
+- Release: `v0.1.7`
+- Release commit: `56d7909628b5b02756529bc4d79f2bed28b03642`
 - Fixture commit: `97585554172cfec430527a1a0c6d62713a3557ef`
 - Fixture paths: `examples/quickstart/vulnerable/app.py` and
   `examples/quickstart/clean/app.py`
@@ -19,22 +19,17 @@ local, requires no account, and uses no source upload.
   or reachability lookup; supported external scanners may supplement if present
 
 The release binary and public fixture intentionally have separate immutable
-commits: `v0.1.6` is the published binary, while the later fixture commit added
-the launch evidence without changing the installed artifact. The authoritative
-machine-readable mapping is [`manifest.json`](manifest.json).
-
-`v0.1.6` is pinned here for repeatable rehearsal, not approved as the final
-launch candidate: its human `doctor` output can mislabel a failed origin lookup
-as a configured remote. The final recording must use the next release containing
-the remote-diagnostic fix, then update the manifest and every command below.
+commits: `v0.1.7` is the published launch-candidate binary, while the fixture
+commit pins the public demo inputs. The authoritative machine-readable mapping
+is [`manifest.json`](manifest.json).
 
 ## Commands
 
 Install on macOS or Linux:
 
 ```bash
-PATCHFLOW_RELEASE=v0.1.6
-PATCHFLOW_RELEASE_COMMIT=c5e304a2f9463c98f8a56701c8b0061d40d56922
+PATCHFLOW_RELEASE=v0.1.7
+PATCHFLOW_RELEASE_COMMIT=56d7909628b5b02756529bc4d79f2bed28b03642
 PATCHFLOW_FIXTURE_COMMIT=97585554172cfec430527a1a0c6d62713a3557ef
 
 curl -fsSL \

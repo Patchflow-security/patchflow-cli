@@ -95,3 +95,25 @@ The Git executor was retaining combined stderr after the failed remote lookup.
 The Phase 5 launch-kit branch now discards output from failed remote commands
 and includes a regression test. For that reason, `v0.1.6` remains a rehearsal
 release and the final recording must use a new release containing the fix.
+
+## Launch-candidate release verification — 2026-07-18
+
+Release `v0.1.7` was published from commit
+`56d7909628b5b02756529bc4d79f2bed28b03642` after PR #23 merged to `main`.
+The release workflow verified the semantic tag on canonical `origin/main`,
+validated the public launch kit, ran Go tests, published GoReleaser artifacts,
+signed Docker images, signed `checksums.txt`, uploaded SBOMs, and verified the
+release checksums/signature before completing successfully.
+
+Local macOS arm64 smoke test against the published release:
+
+```text
+patchflow_0.1.7_macos_arm64.tar.gz: OK
+patchflow version 0.1.7 (commit: 56d7909628b5b02756529bc4d79f2bed28b03642, built: 2026-07-18T16:05:23Z)
+Quickstart verified in 11s
+```
+
+The quickstart verification used the published `v0.1.7` binary and confirmed
+the vulnerable fixture produced `PY001`, the clean fixture did not produce
+`PY001`, `explain --rule PY001` returned rule and fix text, SARIF output was
+`2.1.0`, no login was required, and no source upload was used.
