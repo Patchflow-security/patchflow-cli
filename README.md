@@ -259,6 +259,16 @@ patchflow scan changed --json
 
 By default, the CLI sends only metadata (file paths, branch names, diff stats). It does not send source code contents unless explicitly configured.
 
+Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md),
+not a public issue.
+
+## Community
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Support channels](SUPPORT.md)
+- [Governance](GOVERNANCE.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+
 ## Examples
 
 ### Authenticate
