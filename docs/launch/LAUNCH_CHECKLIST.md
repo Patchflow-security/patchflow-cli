@@ -11,9 +11,14 @@
 
 ## Product gate
 
-- [ ] Five fresh-user sessions complete.
-- [ ] At least four participants reach a useful result in under five minutes.
-- [ ] Median time and anonymized failure notes linked from CLI issue #5.
+- [ ] Five fresh-user sessions complete under the
+  [moderated protocol](FRESH_USER_SESSIONS.md).
+- [ ] At least four participants reach and understand a useful result in under
+  five minutes.
+- [ ] `python3 scripts/validate-onboarding-sessions.py --require-pass` succeeds.
+- [ ] Median time and anonymized failure notes from
+  [`onboarding-session-results.json`](onboarding-session-results.json) are linked
+  from CLI issue #5.
 - [ ] Every launch metric is `approved` in the dated claim registry.
 - [ ] Product, CLI, website, and launch-copy owners sign off on the same registry.
 
