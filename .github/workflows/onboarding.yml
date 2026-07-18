@@ -72,6 +72,7 @@ jobs:
         if: matrix.family == 'unix'
         shell: bash
         run: |
+          echo "PATCHFLOW_ONBOARDING_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
           INSTALL_DIR="$RUNNER_TEMP/patchflow-release/bin" ./scripts/install.sh --version v0.1.6
           "$RUNNER_TEMP/patchflow-release/bin/patchflow" doctor --json > "$RUNNER_TEMP/release-doctor.json"
 
@@ -88,6 +89,7 @@ jobs:
         if: matrix.family == 'windows'
         shell: pwsh
         run: |
+          "PATCHFLOW_ONBOARDING_STARTED_AT=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
           ./scripts/install.ps1 -Version v0.1.6 -InstallDir "$env:RUNNER_TEMP\patchflow-release\bin"
           & "$env:RUNNER_TEMP\patchflow-release\bin\patchflow.exe" doctor --json | Out-File "$env:RUNNER_TEMP\release-doctor.json" -Encoding utf8
 
@@ -142,7 +144,7 @@ jobs:
           test "$elapsed" -lt 300
           jq -n \
             --argjson elapsed "$elapsed" \
-            '{schema_version:"1.0",os:"container",architecture:"linux/amd64",elapsed_seconds:$elapsed,target_seconds:300,vulnerable_fixture:{expected_rule:"PY001",result:"pass"},clean_fixture:{forbidden_rule:"PY001",result:"pass"},login_required:false,source_upload:false}' \
+            '{schema_version:"1.0",os:"container",architecture:"linux/amd64",elapsed_seconds:$elapsed,target_seconds:300,timing_scope:"container_run_to_completed_quickstart",vulnerable_fixture:{expected_rule:"PY001",result:"pass"},clean_fixture:{forbidden_rule:"PY001",result:"pass"},login_required:false,source_upload:false}' \
             > onboarding-container-evidence.json
 
       - name: Upload container evidence

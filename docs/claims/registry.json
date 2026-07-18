@@ -47,7 +47,7 @@
         "scripts/verify-quickstart.sh",
         "scripts/verify-quickstart.ps1"
       ],
-      "methodology": "Time doctor, vulnerable scan, clean scan, explanation, and SARIF generation after the candidate binary exists; enforce elapsed_seconds < 300 and upload per-platform JSON.",
+      "methodology": "Start immediately before the published-release installer, then time doctor, vulnerable scan, clean scan, explanation, and SARIF generation with the candidate binary; enforce elapsed_seconds < 300 and upload per-platform JSON. Candidate compilation is excluded.",
       "limitations": "This is automation evidence, not a substitute for five fresh-user sessions.",
       "owner": "Product and CLI",
       "last_verified": "2026-07-18"

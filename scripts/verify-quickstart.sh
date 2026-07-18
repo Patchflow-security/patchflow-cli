@@ -26,7 +26,13 @@ git -C "${WORK}/vulnerable" -c user.name=PatchFlow -c user.email=demo@patchflow.
 git -C "${WORK}/clean" -c user.name=PatchFlow -c user.email=demo@patchflow.dev add .
 git -C "${WORK}/clean" -c user.name=PatchFlow -c user.email=demo@patchflow.dev commit -qm fixture
 
-START=$(date +%s)
+if [ -n "${PATCHFLOW_ONBOARDING_STARTED_AT:-}" ]; then
+    START="$PATCHFLOW_ONBOARDING_STARTED_AT"
+    TIMING_SCOPE="install_to_completed_quickstart"
+else
+    START=$(date +%s)
+    TIMING_SCOPE="doctor_to_completed_quickstart"
+fi
 
 (cd "${WORK}/vulnerable" && "$BIN" doctor --json > doctor.json)
 python3 - "${WORK}/vulnerable/doctor.json" <<'PY'
@@ -65,9 +71,9 @@ fi
 OS=$(uname -s)
 ARCH=$(uname -m)
 VERSION=$($BIN version 2>&1 | head -n 1 | sed 's/"/\\"/g')
-python3 - "$EVIDENCE" "$OS" "$ARCH" "$ELAPSED" "$VERSION" <<'PY'
+python3 - "$EVIDENCE" "$OS" "$ARCH" "$ELAPSED" "$VERSION" "$TIMING_SCOPE" <<'PY'
 import json, sys
-path, os_name, arch, elapsed, version = sys.argv[1:]
+path, os_name, arch, elapsed, version, timing_scope = sys.argv[1:]
 with open(path, "w", encoding="utf-8") as handle:
     json.dump({
         "schema_version": "1.0",
@@ -75,6 +81,7 @@ with open(path, "w", encoding="utf-8") as handle:
         "architecture": arch,
         "elapsed_seconds": int(elapsed),
         "target_seconds": 300,
+        "timing_scope": timing_scope,
         "version": version,
         "vulnerable_fixture": {"expected_rule": "PY001", "result": "pass"},
         "clean_fixture": {"forbidden_rule": "PY001", "result": "pass"},

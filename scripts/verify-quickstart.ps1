@@ -8,6 +8,7 @@ $root = (Resolve-Path "$PSScriptRoot\..").Path
 $binaryPath = (Resolve-Path $Binary).Path
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("patchflow-onboarding-" + [guid]::NewGuid())
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$externalStart = $env:PATCHFLOW_ONBOARDING_STARTED_AT
 
 try {
     New-Item -ItemType Directory -Path $work | Out-Null
@@ -40,14 +41,23 @@ try {
     Pop-Location
 
     $stopwatch.Stop()
-    if ($stopwatch.Elapsed.TotalSeconds -ge 300) { throw "quickstart exceeded the five-minute target" }
+    if ($externalStart) {
+        $elapsedSeconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$externalStart
+        $timingScope = "install_to_completed_quickstart"
+    }
+    else {
+        $elapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+        $timingScope = "doctor_to_completed_quickstart"
+    }
+    if ($elapsedSeconds -ge 300) { throw "quickstart exceeded the five-minute target" }
     $version = (& $binaryPath version | Select-Object -First 1)
     $result = [ordered]@{
         schema_version = "1.0"
         os = "Windows"
         architecture = $env:PROCESSOR_ARCHITECTURE
-        elapsed_seconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
+        elapsed_seconds = $elapsedSeconds
         target_seconds = 300
+        timing_scope = $timingScope
         version = $version
         vulnerable_fixture = @{ expected_rule = "PY001"; result = "pass" }
         clean_fixture = @{ forbidden_rule = "PY001"; result = "pass" }
@@ -57,7 +67,7 @@ try {
         source_upload = $false
     }
     $result | ConvertTo-Json -Depth 4 | Set-Content $Evidence -Encoding utf8
-    Write-Host "Quickstart verified in $([math]::Round($stopwatch.Elapsed.TotalSeconds, 2))s; evidence: $Evidence"
+    Write-Host "Quickstart verified in ${elapsedSeconds}s; evidence: $Evidence"
 }
 finally {
     while ((Get-Location).Path.StartsWith($work)) { Pop-Location }
