@@ -393,6 +393,13 @@ patchflow report --format json --output report.json
 - **[Developer Guide](docs/DEVELOPER_GUIDE.md)** — Architecture, package reference, adding commands, testing, coding standards, and release process.
 - **[Command Reference](docs/CLI_COMMANDS.md)** — Quick reference for every command and flag.
 - **[Development Guide](docs/DEVELOPMENT.md)** — Build, test, and project structure overview.
+- **[Public Roadmap](ROADMAP.md)** — Now/Next/Later outcomes, framework-rule maturity, and bounded contribution opportunities.
+- **[Triage Policy](docs/TRIAGE.md)** — Labels, response targets, contributor-ready criteria, and inactivity rules.
+
+New contributors can start from a bounded
+[`good first issue`](https://github.com/Patchflow-security/patchflow-cli/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22),
+a guided [`help wanted`](https://github.com/Patchflow-security/patchflow-cli/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+task, or the [issue chooser](https://github.com/Patchflow-security/patchflow-cli/issues/new/choose).
 
 ## Development
 
