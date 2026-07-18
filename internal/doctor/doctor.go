@@ -6,7 +6,9 @@ import (
 	"strings"
 
 	"github.com/Patchflow-security/patchflow-cli/internal/git"
+	"github.com/Patchflow-security/patchflow-cli/internal/rulesconfig"
 	"github.com/Patchflow-security/patchflow-cli/internal/sast"
+	"github.com/Patchflow-security/patchflow-cli/internal/sast/customrules"
 	"github.com/Patchflow-security/patchflow-cli/pkg/version"
 )
 
@@ -38,6 +40,14 @@ type Report struct {
 	// SARIF output check (B12.8)
 	SARIFWritable bool   `json:"sarif_writable"`
 	SARIFError    string `json:"sarif_error,omitempty"`
+
+	// Config round-trip check: verifies that a config with custom rules
+	// (rules: as a list) loads via BOTH rulesconfig and customrules loaders
+	// without crashing. This catches the class of bug where the unified
+	// --config flag breaks because the two loaders disagree on the `rules:`
+	// schema (B11.5.4 regression guard).
+	ConfigRoundTripOK    bool   `json:"config_round_trip_ok"`
+	ConfigRoundTripError string `json:"config_round_trip_error,omitempty"`
 
 	// Embedded scanners (always available)
 	EmbeddedScanners []ScannerInfo `json:"embedded_scanners"`
@@ -138,6 +148,13 @@ func Run() (*Report, error) {
 		os.Remove(sarifTest)
 	}
 
+	// Config round-trip check: verify that a config with custom rules (rules:
+	// as a list) loads via BOTH rulesconfig and customrules loaders without
+	// crashing. This catches the class of bug where the unified --config flag
+	// breaks because the two loaders disagree on the `rules:` schema
+	// (B11.5.4 regression guard — the bug that shipped in v0.1.6).
+	report.ConfigRoundTripOK, report.ConfigRoundTripError = checkConfigRoundTrip()
+
 	// Check embedded scanners
 	runner := sast.NewRunner()
 	groups := runner.AllRules()
@@ -193,6 +210,58 @@ func isValidConfig(data []byte) bool {
 		return false
 	}
 	return true
+}
+
+// checkConfigRoundTrip verifies that a config with custom rules (rules: as a
+// list) and framework extensions loads via BOTH rulesconfig.LoadFromBytes and
+// customrules.LoadPolicyFromBytes without crashing. This is the regression
+// guard for the B11.5.4 unified-config schema conflict: rulesconfig reads
+// rules: as a map (mode overrides) while customrules reads it as a list
+// (custom pattern rules). If either loader crashes, the --config flag is
+// broken and users cannot customize their scan.
+func checkConfigRoundTrip() (bool, string) {
+	testConfig := []byte(`schema_version: "1.0"
+frameworks:
+  auto_detect: true
+  enabled: []
+  disabled: []
+
+framework_extensions:
+  fastapi:
+    safe_patterns:
+      - pattern: "select\\("
+        reason: "ORM parameterization"
+
+rules:
+  - id: DR-001
+    title: Doctor test rule
+    pattern: "test\\("
+    severity: medium
+    languages: [python]
+    confidence: medium
+    cwe: "CWE-89"
+`)
+
+	// 1. rulesconfig.LoadFromBytes — reads rules: as a map (mode overrides).
+	// Must not crash on a list under rules:.
+	if _, err := rulesconfig.LoadFromBytes(testConfig); err != nil {
+		return false, "rulesconfig.LoadFromBytes failed: " + err.Error()
+	}
+
+	// 2. customrules.LoadPolicyFromBytes — reads rules: as a list (custom
+	// pattern rules). Must not crash and must find the DR-001 rule.
+	policy, err := customrules.LoadPolicyFromBytes(testConfig)
+	if err != nil {
+		return false, "customrules.LoadPolicyFromBytes failed: " + err.Error()
+	}
+	if policy == nil {
+		return false, "customrules.LoadPolicyFromBytes returned nil policy"
+	}
+	if len(policy.PatternRules) == 0 {
+		return false, "customrules.LoadPolicyFromBytes found 0 pattern rules (expected DR-001)"
+	}
+
+	return true, ""
 }
 
 // defaultCacheDir returns the default cache directory path.
