@@ -4,15 +4,13 @@
   "issue": "https://github.com/Patchflow-security/patchflow-cli/issues/8",
   "repository": "https://github.com/Patchflow-security/patchflow-cli",
   "release": {
-    "tag": "v0.1.6",
-    "commit": "c5e304a2f9463c98f8a56701c8b0061d40d56922",
-    "launch_candidate": false,
-    "known_limitations": [
-      "doctor v0.1.6 can render a failed origin lookup as a configured remote; use this release for rehearsal only and cut a new release with the remote-diagnostic fix before launch"
-    ],
-    "url": "https://github.com/Patchflow-security/patchflow-cli/releases/tag/v0.1.6",
-    "checksums_url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v0.1.6/checksums.txt",
-    "signature_url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v0.1.6/checksums.txt.sig"
+    "tag": "v0.1.7",
+    "commit": "56d7909628b5b02756529bc4d79f2bed28b03642",
+    "launch_candidate": true,
+    "known_limitations": [],
+    "url": "https://github.com/Patchflow-security/patchflow-cli/releases/tag/v0.1.7",
+    "checksums_url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v0.1.7/checksums.txt",
+    "signature_url": "https://github.com/Patchflow-security/patchflow-cli/releases/download/v0.1.7/checksums.txt.sig"
   },
   "fixture": {
     "commit": "97585554172cfec430527a1a0c6d62713a3557ef",
