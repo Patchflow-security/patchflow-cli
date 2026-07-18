@@ -26,3 +26,8 @@ Preparing PatchFlow CLI for public beta: local-first code/dependency/secret
 scanning, no account or source upload for the core local path, plus a reproducible
 vulnerable→explain→SARIF quickstart. Looking for blunt onboarding feedback:
 https://github.com/Patchflow-security/patchflow-cli
+
+Evidence and help: [dated claim registry](../claims/registry.json) ·
+[support](../../SUPPORT.md) · [security reporting](../../SECURITY.md) ·
+[license](../../LICENSE) · [JSON/SARIF contract](../MACHINE_READABLE_OUTPUTS.md) ·
+[onboarding feedback](https://github.com/Patchflow-security/patchflow-cli/issues/new/choose)

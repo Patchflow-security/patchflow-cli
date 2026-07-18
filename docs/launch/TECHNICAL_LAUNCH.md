@@ -45,3 +45,8 @@ GitHub issue for bugs or onboarding friction. Use private security reporting for
 undisclosed vulnerabilities or sensitive data.
 
 Repository: https://github.com/Patchflow-security/patchflow-cli
+
+Evidence and help: [dated claim registry](../claims/registry.json) ·
+[support](../../SUPPORT.md) · [security reporting](../../SECURITY.md) ·
+[license](../../LICENSE) · [JSON/SARIF contract](../MACHINE_READABLE_OUTPUTS.md) ·
+[onboarding feedback](https://github.com/Patchflow-security/patchflow-cli/issues/new/choose)

@@ -64,8 +64,10 @@ func NewRepository(executor Executor) (*Repository, error) {
 	sha, _ := r.executor.Run(r.Root, "rev-parse", "HEAD")
 	r.CommitSHA = strings.TrimSpace(sha)
 
-	remote, _ := r.executor.Run(r.Root, "remote", "get-url", "origin")
-	r.RemoteURL = strings.TrimSpace(remote)
+	remote, remoteErr := r.executor.Run(r.Root, "remote", "get-url", "origin")
+	if remoteErr == nil {
+		r.RemoteURL = strings.TrimSpace(remote)
+	}
 
 	r.BaseBranch = r.detectBaseBranch()
 
@@ -343,7 +345,7 @@ func (m *MockExecutor) Run(dir string, args ...string) (string, error) {
 	key := strings.Join(args, " ")
 	m.Calls = append(m.Calls, key)
 	if err, ok := m.Errors[key]; ok {
-		return "", err
+		return m.Responses[key], err
 	}
 	if resp, ok := m.Responses[key]; ok {
 		return resp, nil

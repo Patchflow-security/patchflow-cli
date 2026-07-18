@@ -73,7 +73,9 @@
       "status": "pending",
       "scope": "Five moderated onboarding sessions",
       "evidence": [
-        "docs/launch/SESSION_NOTES_TEMPLATE.md"
+        "docs/launch/FRESH_USER_SESSIONS.md",
+        "docs/launch/SESSION_NOTES_TEMPLATE.md",
+        "docs/launch/onboarding-session-results.json"
       ],
       "methodology": "Start timing before installation; stop when the participant can identify and explain one useful result. Record failures and anonymize notes.",
       "limitations": "No sessions have been claimed or counted by automation.",

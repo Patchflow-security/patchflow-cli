@@ -111,7 +111,7 @@ func Run() (*Report, error) {
 		report.RemoteURL = repo.RemoteURL
 		report.addCheck("repository", "pass", "Git repository detected at "+repo.Root, "")
 		if repo.RemoteURL == "" {
-			report.addCheck("remote", "warning", "No origin remote is configured", "Add one with 'git remote add origin <repository-url>'; local scans work without a remote.")
+			report.addCheck("remote", "pass", "No origin remote is configured; local scans work without one", "")
 		} else {
 			report.addCheck("remote", "pass", repo.RemoteURL, "")
 		}

@@ -68,3 +68,30 @@ git diff --check                        PASS
 This transcript is one engineering rehearsal, not a fresh-user session and not
 the full platform matrix. The authoritative multi-platform evidence will be the
 JSON artifacts from `.github/workflows/onboarding.yml`.
+
+## Pinned public-release rehearsal — 2026-07-18
+
+The launch-kit audit repeated the exact immutable inputs now recorded in
+`docs/launch/manifest.json`:
+
+- release `v0.1.6` at `c5e304a2f9463c98f8a56701c8b0061d40d56922`;
+- fixture archive at `97585554172cfec430527a1a0c6d62713a3557ef`;
+- no configuration file;
+- offline scan with license and reachability lookups disabled.
+
+Observed install-to-completed-demo time on macOS arm64 was 41 seconds. The
+installer verified the release checksum. The vulnerable fixture produced
+`PY001`, `explain` returned the rule and fix, SARIF 2.1.0 contained `PY001`, and
+the clean fixture did not contain `PY001`.
+
+The rehearsal also found a launch-blocking diagnostic defect: in a Git
+repository without `origin`, `v0.1.6` prints:
+
+```text
+[OK] Remote configured: error: No such remote 'origin'
+```
+
+The Git executor was retaining combined stderr after the failed remote lookup.
+The Phase 5 launch-kit branch now discards output from failed remote commands
+and includes a regression test. For that reason, `v0.1.6` remains a rehearsal
+release and the final recording must use a new release containing the fix.

@@ -8,8 +8,14 @@ on:
       - 'cmd/**'
       - 'internal/**'
       - 'examples/quickstart/**'
+      - 'docs/claims/**'
+      - 'docs/launch/FRESH_USER_SESSIONS.md'
+      - 'docs/launch/onboarding-session-results.json'
       - 'scripts/install.*'
       - 'scripts/verify-quickstart.*'
+      - 'scripts/validate-claims.py'
+      - 'scripts/validate-onboarding-sessions.py'
+      - 'scripts/tests/**'
       - 'go.mod'
       - 'go.sum'
   pull_request:
@@ -30,7 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Reject stale or incomplete claims
-        run: python3 scripts/validate-claims.py
+        run: |
+          python3 scripts/validate-claims.py
+          python3 scripts/validate-onboarding-sessions.py
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
   native-install-and-quickstart:
     name: ${{ matrix.name }}

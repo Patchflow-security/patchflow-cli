@@ -25,8 +25,14 @@ We are especially looking for candid feedback on installation friction, false
 positives, whether the explanation helps you decide what to do, and what is
 missing from the SARIF/CI path.
 
-Known limitations are documented in the demo and launch post. We have also put
+Known limitations are documented in the [demo](DEMO.md) and
+[launch post](TECHNICAL_LAUNCH.md). We have also put
 historical benchmark claims on hold for launch copy while we reconcile internal
 report inconsistencies rather than repeat numbers we cannot currently defend.
 
 What language/framework and repository size would make a useful next test?
+
+Evidence and help: [dated claim registry](../claims/registry.json) ·
+[support](../../SUPPORT.md) · [security reporting](../../SECURITY.md) ·
+[license](../../LICENSE) · [JSON/SARIF contract](../MACHINE_READABLE_OUTPUTS.md) ·
+[onboarding feedback](https://github.com/Patchflow-security/patchflow-cli/issues/new/choose)
